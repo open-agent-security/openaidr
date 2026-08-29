@@ -1,0 +1,14 @@
+# Local git worktrees
+.worktrees/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
