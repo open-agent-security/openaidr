@@ -21,9 +21,31 @@ Session parsing itself comes from [Uber's ADR project](https://github.com/uber/A
 the boundary and never appear elsewhere. Any one agent kind can instead be backed
 by an OpenAIDR-owned reader on the same contract — per kind, not all-or-nothing.
 
+## Install and run
+
+Not on PyPI yet — install from a clone:
+
+```bash
+git clone https://github.com/open-agent-security/openaidr
+cd openaidr
+uv sync
+```
+
+That installs an `openaidr` command:
+
+```console
+$ uv run openaidr --version
+openaidr 0.0.1
+```
+
+That is the whole CLI today. `openaidr sessions`, which prints what each agent
+actually did, arrives with the collector.
+
 ## Status
 
-Pre-alpha. The design is settled; the implementation is not yet here.
+**Pre-alpha.** The design is settled; the implementation is not. What exists is
+the package skeleton, the `adr-sensor` dependency, and `--version` — enough to
+install and pin, not yet enough to collect anything.
 
 ## Licence
 
