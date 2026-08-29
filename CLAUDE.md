@@ -23,7 +23,7 @@ uv run ruff format --check .               # format check
 uv run pyright                             # type check
 uv run pytest -v                           # run tests
 
-uv run openaidr sessions                   # print collected sessions
+uv run openaidr --version                  # the CLI (only --version so far)
 ```
 
 ## Architecture
