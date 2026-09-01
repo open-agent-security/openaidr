@@ -3,10 +3,14 @@
 Naming and representation are this module's choice; what the spec fixes is the
 information captured and the stability of span identity.
 
-What is *absent* is deliberate. Per-call timings are not modelled because the
-parsing dependency's event schema carries no timestamp below the session, and a
-field that is always empty is a worse answer than no field: it invites consumers
-to build on a value that never arrives. See `docs/specs/session-collection.md`.
+What is *absent* is deliberate, and a field earns its place by being fillable
+from evidence. `duration_ms` is modelled because the transcript records both ends
+of a call even though the parsing dependency's event schema does not; the MCP
+fields are modelled because Claude Code writes a connection log this package can
+read. A field nothing can fill is a worse answer than no field -- it invites
+consumers to build on a value that never arrives -- and one that is *sometimes*
+fillable must say which case it is in, which is why `mcp_log_state` exists beside
+`mcp_connections`. See `docs/specs/session-collection.md`.
 """
 
 from __future__ import annotations
@@ -39,6 +43,11 @@ LOCAL_ONLY = frozenset(
         # turn's text, and an initiating prompt is a person's own words.
         "context_items",
         "initial_prompt",
+        # An MCP server's own words about why a connection failed. Free text the
+        # server author chose, and it can carry a URL, a header fragment or a
+        # path. `failure_category` is the part a consumer acts on and the part
+        # that travels.
+        "failure_detail",
     }
 )
 
@@ -94,6 +103,13 @@ class ToolCall:
     attributed_skill: str | None = None
     #: The plugin this call is attributed to, on the same terms.
     attributed_plugin: str | None = None
+    #: Which transport carried this call, for an MCP call whose connection log
+    #: could be read. `None` everywhere else, including every non-MCP call.
+    #:
+    #: Recorded, not interpreted. That `stdio` is a local pipe and
+    #: `claudeai-proxy` is not are conclusions a consumer draws; this package
+    #: reports what the client negotiated and stops there.
+    transport: str | None = None
 
 
 @dataclass(frozen=True)
@@ -176,6 +192,62 @@ class Turn:
     permission_mode: str | None = None
 
 
+MCPLogState = Literal[
+    "applied",
+    "no_log_root",
+    "no_log_for_session",
+    "count_mismatch",
+    "not_attempted",
+]
+"""Whether this session's MCP connection log could be read, and why not.
+
+Five states rather than a boolean, because they call for different responses. A
+missing cache root is very likely an unsupported platform and is a property of
+the machine; a missing log for one session is a pruned cache; a count mismatch
+is the guard in `claude_code_mcp` declining to attribute outcomes it cannot
+place. Collapsing them would make "we could not look" indistinguishable from
+"there was nothing to find" -- the confusion this package exists to avoid.
+
+`applied` does not mean every call got an outcome: a server whose log was pruned
+while another's survived leaves some calls unenriched within an applied session.
+"""
+
+
+@dataclass(frozen=True)
+class MCPConnection:
+    """One MCP server as the client saw it, for one session.
+
+    Connection-scoped, deliberately. Transport, advertised identity and whether
+    the server came up are properties of the *connection*, not of any call that
+    went over it, and repeating them on every call would say otherwise.
+
+    Client-observed throughout: the transport is negotiated and recorded by the
+    client, and the advertised name and version come off the initialize
+    handshake. That is what makes this evidence rather than a restatement of
+    what a server's manifest claims about itself.
+    """
+
+    #: The log directory's name for this server, which is the client's own
+    #: identifier for it -- not necessarily what the server calls itself.
+    server: str
+    transport: str | None = None
+    #: The URL for an HTTP transport, or the proxy's server id. An operator
+    #: coordinate, on the same terms an MCP URL already travels in a BOM.
+    endpoint: str | None = None
+    #: What the server called itself on the initialize handshake, and its
+    #: version. A cross-run identity that nothing in the transcript carries.
+    advertised_name: str | None = None
+    advertised_version: str | None = None
+    connected: bool = False
+    #: Why the connection failed, in a fixed vocabulary a consumer can act on:
+    #: `auth`, `timeout`, `http_status`, `network`, `protocol`, `unknown`.
+    failure_category: str | None = None
+    #: The server's own words. `LOCAL_ONLY`.
+    failure_detail: str | None = None
+    #: How long the connection attempt took, successful or not.
+    duration_ms: int | None = None
+
+
 @dataclass(frozen=True)
 class Session:
     """One agent conversation."""
@@ -218,6 +290,14 @@ class Session:
     #: turns are gone and any conclusion about the original request is being
     #: drawn from a summary.
     compactions: tuple[Compaction, ...] = ()
+    #: Every MCP server this session connected to, as the client recorded it.
+    #: Empty where the logs could not be read -- `mcp_log_state` says which.
+    mcp_connections: tuple[MCPConnection, ...] = ()
+    #: Whether the MCP connection log was read for this session. Carried rather
+    #: than logged for the same reason the collection carries its failures: a
+    #: session whose transports are unknown and one whose servers were all
+    #: local are not the same answer.
+    mcp_log_state: MCPLogState = "not_attempted"
     #: Times the provider's own safeguards declined and the CLI fell back.
     provider_refusals: tuple[ProviderRefusal, ...] = ()
 

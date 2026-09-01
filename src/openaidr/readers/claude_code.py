@@ -19,6 +19,7 @@ import contextlib
 import io
 import json
 import re
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,8 @@ from openaidr.kinds import map_source
 from openaidr.model import (
     Compaction,
     ContextItem,
+    MCPConnection,
+    MCPLogState,
     ProviderRefusal,
     Session,
     Status,
@@ -38,6 +41,7 @@ from openaidr.model import (
     span_id,
 )
 from openaidr.readers.base import ReaderFailure, Window
+from openaidr.readers.claude_code_mcp import MCPCallOutcome, MCPLogIndex, read_mcp_logs
 from openaidr.toolnames import split_tool_name
 
 #: Where Claude Code keeps session transcripts, one directory per project root.
@@ -67,16 +71,23 @@ class ClaudeCodeReader:
 
     agent_kind = "claude-code"
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, mcp_logs: MCPLogIndex | None = None) -> None:
         self._root = root if root is not None else DEFAULT_ROOT
         self._parser = ClaudeParser()
         #: transcript path -> everything that file records and upstream drops.
         #: One read per file, however many sessions or fields ask for it.
         self._transcripts: dict[Path, _Transcript] = {}
+        #: Read once for the whole machine rather than per session: the logs are
+        #: filed under a mangled project directory, not under a session, so
+        #: finding one session's would mean walking the same tree every time.
+        #: Injectable so a test never depends on a real cache.
+        self._mcp_logs = mcp_logs
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         if not self._root.is_dir():
             return [], []
+        if self._mcp_logs is None:
+            self._mcp_logs = read_mcp_logs()
         sessions: list[Session] = []
         failures: list[ReaderFailure] = []
         for path in sorted(self._root.glob("**/*.jsonl")):
@@ -171,6 +182,7 @@ class ClaudeCodeReader:
         identity = f"{raw_id}:{path.stem}" if is_subagent else raw_id
         session_id = f"{self.agent_kind}:{identity}"
         transcript = self._read(path)
+        enrichment = self._mcp_enrichment(raw_id, event)
         return Session(
             session_id=session_id,
             agent_kind=map_source(event.source),
@@ -204,8 +216,120 @@ class ClaudeCodeReader:
                 ProviderRefusal(category=category, original_model=original, fallback_model=fallback)
                 for category, original, fallback in transcript.refusals.get(raw_id, ())
             ),
-            turns=_turns(event.chat_history, session_id, is_subagent, transcript),
+            mcp_connections=enrichment.connections,
+            mcp_log_state=enrichment.state,
+            turns=_turns(event.chat_history, session_id, is_subagent, transcript, enrichment),
         )
+
+    def _mcp_enrichment(self, raw_id: str, event: AgentEvent) -> _MCPEnrichment:
+        """What the connection log adds to this session, and whether it may.
+
+        **The guard.** The log carries no span and no call id -- only an ordered
+        run of `Tool 'x' completed`/`failed` lines -- so the only way to say
+        *which* call an outcome belongs to is position within that tool's
+        sequence. That is sound while both sides recorded every call, and
+        silently wrong the moment one did not: a single dropped line shifts
+        every later outcome onto the wrong call, with nothing to show for it.
+
+        So per-tool counts must agree before any outcome is attributed. Where
+        they do not, the connection-scoped facts are still kept -- transport and
+        advertised identity are properties of the connection, unaffected by how
+        many calls went over it -- and the per-call half is withheld. A gap that
+        says so beats an attribution that cannot be checked.
+        """
+        index = self._mcp_logs
+        if index is None:
+            return _MCPEnrichment(state="not_attempted")
+        if not index.root_found:
+            return _MCPEnrichment(state="no_log_root")
+        logs = index.for_session(raw_id)
+        if logs is None:
+            # Only a session that actually called an MCP tool is missing
+            # anything; the rest simply never opened a connection.
+            state: MCPLogState = "no_log_for_session" if _calls_mcp(event) else "applied"
+            return _MCPEnrichment(state=state)
+        connections = tuple(
+            MCPConnection(
+                server=c.server,
+                transport=c.transport,
+                endpoint=c.endpoint,
+                advertised_name=c.advertised_name,
+                advertised_version=c.advertised_version,
+                connected=c.connected,
+                failure_category=c.failure_category,
+                failure_detail=c.failure_detail,
+                duration_ms=c.duration_ms,
+            )
+            for c in sorted(logs.connections.values(), key=lambda c: c.server)
+        )
+        # Compared per tool, and only over the tools the transcript actually
+        # calls. Outcomes are queued by tool name and popped by tool name, so a
+        # tool present only in the log can never shift one that is in both --
+        # the client makes MCP calls of its own (`closeAllDiffTabs`,
+        # `getDiagnostics` against the IDE server) that are not agent tool calls
+        # and never appear in a transcript. Comparing whole count maps would
+        # read those as corruption and withhold outcomes over nothing.
+        transcript_counts = _mcp_tool_counts(event)
+        log_counts = logs.tool_counts()
+        if any(log_counts.get(tool, 0) != n for tool, n in transcript_counts.items()):
+            return _MCPEnrichment(state="count_mismatch", connections=connections)
+        transports = {
+            server: connection.transport for server, connection in logs.connections.items()
+        }
+        return _MCPEnrichment(
+            state="applied",
+            connections=connections,
+            outcomes={tool: deque(queue) for tool, queue in logs.outcomes.items()},
+            transports=transports,
+        )
+
+
+@dataclass
+class _MCPEnrichment:
+    """What the connection log contributes to one session.
+
+    Stateful by design: `take` pops from a per-tool queue, so consecutive calls
+    to the same tool consume consecutive outcomes. That is the ordinal join,
+    and it is only ever reached once `_mcp_enrichment`'s guard has established
+    that both sides counted the same calls.
+    """
+
+    state: MCPLogState
+    connections: tuple[MCPConnection, ...] = ()
+    outcomes: dict[str, deque[MCPCallOutcome]] = field(default_factory=dict)
+    transports: dict[str, str | None] = field(default_factory=dict)
+
+    def take(self, tool: str) -> MCPCallOutcome | None:
+        queue = self.outcomes.get(tool)
+        return queue.popleft() if queue else None
+
+    def transport_for(self, server: str | None) -> str | None:
+        return self.transports.get(server) if server else None
+
+
+def _calls_mcp(event: AgentEvent) -> bool:
+    return any(
+        _server_and_tool(tool)[0] is not None
+        for message in event.chat_history
+        for tool in message.tools
+    )
+
+
+def _mcp_tool_counts(event: AgentEvent) -> Counter[str]:
+    """How many times each MCP tool was called, as the transcript has it.
+
+    Compared against the log's own count to decide whether the ordinal join is
+    trustworthy. Counted per tool rather than in total: two servers exposing the
+    same tool name would still align, and a total would hide one server's log
+    being pruned behind another's being complete.
+    """
+    counts: Counter[str] = Counter()
+    for message in event.chat_history:
+        for tool in message.tools:
+            server, name = _server_and_tool(tool)
+            if server is not None:
+                counts[name] += 1
+    return counts
 
 
 def _turns(
@@ -213,6 +337,7 @@ def _turns(
     session_id: str,
     is_subagent: bool,
     transcript: _Transcript,
+    mcp: _MCPEnrichment,
 ) -> tuple[Turn, ...]:
     """Build turns, keeping each turn's key unique within its session.
 
@@ -238,7 +363,7 @@ def _turns(
                 text=message.content,
                 is_sidechain=is_subagent,
                 tool_calls=_tool_calls(
-                    message.tools, session_id, key, base, compromised, transcript
+                    message.tools, session_id, key, base, compromised, transcript, mcp
                 ),
                 permission_mode=transcript.permission_modes.get(base),
             )
@@ -295,6 +420,7 @@ def _tool_calls(
     record_uuid: str,
     compromised: set[int],
     transcript: _Transcript,
+    mcp: _MCPEnrichment,
 ) -> tuple[ToolCall, ...]:
     """Normalise one message's calls, joining each to what the record says about it.
 
@@ -309,7 +435,8 @@ def _tool_calls(
     for index, tool in enumerate(tools):
         server, name = _server_and_tool(tool)
         call_id = transcript.call_ids.get((record_uuid, index))
-        if id(tool) in compromised:
+        withheld = id(tool) in compromised
+        if withheld:
             status: Status = "pending"
             result, size, error_text, truncated = None, None, None, False
             denial: str | None = None
@@ -326,6 +453,37 @@ def _tool_calls(
                 truncated, size = _truncation(tool.result)
                 result = tool.result
             error_text = tool.error
+        # The connection log answers what the transcript cannot for an MCP
+        # call: 129 of 130 measured carry `unknown` here despite every one
+        # having returned. It only ever *fills a gap* -- a status the transcript
+        # actually stated is evidence from the record itself and is never
+        # overwritten by a second source.
+        #
+        # A withheld duplicate is a gap, not a statement. `pending` there does
+        # not mean the transcript said nothing came back; it means *this reader*
+        # declined to attribute a result it could not place (ADR-0002). The log
+        # can place it -- by ordinal, already guarded by a per-tool count -- so
+        # letting the outcome through is the same rule, not an exception to it.
+        #
+        # It is also the case that matters most. A retry loop is duplicates by
+        # definition, so without this the one shape where the outcome is most
+        # informative is the one shape that never receives it: three identical
+        # rejected calls reached consumers as three `pending` with the failure
+        # stripped off, and the loop read as silence.
+        outcome = mcp.take(name) if server is not None else None
+        if outcome is not None and (status == "unknown" or withheld):
+            # `ok is None` means the client reported the call still running and
+            # nothing ever followed. That is not an outcome to assert, so the
+            # call stays `pending` -- but the elapsed time below is the client's
+            # own measure of how long it waited, which is what separates a hang
+            # from a call that simply has not finished yet.
+            if outcome.ok is not None:
+                status = "ok" if outcome.ok else "error"
+            else:
+                status = "pending"
+        duration = _duration(call_id, transcript)
+        if duration is None and outcome is not None:
+            duration = outcome.duration_ms
         skill, plugin = transcript.attribution.get(record_uuid, (None, None))
         calls.append(
             ToolCall(
@@ -340,10 +498,11 @@ def _tool_calls(
                 truncated=truncated,
                 denial_kind=denial,
                 provider_call_id=call_id,
-                duration_ms=_duration(call_id, transcript),
+                duration_ms=duration,
                 working_directory=transcript.cwd_at.get(record_uuid),
                 attributed_skill=skill,
                 attributed_plugin=plugin,
+                transport=mcp.transport_for(outcome.server if outcome else None),
             )
         )
     return tuple(calls)
