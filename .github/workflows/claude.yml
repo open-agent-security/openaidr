@@ -100,12 +100,13 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          # Subscription-tied OAuth path. Provision via `claude setup-token`
-          # CLI and store as the CLAUDE_CODE_OAUTH_TOKEN repo secret. To use
-          # the pay-per-use API-key path instead, replace this line with
-          # `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}` and create
-          # a key at https://platform.claude.com/settings/workspaces/default/keys.
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Pay-per-use API-key path. Create a key at
+          # https://platform.claude.com/settings/workspaces/default/keys and
+          # store it as the ANTHROPIC_API_KEY repo secret. To use the
+          # subscription-tied OAuth path instead, replace this line with
+          # `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}`
+          # and provision the token via the `claude setup-token` CLI.
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
           # Lets Claude read CI results on PRs.
           additional_permissions: |
