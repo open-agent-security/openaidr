@@ -35,9 +35,15 @@ openaidr 0.0.1
 ```
 
 `openaidr sessions` prints what each agent on this machine actually did —
-sessions, turns, tool calls, and how each one ended. There are no per-call
-timings: the parsing dependency's event schema carries no timestamp below the
-session, so none are modelled or shown.
+sessions, turns, tool calls, and how each one ended. Per-call timings come from
+the transcript's own record of both ends of a call, not from the parsing
+dependency's event schema, which carries no timestamp below the session.
+
+For Claude Code it also reads the per-server MCP connection logs, which is the
+only place the transport, the server's advertised identity, and the outcome of
+an MCP call are written down. That enrichment is best-effort — the path is an
+undocumented cache — and every way it can fall short is reported rather than
+passed off as an absence.
 
 ```console
 $ uv run openaidr sessions --since 2d

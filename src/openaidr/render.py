@@ -7,6 +7,7 @@ resolved to a component and nothing is judged.
 from __future__ import annotations
 
 import json
+import platform
 import re
 from collections import Counter
 from dataclasses import asdict
@@ -54,9 +55,64 @@ def render_text(collection: Collection, detail: bool = False) -> str:
         lines.append("No sessions found.")
     lines.extend(_summary_lines(collection))
     lines.extend(_coverage_lines(collection))
+    lines.extend(_mcp_coverage_lines(collection))
     for failure in collection.failures:
         lines.append(f"! {failure.agent_kind}: {failure.message}")
     return "\n".join(lines) + "\n"
+
+
+def _mcp_coverage_lines(collection: Collection) -> list[str]:
+    """Whether the MCP connection logs were readable, said once and plainly.
+
+    Silence here would be the failure this package argues against everywhere
+    else: a machine whose cache path is not the one we probe would report every
+    transport as absent, which reads exactly like a machine running no MCP
+    servers at all. It is stated even when everything worked, because "0
+    remote" only means something once you know we looked.
+    """
+    sessions = collection.sessions
+    if not sessions:
+        return []
+    with_mcp = [s for s in sessions if any(c.mcp_server for t in s.turns for c in t.tool_calls)]
+    if not with_mcp:
+        return []
+    states = Counter(s.mcp_log_state for s in with_mcp)
+    applied = states.get("applied", 0)
+    lines = [
+        "",
+        (f"MCP connection logs — {applied} of {len(with_mcp)} sessions with MCP calls enriched"),
+    ]
+    if states.get("no_log_root"):
+        lines.append(
+            f"    {states['no_log_root']} could not be read: no cache directory at any "
+            f"known path on {platform.system() or 'this platform'}. Transport, server "
+            "identity and MCP call outcomes are unavailable, not absent."
+        )
+    if states.get("no_log_for_session"):
+        lines.append(
+            f"    {states['no_log_for_session']} had MCP calls but no log — the cache is "
+            "pruned on the agent's schedule, not ours."
+        )
+    if states.get("count_mismatch"):
+        lines.append(
+            f"    {states['count_mismatch']} withheld per-call outcomes: the log and the "
+            "transcript disagree on how many calls were made, so which outcome belongs "
+            "to which call cannot be established. Connection facts kept."
+        )
+    connections = [c for s in sessions for c in s.mcp_connections]
+    if connections:
+        transports = Counter(c.transport for c in connections if c.transport)
+        failed = Counter(c.failure_category for c in connections if c.failure_category)
+        if transports:
+            lines.append(
+                "    transports:  " + ", ".join(f"{n} {t}" for t, n in sorted(transports.items()))
+            )
+        if failed:
+            lines.append(
+                "    connections that failed:  "
+                + ", ".join(f"{n} {c}" for c, n in sorted(failed.items()))
+            )
+    return lines
 
 
 def _coverage_lines(collection: Collection) -> list[str]:
@@ -222,6 +278,14 @@ def _session_document(session: Session) -> dict[str, object]:
         "model": session.model,
         "source": session.source,
         "working_directory": session.working_directory,
+        "mcp_log_state": session.mcp_log_state,
+        "mcp_connections": [
+            # `failure_detail` is LOCAL_ONLY: a server's own words about a
+            # failure can carry a URL or a header fragment, and this document
+            # is the one most likely to be piped somewhere else.
+            {k: v for k, v in asdict(connection).items() if k != "failure_detail"}
+            for connection in session.mcp_connections
+        ],
         "turns": [
             {
                 "position": turn.position,

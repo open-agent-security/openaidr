@@ -85,6 +85,7 @@ package sees an event. Measured across 60 recent transcripts — 4,159 tool call
 | ~~**The context a call ran in**~~ — *closed* | `permissionMode`, `version` and `entrypoint` are recorded by the agent and dropped upstream. The first is the one that changes how everything else reads: with checks bypassed a refusal *cannot* occur, so "no refusals" means nothing was asked rather than everything was approved | All three read here. Mode is positional — declared on a turn, holding until the next declaration — because a session can enter `bypassPermissions` partway through. **42 sessions, 179 calls, ran unguarded** |
 | ~~**Refusal as a first-class outcome**~~ — *closed* | Was recovered from English wording. Measured over 21,874 real tool results that scored **80.2% precision, 81.5% recall**, and its false positives were files *about* permissions — including this reader's own source | `toolDenialKind` on the record. **Read here now**, matched whole; three kinds kept apart rather than collapsed |
 | ~~**The provider's call identifier**~~ — *closed* | Lets a consumer correlate with anything else that saw the same call | `tool_use.id`, **100% coverage**. Span identity stays derived (ADR-0001): changing what a span is would move every row a consumer has already addressed |
+| ~~**What an MCP call did, and over what**~~ — *closed* | The transcript records that an MCP tool was called and, measured on a real corpus, nothing about how it ended: **129 of 130 MCP calls read `unknown`** despite every one having returned, so a successful MCP call could not be told from a failed one. It never records the transport, which is the only thing about an MCP call that can be *observed* rather than taken from the server's own schema | The per-server connection logs Claude Code writes beside its cache. **130 of 130 calls joined**; status, transport and duration recovered, plus each server's advertised identity and why a connection failed. Best-effort: an undocumented path, so every way it falls short is a state on the session (`mcp_log_state`), never a silent absence |
 | **A subagent marker** | Delegated work is distinguished here by file path alone, which is sufficient and already correct | `isSidechain`. **Not taken**: the file path already identifies a subagent transcript unambiguously, and a second source for one fact is a disagreement waiting to happen |
 | ~~**`project_path`**~~ — *closed* | The field exists in the shared schema and was simply left empty: upstream fixes it from whichever record first bore the session's id, and a transcript opening with a `queue-operation` carries none. 44 of 333 sessions lost a directory their later records stated — one of them 93 times | `cwd`, on every substantive record. **Recovered here; 44 sessions with no directory became 0** |
 
@@ -201,10 +202,13 @@ declaration — naming and representation are implementation choices.
 | MCP server | Absent for built-in tools | |
 | Arguments | | local-only |
 | Status | Six values — see below | |
-| — | No per-call timings: the dependency's event model carries none | |
+| Duration | Wall clock from the record's own timestamps, not from the dependency's event model, which carries none. For an MCP call the connection log's tool-execution time fills a gap the transcript left, and never replaces a value it stated | |
+| MCP transport | Which transport carried this call, where the connection log could be read. `None` elsewhere, and `None` is *unknown*, never local | |
 | Outcome | The abridged result and error text | local-only |
 | Result size | The size of what the agent produced, not of the abridged copy held here | |
 | Truncation marker | Upstream elided part of the result. The marker it leaves carries the count removed, which is what makes the original size exact rather than estimated | |
+
+A session additionally carries its **MCP connections** — one record per server per session: transport, endpoint, the name and version the server advertised on the handshake, whether it came up, and a failure category if it did not. Connection-scoped, not call-scoped: these are properties of the connection, and repeating them on every call would say otherwise. The server's own words about a failure are **local-only**; the category is not. Beside them, `mcp_log_state` records whether the log was readable at all.
 
 **local-only** information serves correlation and local rendering. It never enters
 a finding — a detection receives session identity, kind, start and turn count, and
@@ -247,6 +251,15 @@ whatever a vocabulary says it means. This is a per-kind rule: a kind whose parse
 does supply a genuine outcome maps it to `ok` or `error` directly. `unknown` is
 therefore a *coverage statement about the dependency*, and it narrows as the asks
 below are met.
+
+For an MCP call it narrows from a second source rather than from the parser: the
+connection log states the outcome the transcript does not. It only ever *resolves*
+an `unknown` — a status the record itself stated is evidence from the session and
+is never overwritten by a second reading of the same call — and only once the
+guard in `claude_code_mcp` has established that the log and the transcript agree
+on how many calls were made. Where they disagree the outcome is withheld and the
+call stays `unknown`, because the log carries no call identifier and position
+within a tool's sequence is the only thing that could name one.
 
 Agents collapse these visually; AIDR does not. `rejected` is a *human judgement
 about a proposed action* and the most under-used signal in agent telemetry —

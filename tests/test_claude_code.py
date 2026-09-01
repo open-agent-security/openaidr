@@ -410,7 +410,7 @@ def test_a_call_with_no_recorded_body_falls_back_and_says_it_was_abridged() -> N
     routinely-taken branch, and contriving a file to reach it would test the
     contrivance instead.
     """
-    from openaidr.readers.claude_code import _tool_calls, _Transcript
+    from openaidr.readers.claude_code import _MCPEnrichment, _tool_calls, _Transcript
 
     class _Usage:
         tool_name = "Read"
@@ -422,7 +422,15 @@ def test_a_call_with_no_recorded_body_falls_back_and_says_it_was_abridged() -> N
         error = None
 
     empty = _Transcript({}, {}, {}, {}, {}, {}, {}, {}, {}, {})
-    (call,) = _tool_calls([_Usage()], "claude-code:s1", "u1", "u1", set(), empty)  # type: ignore[list-item]
+    (call,) = _tool_calls(
+        [_Usage()],  # type: ignore[list-item]
+        "claude-code:s1",
+        "u1",
+        "u1",
+        set(),
+        empty,
+        _MCPEnrichment(state="not_attempted"),
+    )
 
     assert call.truncated is True
     assert call.result_size == 4000
