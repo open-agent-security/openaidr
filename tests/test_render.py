@@ -278,9 +278,7 @@ def test_a_connection_that_failed_before_any_call_is_still_reported() -> None:
         machine=None,
         user=None,
         mcp_log_state="applied",
-        mcp_connections=(
-            MCPConnection(server="books", connected=False, failure_category="auth"),
-        ),
+        mcp_connections=(MCPConnection(server="books", connected=False, failure_category="auth"),),
         turns=(turn,),
     )
     output = render_text(Collection(sessions=[session], failures=[]))
