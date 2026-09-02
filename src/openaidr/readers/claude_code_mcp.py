@@ -29,6 +29,7 @@ import json
 import os
 import platform
 import re
+import stat
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -193,7 +194,10 @@ class MCPLogIndex:
     #: False when no cache directory exists at any known path -- most often an
     #: unsupported platform, and reported as such rather than as "no MCP here".
     root_found: bool
-    #: Files present but unreadable or unparseable, by path.
+    #: Files present but unreadable or unparseable, by path -- and a cache
+    #: root candidate that exists but could not be statted (see
+    #: `read_mcp_logs`), which is otherwise indistinguishable from one that
+    #: was never configured.
     unreadable: tuple[str, ...] = ()
     #: `(cache project directory, server)` pairs with at least one log file
     #: this read could not open or decode.
@@ -288,12 +292,36 @@ def cache_roots() -> tuple[Path, ...]:
 def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
     """Read every MCP connection log this machine has, keyed by session."""
     candidates = cache_roots() if roots is None else roots
-    present = [root for root in candidates if root.is_dir()]
+    present: list[Path] = []
+    unreadable: list[str] = []
+    for root in candidates:
+        try:
+            is_dir = stat.S_ISDIR(root.stat().st_mode)
+        except FileNotFoundError:
+            # No cache at this candidate path is the ordinary state; most
+            # platforms have exactly one candidate, and it usually does not
+            # exist.
+            continue
+        except OSError:
+            # The candidate exists but could not be statted -- a permission
+            # or transient filesystem failure, unlike the ordinary absence
+            # above. `Path.is_dir()` cannot tell them apart: before Python
+            # 3.14 it propagates some `OSError`s and swallows others, and
+            # from 3.14 it swallows every `OSError` and reports `False`,
+            # indistinguishable from a root that was never configured -- so
+            # every session would silently lose MCP enrichment with nothing
+            # to show for it, the same gap `ClaudeCodeReader.collect` closed
+            # for the transcript root. Recorded as the bare path, the same
+            # shape a file-level failure takes below -- `collect()` wraps
+            # every entry in `unreadable` with its own "could not be read".
+            unreadable.append(str(root))
+            continue
+        if is_dir:
+            present.append(root)
     if not present:
-        return MCPLogIndex(by_session={}, root_found=False)
+        return MCPLogIndex(by_session={}, root_found=False, unreadable=tuple(sorted(unreadable)))
 
     by_session: dict[tuple[str, str], SessionMCPLogs] = defaultdict(SessionMCPLogs)
-    unreadable: list[str] = []
     incomplete_project_servers: set[tuple[str, str]] = set()
     for root in present:
         for directory in root.glob(f"**/{_LOG_DIR_PREFIX}*"):

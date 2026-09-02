@@ -156,6 +156,14 @@ class ClaudeCodeReader:
         for path in sorted(self._root.glob("**/*.jsonl")):
             try:
                 is_dir = stat.S_ISDIR(path.stat().st_mode)
+            except FileNotFoundError as error:
+                # The file listed by the glob a moment ago is gone by the time
+                # it is stat'd. There is no file left to claim its raw session
+                # id, unlike the merely-inaccessible case below.
+                failures.append(
+                    ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
+                )
+                continue
             except OSError as error:
                 # `Path.is_file()` is not used for this probe: before Python
                 # 3.14 it propagates some `OSError`s (e.g. a permission
@@ -164,10 +172,13 @@ class ClaudeCodeReader:
                 # from an ordinary directory either way. `stat()` always
                 # raises, on every supported version, so a real I/O failure
                 # is reported the same as any other unreadable file instead
-                # of silently vanishing.
+                # of silently vanishing. The file still exists and its name
+                # still claims its raw session id, so it must not vanish from
+                # the claimant set (ADR-0008) the way a gone file does not.
                 failures.append(
                     ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
                 )
+                unparsed.append(path)
                 continue
             if is_dir:
                 # `glob` matches a directory whose name happens to end in

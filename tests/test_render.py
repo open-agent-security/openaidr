@@ -243,7 +243,7 @@ def test_mcp_coverage_names_a_session_id_collision_rather_than_a_pruned_cache() 
     )
     output = render_text(Collection(sessions=[session], failures=[]))
     assert "0 of 1 sessions with MCP calls enriched" in output
-    assert "1 withheld everything: more than one transcript file claims this session's id" in output
+    assert "1 withheld everything: this session's id is claimed by more than one" in output
 
 
 def test_mcp_coverage_names_not_attempted_rather_than_leaving_it_unexplained() -> None:

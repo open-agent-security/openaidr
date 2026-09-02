@@ -426,6 +426,40 @@ def test_no_cache_directory_is_reported_not_assumed_empty(tmp_path: Path) -> Non
     assert [c.status for c in _mcp_calls([session])] == ["unknown"]
 
 
+def test_an_inaccessible_mcp_cache_root_is_reported_as_a_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A cache root that exists but cannot be statted -- a permission or
+    transient filesystem failure -- is not the same as one that was never
+    configured. `Path.is_dir()` cannot tell them apart: before Python 3.14 it
+    propagates some `OSError`s and swallows others, and from 3.14 it swallows
+    every `OSError` and reports `False`, indistinguishable from a root that
+    was never configured -- which would otherwise silently withhold MCP
+    enrichment from every session with nothing to show for it.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    cache.mkdir()
+    _transcript(root, ["search"])
+    real_stat = Path.stat
+
+    def flaky_stat(self: Path, *args: object, **kwargs: object):
+        if self == cache:
+            raise OSError("permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    index = read_mcp_logs((cache,))
+    assert index.root_found is False
+    assert index.unreadable == (str(cache),)
+
+    sessions, failures = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
+    assert (sessions[0].mcp_log_state, [c.status for c in _mcp_calls(sessions)]) == (
+        "no_log_root",
+        ["unknown"],
+    )
+    assert any(str(cache) in f.message and "could not be read" in f.message for f in failures)
+
+
 def test_a_session_with_no_log_is_distinguished_from_one_with_no_mcp(tmp_path: Path) -> None:
     """The cache is pruned on the agent's schedule, not ours."""
     root, cache = tmp_path / "projects", tmp_path / "cache"
@@ -943,6 +977,46 @@ def test_an_in_window_transcript_whose_window_check_fails_still_claims_its_raw_s
         return real_within_window(path, window)
 
     monkeypatch.setattr(claude_code, "_within_window", flaky_within_window)
+    sessions, failures = ClaudeCodeReader(root=root, mcp_logs=read_mcp_logs((cache,))).collect(
+        Window(since=None)
+    )
+    assert len(failures) == 1 and str(inaccessible) in failures[0].message
+    assert len(sessions) == 1, "the inaccessible file never becomes a session of its own"
+    assert sessions[0].mcp_log_state == "session_id_collision"
+    assert sessions[0].mcp_connections == ()
+    assert [c.status for c in _mcp_calls(sessions)] == ["unknown"]
+
+
+def test_an_in_window_transcript_whose_type_probe_fails_still_claims_its_raw_session_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A file whose directory-vs-file probe raises is claimant by filename,
+    the same as one whose window check raises (ADR-0008) -- but only when the
+    error does not establish that the file is gone. The type probe runs
+    before the window check, so this is the earliest point in the loop a
+    permission or transient I/O failure can strike, and it must not disappear
+    from the claimant set there either.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    inaccessible = root / "-project-two" / f"{SESSION}.jsonl"
+    inaccessible.parent.mkdir(parents=True, exist_ok=True)
+    inaccessible.write_text("{}\n")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+
+    real_stat = Path.stat
+
+    def flaky_stat(self: Path, *args: object, **kwargs: object):
+        if self == inaccessible:
+            raise OSError("permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
     sessions, failures = ClaudeCodeReader(root=root, mcp_logs=read_mcp_logs((cache,))).collect(
         Window(since=None)
     )
