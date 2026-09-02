@@ -23,18 +23,14 @@ by an OpenAIDR-owned reader on the same contract — per kind, not all-or-nothin
 
 ## Install and run
 
-Not on PyPI yet — install from a clone:
-
 ```bash
-git clone https://github.com/open-agent-security/openaidr
-cd openaidr
-uv sync
+uv tool install openaidr
 ```
 
 That installs an `openaidr` command:
 
 ```console
-$ uv run openaidr --version
+$ openaidr --version
 openaidr 0.0.1
 ```
 
