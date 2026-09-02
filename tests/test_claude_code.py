@@ -212,6 +212,37 @@ def test_a_genuine_repeated_identical_outcome_is_also_withheld(tmp_path: Path) -
         assert call.result is None
 
 
+def test_a_reused_call_id_withholds_both_outcomes_even_with_different_shapes(
+    tmp_path: Path,
+) -> None:
+    """`_compromised_results` only catches a shared id when the two calls also
+    share tool name, type, server and arguments -- upstream's own dict of
+    pending tools, keyed on the bare id, silently drops the earlier of two
+    differently-shaped calls that reuse one id (the later write wins), so its
+    `ToolUsage.result` never resolves and it is invisible to that structural
+    check. But this reader's own recovery pass keys `results`/`errored`/
+    `denials`/`started`/`ended` on the same bare id regardless of shape, so
+    without a shape-independent check the earlier call would silently inherit
+    the later one's recovered result while reporting `status="pending"` --
+    an internally contradictory call."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use("s1", "u1", "2026-08-01T10:00:00.000Z", "dup-id", "Read"),
+            assistant_tool_use("s1", "u2", "2026-08-01T10:00:01.000Z", "dup-id", "Bash"),
+            tool_result("s1", "u3", "2026-08-01T10:00:02.000Z", "dup-id", "shared result"),
+        ],
+    )
+    calls = _calls(tmp_path)
+    assert len(calls) == 2
+    assert {c.tool_name for c in calls} == {"Read", "Bash"}
+    for call in calls:
+        assert call.status == "pending"
+        assert call.result is None
+        assert call.duration_ms is None
+
+
 def test_mcp_tool_name_is_split_into_server_and_tool(tmp_path: Path) -> None:
     write_session(
         tmp_path,
@@ -515,12 +546,64 @@ def test_a_call_with_no_recorded_body_falls_back_and_says_it_was_abridged() -> N
         "u1",
         0,
         set(),
+        set(),
         empty,
         _MCPEnrichment(state="not_attempted"),
     )
 
     assert call.truncated is True
     assert call.result_size == 4000
+
+
+def test_a_pending_status_from_upstreams_own_snapshot_never_carries_a_recovered_result() -> None:
+    """Upstream's parse and this reader's own recovery pass read the same file
+    independently. A session still being written can grow between the two
+    reads, so the recovery pass can see a record upstream's earlier snapshot
+    never had -- exercised directly here by giving `transcript` a `results`/
+    `started`/`ended` entry for a call whose `ToolUsage.result` (upstream's own
+    snapshot) is still `None`. Trusting the recovery pass's later data would
+    produce a `pending` call that nonetheless carries a result and a duration,
+    an internally contradictory call for a transcript that never split across
+    two reads in real use -- reproducing it directly is what makes the race
+    exercisable without contriving an actual concurrent write."""
+    from openaidr.readers.claude_code import _MCPEnrichment, _tool_calls, _Transcript
+
+    class _Usage:
+        tool_name = "Read"
+        tool_type = "tool"
+        server_name = None
+        arguments: ClassVar[dict[str, object]] = {}
+        result = None
+        status = "success"
+        error = None
+
+    grown = _Transcript(
+        {},
+        {},
+        {},
+        {},
+        {("u1", 0, 0): "t1"},
+        {"t1": datetime(2026, 8, 1, 10, 0, 0, tzinfo=UTC)},
+        {"t1": datetime(2026, 8, 1, 10, 0, 5, tzinfo=UTC)},
+        {},
+        {},
+        {"t1": "a result upstream's snapshot never saw"},
+    )
+    (call,) = _tool_calls(
+        [_Usage()],  # type: ignore[list-item]
+        "claude-code:s1",
+        "u1",
+        "u1",
+        0,
+        set(),
+        set(),
+        grown,
+        _MCPEnrichment(state="not_attempted"),
+    )
+
+    assert call.status == "pending"
+    assert call.result is None
+    assert call.duration_ms is None
 
 
 def test_an_untruncated_result_reports_its_own_length(tmp_path: Path) -> None:

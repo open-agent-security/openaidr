@@ -145,6 +145,18 @@ class MCPLogIndex:
     root_found: bool
     #: Files present but unreadable or unparseable, by path.
     unreadable: tuple[str, ...] = ()
+    #: Servers with at least one log file this read could not open or decode.
+    #:
+    #: A server's log can be split across several files -- one per run -- so a
+    #: session's own connection history can span more than one. Skipping an
+    #: unreadable file among them leaves `by_session` holding whatever the
+    #: *other* files for that server recorded, not the whole story, and the
+    #: ordinal join's count guard has no way to tell a genuinely complete count
+    #: from one that only looks complete because the missing file's share of it
+    #: went uncounted on both sides. Naming the server here is what lets a
+    #: consumer of this index withhold per-call attribution for it rather than
+    #: trust a count comparison run against a partial read.
+    incomplete_servers: frozenset[str] = frozenset()
 
     def for_session(self, session_id: str) -> SessionMCPLogs | None:
         return self.by_session.get(session_id)
@@ -182,6 +194,7 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
 
     by_session: dict[str, SessionMCPLogs] = defaultdict(SessionMCPLogs)
     unreadable: list[str] = []
+    incomplete_servers: set[str] = set()
     for root in present:
         for directory in root.glob(f"**/{_LOG_DIR_PREFIX}*"):
             if not directory.is_dir():
@@ -192,6 +205,7 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
                     lines = path.read_text(encoding="utf-8").splitlines()
                 except (OSError, UnicodeDecodeError):
                     unreadable.append(str(path))
+                    incomplete_servers.add(server)
                     continue
                 _read_file(lines, server, by_session)
     # Every log has been read, so an unresolved wait is final rather than
@@ -199,7 +213,10 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
     for logs in by_session.values():
         logs.seal()
     return MCPLogIndex(
-        by_session=dict(by_session), root_found=True, unreadable=tuple(sorted(unreadable))
+        by_session=dict(by_session),
+        root_found=True,
+        unreadable=tuple(sorted(unreadable)),
+        incomplete_servers=frozenset(incomplete_servers),
     )
 
 
