@@ -667,7 +667,12 @@ def _tool_calls(
             if withheld or status == "pending"
             else _duration(raw_session_id, call_id, transcript)
         )
-        if duration is None and outcome is not None:
+        # `outcome.duration_ms` can be a `still running` wait rather than a
+        # round trip -- `seal()` gives `ok=None` exactly that elapsed, for a
+        # call the log never saw finish. Falling back to it unconditionally
+        # would put a duration on a call still `pending` above, the same
+        # contradiction that guard exists to prevent.
+        if duration is None and outcome is not None and status != "pending":
             duration = outcome.duration_ms
         skill, plugin = transcript.attribution.get(
             (raw_session_id, record_uuid, occurrence), (None, None)
