@@ -180,6 +180,83 @@ def test_a_tool_only_the_client_called_does_not_trip_the_guard(tmp_path: Path) -
     assert [c.status for c in _mcp_calls([session])] == ["ok"]
 
 
+def test_two_servers_sharing_a_tool_name_keep_their_own_outcomes(tmp_path: Path) -> None:
+    """MCP servers own their schemas, so one tool name can belong to two of them.
+
+    The join key is `(server, tool)` throughout, because the alternative is not
+    a missing outcome but the wrong one: `books/search` reported with the status,
+    duration and transport that belong to `tickets/search`. Counting per tool
+    alone would also let the two servers' totals cover for each other, so a
+    pruned log on one side could pass the guard on the strength of the other.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    records = [
+        user_text(SESSION, "u0", "2026-01-01T00:00:00Z", "go"),
+        assistant_tool_use(SESSION, "a0", "2026-01-01T00:00:01Z", "toolu_0", "mcp__books__search"),
+        tool_result(SESSION, "r0", "2026-01-01T00:00:02Z", "toolu_0", "done"),
+        assistant_tool_use(
+            SESSION, "a1", "2026-01-01T00:00:03Z", "toolu_1", "mcp__tickets__search"
+        ),
+        tool_result(SESSION, "r1", "2026-01-01T00:00:04Z", "toolu_1", "done"),
+    ]
+    write_session(root, "project", records)
+    # Written tickets-first, so a name-only queue would hand the `books` call
+    # the `tickets` failure purely on directory traversal order.
+    log.write_server_log(
+        cache,
+        "tickets",
+        [
+            log.connected(SESSION, transport="sse"),
+            log.failed(SESSION, "search", ms=8),
+        ],
+    )
+    log.write_server_log(
+        cache,
+        "books",
+        [
+            log.connected(SESSION, transport="stdio"),
+            log.completed(SESSION, "search", ms=37),
+        ],
+    )
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "applied"
+    books, tickets = _mcp_calls([session])
+    assert (books.mcp_server, books.status, books.transport) == ("books", "ok", "stdio")
+    assert (tickets.mcp_server, tickets.status, tickets.transport) == ("tickets", "error", "sse")
+
+
+def test_one_server_of_two_missing_its_log_withholds_both(tmp_path: Path) -> None:
+    """Aggregate counts agreeing across servers is not the same as each agreeing.
+
+    `books` logged two calls and `tickets` none; a per-tool total of two would
+    match the transcript's two and admit a join that places both of `books`'s
+    outcomes, one of them onto a `tickets` call.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    records = [
+        user_text(SESSION, "u0", "2026-01-01T00:00:00Z", "go"),
+        assistant_tool_use(SESSION, "a0", "2026-01-01T00:00:01Z", "toolu_0", "mcp__books__search"),
+        tool_result(SESSION, "r0", "2026-01-01T00:00:02Z", "toolu_0", "done"),
+        assistant_tool_use(
+            SESSION, "a1", "2026-01-01T00:00:03Z", "toolu_1", "mcp__tickets__search"
+        ),
+        tool_result(SESSION, "r1", "2026-01-01T00:00:04Z", "toolu_1", "done"),
+    ]
+    write_session(root, "project", records)
+    log.write_server_log(
+        cache,
+        "books",
+        [
+            log.connected(SESSION),
+            log.completed(SESSION, "search"),
+            log.completed(SESSION, "search"),
+        ],
+    )
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "count_mismatch"
+    assert [c.status for c in _mcp_calls([session])] == ["unknown", "unknown"]
+
+
 def test_a_status_the_transcript_states_is_never_overwritten(tmp_path: Path) -> None:
     """The log only ever resolves an `unknown`.
 
