@@ -10,8 +10,8 @@ path.
 
 Apache-2.0, and deliberately plumbing rather than judgement. Every new agent
 format is coverage a contributor can add without touching anything that
-interprets the result. Consumers live in their own repositories; nothing here
-may import, reference or be shaped by one.
+interprets the result. The proprietary `stacktrace` package is one consumer;
+nothing in this repository may import, reference or be shaped by it.
 
 ## Common commands
 
@@ -23,9 +23,7 @@ uv run ruff format --check .               # format check
 uv run pyright                             # type check
 uv run pytest -v                           # run tests
 
-uv run openaidr --version                  # version
-uv run openaidr sessions                   # what the agents on this machine did
-uv run openaidr sessions --format json     # the same, machine-readable
+uv run openaidr --version                  # the CLI (only --version so far)
 ```
 
 ## Architecture
@@ -66,7 +64,7 @@ Full design: `docs/specs/session-collection.md`. Decisions: `docs/adrs/`.
   ships nothing anywhere. A consumer's boundary is the consumer's to state.
 - **Nothing proprietary.** No import, config key, URL or mention of any closed
   product. The property to hold: OpenAIDR installs and runs correctly for someone
-  who has never heard of any downstream product. That is one grep in CI.
+  who has never heard of Stacktrace. That is one grep in CI.
 - **Per-kind rules, never one global pattern.** A general tool-name pattern
   mis-splits any server name containing the delimiter, and the result is not a
   missing server but the *wrong* one. A silent wrong answer is worse than a gap.
