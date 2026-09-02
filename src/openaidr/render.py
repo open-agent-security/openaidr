@@ -86,6 +86,12 @@ _MCP_LOG_STATE_EXPLANATIONS: dict[MCPLogState, Callable[[int], str]] = {
         f"{platform.system() or 'this platform'}. Transport, server identity and "
         "MCP call outcomes are unavailable, not absent."
     ),
+    "log_root_unreadable": lambda n: (
+        f"{n} could not be read: the cache directory exists but could not be "
+        "opened — a permission or transient filesystem failure, not an unsupported "
+        "platform. Transport, server identity and MCP call outcomes are unavailable, "
+        "not absent."
+    ),
     "no_log_for_session": lambda n: (
         f"{n} had MCP calls but no log — the cache is pruned on the agent's schedule, not ours."
     ),

@@ -7,6 +7,7 @@ on what this package adds — identity, per-kind tool naming, and outcomes.
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
@@ -619,6 +620,38 @@ def test_an_inaccessible_root_is_reported_as_a_failure(tmp_path: Path, monkeypat
     assert len(failures) == 1
     assert str(root) in failures[0].message
     assert "permission denied" in failures[0].message
+
+
+def test_a_subdirectory_the_walk_cannot_scan_is_reported_and_does_not_hide_the_rest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`Path.glob()`/`Path.rglob()` suppress every `OSError` raised while
+    scanning the filesystem as of Python 3.13 -- including a `PermissionError`
+    on a directory this process cannot list -- so a project directory this
+    process cannot enter would otherwise vanish from `**/*.jsonl`, along with
+    every transcript inside it, with no trace at all: not a failure, and not
+    even a path the per-file guards above ever get a chance to report on,
+    since glob never yields one for it. Discovery walks the tree itself
+    (`os.walk`) rather than globbing it, so the directory it could not scan is
+    at least named as a failure.
+    """
+    write_session(
+        tmp_path, "-a", [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at one thing")]
+    )
+    write_session(tmp_path, "-b", [user_text("s2", "u2", "2026-08-01T10:00:00.000Z", "hidden")])
+    blocked = tmp_path / "-b"
+    real_scandir = os.scandir
+
+    def flaky_scandir(path="."):
+        if path == str(blocked):
+            raise PermissionError(13, "Permission denied", str(blocked))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", flaky_scandir)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+    assert any(str(blocked) in f.message for f in failures)
 
 
 def test_a_long_result_is_carried_whole(tmp_path: Path) -> None:

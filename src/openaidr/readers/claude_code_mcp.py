@@ -194,6 +194,12 @@ class MCPLogIndex:
     #: False when no cache directory exists at any known path -- most often an
     #: unsupported platform, and reported as such rather than as "no MCP here".
     root_found: bool
+    #: True when `root_found` is False *because* every candidate root that
+    #: exists could not be statted, rather than because none exists. Kept
+    #: apart from `root_found` so a caller can report "could not be read" for
+    #: a permission or transient filesystem failure instead of the platform
+    #: explanation `no_log_root` gives an ordinary absence.
+    root_unreadable: bool = False
     #: Files present but unreadable or unparseable, by path -- and a cache
     #: root candidate that exists but could not be statted (see
     #: `read_mcp_logs`), which is otherwise indistinguishable from one that
@@ -289,6 +295,31 @@ def cache_roots() -> tuple[Path, ...]:
     return (base / "claude-cli-nodejs",)
 
 
+def _walk_log_dirs(root: Path) -> tuple[list[tuple[Path, list[str]]], list[OSError]]:
+    """Every `mcp-logs-*` directory under `root`, with the `*.jsonl` names in
+    it, and every subtree scan `glob()` would have silently dropped.
+
+    Same gap as `_discover_transcripts` in `claude_code.py`, one directory
+    tree over: `Path.glob()`/`Path.rglob()` suppress every `OSError` raised
+    while scanning the filesystem as of Python 3.13 -- including a
+    `PermissionError` on a directory this process cannot list -- so a project
+    directory this process cannot enter vanishes from `**/mcp-logs-*` with no
+    trace, and every session whose log lived under it reads as pruned
+    (`no_log_for_session`) rather than as withheld. `os.walk`'s `onerror` is
+    the one stdlib primitive still willing to name the directory it could not
+    scan; each error's `filename` attribute is that directory.
+    """
+    log_dirs: list[tuple[Path, list[str]]] = []
+    failures: list[OSError] = []
+    for dirpath, _dirnames, filenames in os.walk(root, onerror=failures.append):
+        path = Path(dirpath)
+        if path.name.startswith(_LOG_DIR_PREFIX):
+            names = sorted(name for name in filenames if name.endswith(".jsonl"))
+            log_dirs.append((path, names))
+    log_dirs.sort(key=lambda item: item[0])
+    return log_dirs, failures
+
+
 def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
     """Read every MCP connection log this machine has, keyed by session."""
     candidates = cache_roots() if roots is None else roots
@@ -319,17 +350,38 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
         if is_dir:
             present.append(root)
     if not present:
-        return MCPLogIndex(by_session={}, root_found=False, unreadable=tuple(sorted(unreadable)))
+        # Every candidate that exists having errored (`unreadable` non-empty)
+        # is a different fact from none of them existing at all -- the one
+        # `root_found=False` alone cannot state, per `MCPLogIndex.root_unreadable`.
+        return MCPLogIndex(
+            by_session={},
+            root_found=False,
+            root_unreadable=bool(unreadable),
+            unreadable=tuple(sorted(unreadable)),
+        )
 
     by_session: dict[tuple[str, str], SessionMCPLogs] = defaultdict(SessionMCPLogs)
     incomplete_project_servers: set[tuple[str, str]] = set()
     for root in present:
-        for directory in root.glob(f"**/{_LOG_DIR_PREFIX}*"):
-            if not directory.is_dir():
-                continue
+        log_dirs, walk_failures = _walk_log_dirs(root)
+        for error in walk_failures:
+            failed = Path(str(error.filename))
+            unreadable.append(str(failed))
+            if failed.name.startswith(_LOG_DIR_PREFIX):
+                # The directory that could not be scanned was itself a
+                # server's log, not merely an ancestor of one, so the server
+                # it belongs to is known even though its files are not --
+                # unlike a failure higher up the tree, where an unscanned
+                # project directory could hide any number of servers this
+                # read never learns the names of.
+                incomplete_project_servers.add(
+                    (failed.parent.name, failed.name[len(_LOG_DIR_PREFIX) :])
+                )
+        for directory, names in log_dirs:
             server = directory.name[len(_LOG_DIR_PREFIX) :]
             project = directory.parent.name
-            for path in sorted(directory.glob("*.jsonl")):
+            for name in names:
+                path = directory / name
                 try:
                     lines = path.read_text(encoding="utf-8").splitlines()
                 except (OSError, UnicodeDecodeError):

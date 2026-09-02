@@ -420,7 +420,10 @@ def test_no_cache_directory_is_reported_not_assumed_empty(tmp_path: Path) -> Non
     """
     root = tmp_path / "projects"
     _transcript(root, ["search"])
-    (session,) = _collect(root, None)
+    index = read_mcp_logs((root / "absent",))
+    assert index.root_unreadable is False
+    sessions, _ = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
+    (session,) = sessions
     assert session.mcp_log_state == "no_log_root"
     assert session.mcp_connections == ()
     assert [c.status for c in _mcp_calls([session])] == ["unknown"]
@@ -450,14 +453,53 @@ def test_an_inaccessible_mcp_cache_root_is_reported_as_a_failure(
     monkeypatch.setattr(Path, "stat", flaky_stat)
     index = read_mcp_logs((cache,))
     assert index.root_found is False
+    assert index.root_unreadable is True
     assert index.unreadable == (str(cache),)
 
     sessions, failures = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
     assert (sessions[0].mcp_log_state, [c.status for c in _mcp_calls(sessions)]) == (
-        "no_log_root",
+        "log_root_unreadable",
         ["unknown"],
     )
     assert any(str(cache) in f.message and "could not be read" in f.message for f in failures)
+
+
+def test_a_log_directory_the_walk_cannot_scan_is_reported_and_withholds_outcomes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`Path.glob()` suppresses every `OSError` raised while scanning the
+    filesystem as of Python 3.13, so a server's log directory this process
+    cannot list would otherwise vanish from `**/mcp-logs-*` with no trace, and
+    the session that called it would read as `no_log_for_session` -- the same
+    as a pruned cache -- rather than as data withheld. Reading walks the tree
+    itself (`os.walk`) rather than globbing it, so the directory it could not
+    scan is at least named as a failure, and the server it belongs to (known
+    from the directory's own name, unlike a failure higher up the tree) is
+    marked incomplete so its outcomes are withheld rather than misreported as
+    a clean count match.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-work-project")
+    blocked = log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+    ).parent
+    real_scandir = os.scandir
+
+    def flaky_scandir(path="."):
+        if path == str(blocked):
+            raise PermissionError(13, "Permission denied", str(blocked))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", flaky_scandir)
+    index = read_mcp_logs((cache,))
+    assert any(str(blocked) in entry for entry in index.unreadable)
+    assert ("-work-project", "books") in index.incomplete_project_servers
+
+    sessions, failures = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
+    assert sessions[0].mcp_log_state == "count_mismatch"
+    assert any(str(blocked) in f.message for f in failures)
 
 
 def test_a_session_with_no_log_is_distinguished_from_one_with_no_mcp(tmp_path: Path) -> None:

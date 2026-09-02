@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import stat
 from collections import Counter, defaultdict, deque
@@ -153,12 +154,17 @@ class ClaudeCodeReader:
         #: are the same case here -- neither was opened for its session id, so
         #: both are claimants by filename alone, same as an out-of-window file.
         unparsed: list[Path] = []
-        for path in sorted(self._root.glob("**/*.jsonl")):
+        jsonl_paths, walk_failures = _discover_transcripts(self._root)
+        failures.extend(
+            ReaderFailure(agent_kind=self.agent_kind, message=f"{error.filename}: {error}")
+            for error in walk_failures
+        )
+        for path in jsonl_paths:
             try:
                 is_dir = stat.S_ISDIR(path.stat().st_mode)
             except FileNotFoundError as error:
-                # The file listed by the glob a moment ago is gone by the time
-                # it is stat'd. There is no file left to claim its raw session
+                # The file the walk listed a moment ago is gone by the time it
+                # is stat'd. There is no file left to claim its raw session
                 # id, unlike the merely-inaccessible case below.
                 failures.append(
                     ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
@@ -181,12 +187,15 @@ class ClaudeCodeReader:
                 unparsed.append(path)
                 continue
             if is_dir:
-                # `glob` matches a directory whose name happens to end in
-                # `.jsonl` too, not only files. Such a directory is not a
-                # transcript under any interpretation, so it must not reach
-                # `_parse_file` -- which would fail on it -- and land in
-                # `unparsed`, where its name could collide with a real
-                # transcript's raw session id it merely contains.
+                # `_discover_transcripts` sorts a name into `dirnames` rather
+                # than here whenever `os.walk` can tell it is a directory, but
+                # a name it could not type (a broken symlink, or one that
+                # changed between the walk and this stat) falls through to
+                # `filenames` regardless. Such a directory is not a transcript
+                # under any interpretation, so it must not reach `_parse_file`
+                # -- which would fail on it -- and land in `unparsed`, where
+                # its name could collide with a real transcript's raw session
+                # id it merely contains.
                 continue
             try:
                 in_window = _within_window(path, window)
@@ -410,7 +419,12 @@ class ClaudeCodeReader:
         if index is None:
             return _MCPEnrichment(state="not_attempted")
         if not index.root_found:
-            return _MCPEnrichment(state="no_log_root")
+            # `root_unreadable` says whether that is because the root was
+            # never configured or because it exists but could not be statted
+            # -- the same distinction `ClaudeCodeReader.collect` already
+            # draws for the transcript root, one layer down.
+            state: MCPLogState = "log_root_unreadable" if index.root_unreadable else "no_log_root"
+            return _MCPEnrichment(state=state)
         logs, ambiguous, resolved_project = index.for_session(raw_id, project)
         if ambiguous:
             # Two projects filed a log under this session id and neither can be
@@ -1521,3 +1535,28 @@ def _within_window(path: Path, window: Window) -> bool:
         return True
     modified = datetime.fromtimestamp(path.stat().st_mtime, tz=window.since.tzinfo)
     return modified >= window.since
+
+
+def _discover_transcripts(root: Path) -> tuple[list[Path], list[OSError]]:
+    """Every `*.jsonl` path under `root`, and every subtree scan `glob()`
+    would have silently dropped.
+
+    `Path.glob()`/`Path.rglob()` suppress every `OSError` raised while
+    scanning the filesystem as of Python 3.13 -- including a `PermissionError`
+    on a directory this process cannot list -- so a subdirectory this process
+    cannot enter vanishes from `**/*.jsonl` with no trace: not a failure, not
+    even a path the per-file `stat()` guards below get a chance to report on.
+    Nothing downstream can recover a file glob never yielded a path for in the
+    first place -- unlike a listed path that later fails to stat or parse,
+    there is no filename here for `_ambiguous_transcript_ids` to fall back to
+    either (ADR-0008's fallback presumes a name was seen).
+
+    `os.walk`'s `onerror` is the one stdlib primitive still willing to name a
+    directory it could not scan rather than swallowing it the way `glob()`
+    now does; each error's `filename` attribute is the directory that failed.
+    """
+    files: list[Path] = []
+    failures: list[OSError] = []
+    for dirpath, _dirnames, filenames in os.walk(root, onerror=failures.append):
+        files.extend(Path(dirpath) / name for name in filenames if name.endswith(".jsonl"))
+    return sorted(files), failures
