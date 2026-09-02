@@ -421,8 +421,12 @@ def test_a_transcript_that_vanishes_during_the_window_check_does_not_lose_the_ot
     """
     from openaidr.readers import claude_code
 
-    write_session(tmp_path, "-a", [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "one")])
-    gone = write_session(tmp_path, "-b", [user_text("s2", "u2", "2026-08-01T10:00:00.000Z", "two")])
+    write_session(
+        tmp_path, "-a", [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at one thing")]
+    )
+    gone = write_session(
+        tmp_path, "-b", [user_text("s2", "u2", "2026-08-01T10:00:00.000Z", "look at another")]
+    )
 
     real_within_window = claude_code._within_window
 
