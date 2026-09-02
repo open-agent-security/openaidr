@@ -231,7 +231,9 @@ class ClaudeCodeReader:
         silently wrong the moment one did not: a single dropped line shifts
         every later outcome onto the wrong call, with nothing to show for it.
 
-        So per-tool counts must agree before any outcome is attributed. Where
+        So per-`(server, tool)` counts must agree before any outcome is
+        attributed -- the same compound key the join itself uses, since a name
+        alone would let two servers' sequences cover for each other. Where
         they do not, the connection-scoped facts are still kept -- transport and
         advertised identity are properties of the connection, unaffected by how
         many calls went over it -- and the per-call half is withheld. A gap that
@@ -262,16 +264,16 @@ class ClaudeCodeReader:
             )
             for c in sorted(logs.connections.values(), key=lambda c: c.server)
         )
-        # Compared per tool, and only over the tools the transcript actually
-        # calls. Outcomes are queued by tool name and popped by tool name, so a
-        # tool present only in the log can never shift one that is in both --
+        # Compared per `(server, tool)`, and only over the ones the transcript
+        # actually calls. Outcomes are queued and popped under that same key, so
+        # a tool present only in the log can never shift one that is in both --
         # the client makes MCP calls of its own (`closeAllDiffTabs`,
         # `getDiagnostics` against the IDE server) that are not agent tool calls
         # and never appear in a transcript. Comparing whole count maps would
         # read those as corruption and withhold outcomes over nothing.
         transcript_counts = _mcp_tool_counts(event)
         log_counts = logs.tool_counts()
-        if any(log_counts.get(tool, 0) != n for tool, n in transcript_counts.items()):
+        if any(log_counts.get(key, 0) != n for key, n in transcript_counts.items()):
             return _MCPEnrichment(state="count_mismatch", connections=connections)
         transports = {
             server: connection.transport for server, connection in logs.connections.items()
@@ -279,7 +281,7 @@ class ClaudeCodeReader:
         return _MCPEnrichment(
             state="applied",
             connections=connections,
-            outcomes={tool: deque(queue) for tool, queue in logs.outcomes.items()},
+            outcomes={key: deque(queue) for key, queue in logs.outcomes.items()},
             transports=transports,
         )
 
@@ -288,19 +290,20 @@ class ClaudeCodeReader:
 class _MCPEnrichment:
     """What the connection log contributes to one session.
 
-    Stateful by design: `take` pops from a per-tool queue, so consecutive calls
-    to the same tool consume consecutive outcomes. That is the ordinal join,
-    and it is only ever reached once `_mcp_enrichment`'s guard has established
-    that both sides counted the same calls.
+    Stateful by design: `take` pops from a per-`(server, tool)` queue, so
+    consecutive calls to the same tool on the same server consume consecutive
+    outcomes. That is the ordinal join, and it is only ever reached once
+    `_mcp_enrichment`'s guard has established that both sides counted the same
+    calls.
     """
 
     state: MCPLogState
     connections: tuple[MCPConnection, ...] = ()
-    outcomes: dict[str, deque[MCPCallOutcome]] = field(default_factory=dict)
+    outcomes: dict[tuple[str, str], deque[MCPCallOutcome]] = field(default_factory=dict)
     transports: dict[str, str | None] = field(default_factory=dict)
 
-    def take(self, tool: str) -> MCPCallOutcome | None:
-        queue = self.outcomes.get(tool)
+    def take(self, server: str, tool: str) -> MCPCallOutcome | None:
+        queue = self.outcomes.get((server, tool))
         return queue.popleft() if queue else None
 
     def transport_for(self, server: str | None) -> str | None:
@@ -315,20 +318,21 @@ def _calls_mcp(event: AgentEvent) -> bool:
     )
 
 
-def _mcp_tool_counts(event: AgentEvent) -> Counter[str]:
+def _mcp_tool_counts(event: AgentEvent) -> Counter[tuple[str, str]]:
     """How many times each MCP tool was called, as the transcript has it.
 
     Compared against the log's own count to decide whether the ordinal join is
-    trustworthy. Counted per tool rather than in total: two servers exposing the
-    same tool name would still align, and a total would hide one server's log
-    being pruned behind another's being complete.
+    trustworthy. Counted per `(server, tool)` rather than in total: a total would
+    hide one server's log being pruned behind another's being complete, and two
+    servers exposing the same tool name would cover for each other on a name
+    alone.
     """
-    counts: Counter[str] = Counter()
+    counts: Counter[tuple[str, str]] = Counter()
     for message in event.chat_history:
         for tool in message.tools:
             server, name = _server_and_tool(tool)
             if server is not None:
-                counts[name] += 1
+                counts[(server, name)] += 1
     return counts
 
 
@@ -462,15 +466,16 @@ def _tool_calls(
         # A withheld duplicate is a gap, not a statement. `pending` there does
         # not mean the transcript said nothing came back; it means *this reader*
         # declined to attribute a result it could not place (ADR-0002). The log
-        # can place it -- by ordinal, already guarded by a per-tool count -- so
-        # letting the outcome through is the same rule, not an exception to it.
+        # can place it -- by ordinal, already guarded by a per-`(server, tool)`
+        # count -- so letting the outcome through is the same rule, not an
+        # exception to it.
         #
         # It is also the case that matters most. A retry loop is duplicates by
         # definition, so without this the one shape where the outcome is most
         # informative is the one shape that never receives it: three identical
         # rejected calls reached consumers as three `pending` with the failure
         # stripped off, and the loop read as silence.
-        outcome = mcp.take(name) if server is not None else None
+        outcome = mcp.take(server, name) if server is not None else None
         if outcome is not None and (status == "unknown" or withheld):
             # `ok is None` means the client reported the call still running and
             # nothing ever followed. That is not an outcome to assert, so the
@@ -692,9 +697,10 @@ def _recorded(path: Path) -> _Transcript:
     to has been built successfully and losing it over a recovery pass would turn
     a missing field into a missing session.
 
-    The permission mode is carried forward across records in file order — it is
-    declared on a turn and holds until the next declaration — while every other
-    value is taken from the record that states it.
+    The permission mode is carried forward across records in file order within
+    the session that declared it — it is declared on a turn and holds until the
+    next declaration in that same session, and one file can hold more than one —
+    while every other value is taken from the record that states it.
     """
     cwds: dict[str, str] = {}
     versions: dict[str, str] = {}
@@ -713,7 +719,7 @@ def _recorded(path: Path) -> _Transcript:
     errored: dict[str, bool] = {}
     denials: dict[str, str] = {}
     results: dict[str, str] = {}
-    mode: str | None = None
+    modes: dict[str, str] = {}
 
     try:
         with path.open(encoding="utf-8") as handle:
@@ -728,8 +734,9 @@ def _recorded(path: Path) -> _Transcript:
                 if not isinstance(record, dict):
                     continue
 
-                session_id = record.get("sessionId")
-                if isinstance(session_id, str) and session_id:
+                recorded_id = record.get("sessionId")
+                session_id = recorded_id if isinstance(recorded_id, str) and recorded_id else None
+                if session_id is not None:
                     for key, store in (
                         ("cwd", cwds),
                         ("version", versions),
@@ -744,8 +751,9 @@ def _recorded(path: Path) -> _Transcript:
                     )
 
                 declared = record.get("permissionMode")
-                if isinstance(declared, str) and declared:
-                    mode = declared
+                if session_id is not None and isinstance(declared, str) and declared:
+                    modes[session_id] = declared
+                mode = modes.get(session_id) if session_id is not None else None
                 uuid = record.get("uuid")
                 if mode is not None and isinstance(uuid, str) and uuid:
                     permission_modes[uuid] = mode

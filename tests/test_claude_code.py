@@ -629,6 +629,32 @@ def test_the_permission_mode_holds_until_the_next_declaration(tmp_path: Path) ->
     assert modes == ["default", "default", "bypassPermissions", "bypassPermissions"]
 
 
+def test_a_mode_declared_in_one_session_does_not_reach_another(tmp_path: Path) -> None:
+    """One file can hold more than one session. A mode holds until the next
+    declaration *within its own session*; lending it to a session that declared
+    nothing would state the stronger, wrong fact that that session ran unguarded.
+    """
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            user_text(
+                "s1", "u1", "2026-08-01T10:00:00.000Z", "first", permissionMode="bypassPermissions"
+            ),
+            assistant_tool_use("s1", "u2", "2026-08-01T10:00:01.000Z", "t1", "Bash"),
+            user_text("s2", "u3", "2026-08-01T10:00:02.000Z", "second"),
+            assistant_tool_use("s2", "u4", "2026-08-01T10:00:03.000Z", "t2", "Bash"),
+            assistant_tool_use("s1", "u5", "2026-08-01T10:00:04.000Z", "t3", "Bash"),
+        ],
+    )
+    modes = {
+        session.session_id: [turn.permission_mode for turn in session.turns]
+        for session in _sessions(tmp_path)
+    }
+    assert modes["claude-code:s1"] == ["bypassPermissions"] * 3
+    assert modes["claude-code:s2"] == [None, None]
+
+
 def test_the_agent_build_and_entrypoint_are_recorded(tmp_path: Path) -> None:
     """Behaviour changes between agent versions, and a programmatic entrypoint
     means no human was at the keyboard."""

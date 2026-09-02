@@ -99,16 +99,19 @@ class SessionMCPLogs:
     """Everything the logs record for one session."""
 
     connections: dict[str, _Connection] = field(default_factory=dict)
-    #: Call outcomes in the order the client logged them, per tool name. The
-    #: logs carry no span and no call id, so position within a tool's sequence
-    #: is the only thing that can identify one -- see `guarded_outcomes`.
-    outcomes: dict[str, deque[MCPCallOutcome]] = field(default_factory=lambda: defaultdict(deque))
-    #: tool -> longest elapsed the client reported while still waiting, for a
-    #: call that has not yet been resolved by a completion or a failure. What
-    #: survives here at end of file never came back.
-    waiting: dict[str, int] = field(default_factory=dict)
-    #: The server each unresolved wait belongs to.
-    waiting_server: dict[str, str] = field(default_factory=dict)
+    #: Call outcomes in the order the client logged them, per `(server, tool)`.
+    #: The logs carry no span and no call id, so position within one tool's
+    #: sequence is the only thing that can identify one. Keyed by the same
+    #: compound identity the rest of the codebase joins on: servers own their
+    #: schemas independently, so two of them can expose `search`, and a name-only
+    #: queue would hand one server's call the other server's outcome.
+    outcomes: dict[tuple[str, str], deque[MCPCallOutcome]] = field(
+        default_factory=lambda: defaultdict(deque)
+    )
+    #: `(server, tool)` -> longest elapsed the client reported while still
+    #: waiting, for a call that has not yet been resolved by a completion or a
+    #: failure. What survives here at end of file never came back.
+    waiting: dict[tuple[str, str], int] = field(default_factory=dict)
 
     def seal(self) -> None:
         """Turn every unresolved wait into an outcome that says so.
@@ -117,19 +120,14 @@ class SessionMCPLogs:
         it is the client's last word on that call, so it becomes an outcome with
         `ok=None` rather than being dropped.
         """
-        for tool, elapsed in self.waiting.items():
-            self.outcomes[tool].append(
-                MCPCallOutcome(
-                    server=self.waiting_server.get(tool, ""),
-                    tool=tool,
-                    ok=None,
-                    duration_ms=elapsed,
-                )
+        for (server, tool), elapsed in self.waiting.items():
+            self.outcomes[(server, tool)].append(
+                MCPCallOutcome(server=server, tool=tool, ok=None, duration_ms=elapsed)
             )
         self.waiting.clear()
 
-    def tool_counts(self) -> Counter[str]:
-        return Counter({tool: len(queue) for tool, queue in self.outcomes.items()})
+    def tool_counts(self) -> Counter[tuple[str, str]]:
+        return Counter({key: len(queue) for key, queue in self.outcomes.items()})
 
 
 @dataclass(frozen=True)
@@ -268,23 +266,22 @@ def _apply(message: str, server: str, logs: SessionMCPLogs) -> None:
     found = _FAILED.match(message)
     if found:
         _record(logs, server, found, ok=False)
-        logs.waiting.pop(found.group(1), None)
         return
 
     found = _STILL_RUNNING.match(message)
     if found:
-        tool, elapsed = found.group(1), int(found.group(2)) * 1000
-        logs.waiting[tool] = max(logs.waiting.get(tool, 0), elapsed)
-        logs.waiting_server[tool] = server
+        key, elapsed = (server, found.group(1)), int(found.group(2)) * 1000
+        logs.waiting[key] = max(logs.waiting.get(key, 0), elapsed)
 
 
 def _record(logs: SessionMCPLogs, server: str, found: re.Match[str], *, ok: bool) -> None:
-    logs.waiting.pop(found.group(1), None)
+    tool = found.group(1)
+    logs.waiting.pop((server, tool), None)
     duration = found.group(2)
-    logs.outcomes[found.group(1)].append(
+    logs.outcomes[(server, tool)].append(
         MCPCallOutcome(
             server=server,
-            tool=found.group(1),
+            tool=tool,
             ok=ok,
             duration_ms=int(duration) if duration else None,
         )
