@@ -226,6 +226,43 @@ def test_mcp_coverage_names_a_session_id_collision_rather_than_a_pruned_cache() 
     assert "1 withheld everything: more than one project directory" in output
 
 
+def test_mcp_coverage_names_not_attempted_rather_than_leaving_it_unexplained() -> None:
+    """A subagent's MCP calls are counted in the denominator but never
+    enriched, since the log is keyed by the parent's session id and cannot be
+    shown to be this subagent's share. Every other non-`applied` state gets a
+    line; leaving this one out would read as an unexplained gap rather than
+    evidence withheld on purpose."""
+    call = ToolCall(
+        span="claude-code:s1:toolu_1",
+        tool_name="search",
+        mcp_server="books",
+        status="unknown",
+        arguments={},
+        result=None,
+        result_size=None,
+        error_text=None,
+        truncated=False,
+    )
+    turn = Turn(
+        position=0, key="u1", role="assistant", text="", is_sidechain=True, tool_calls=(call,)
+    )
+    session = Session(
+        session_id="claude-code:s1",
+        agent_kind="claude-code",
+        source="claude",
+        started_at=_START,
+        model=None,
+        working_directory=None,
+        machine=None,
+        user=None,
+        mcp_log_state="not_attempted",
+        turns=(turn,),
+    )
+    output = render_text(Collection(sessions=[session], failures=[]))
+    assert "0 of 1 sessions with MCP calls enriched" in output
+    assert "1 not attempted: a subagent transcript" in output
+
+
 def test_the_summary_states_the_remainder_when_the_tool_list_is_cut() -> None:
     """A truncated list with no marker reads as the whole of it."""
     calls = tuple(

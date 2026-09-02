@@ -106,6 +106,13 @@ def _mcp_coverage_lines(collection: Collection) -> list[str]:
             "project directory holds a log under this session's id — a copied or "
             "restored project — and which one is this session's cannot be established."
         )
+    if states.get("not_attempted"):
+        lines.append(
+            f"    {states['not_attempted']} not attempted: a subagent transcript is "
+            "keyed by its parent's session id, so the log filed under that id cannot "
+            "be shown to be this subagent's share rather than the parent's or a "
+            "sibling's."
+        )
     overlap_withheld = sum(s.mcp_overlap_withheld for s in with_mcp)
     if overlap_withheld:
         lines.append(
