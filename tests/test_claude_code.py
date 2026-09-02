@@ -419,7 +419,7 @@ def test_a_transcript_that_vanishes_during_the_window_check_does_not_lose_the_ot
     session already accumulated from other transcripts and report a
     whole-reader failure over one missing file.
     """
-    import openaidr.readers.claude_code as claude_code
+    from openaidr.readers import claude_code
 
     write_session(tmp_path, "-a", [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "one")])
     gone = write_session(tmp_path, "-b", [user_text("s2", "u2", "2026-08-01T10:00:00.000Z", "two")])
