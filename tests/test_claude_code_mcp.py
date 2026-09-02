@@ -867,9 +867,9 @@ def test_an_in_window_transcript_that_fails_to_parse_still_claims_its_raw_sessio
         [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
         project="-project-one",
     )
-    sessions, failures = ClaudeCodeReader(
-        root=root, mcp_logs=read_mcp_logs((cache,))
-    ).collect(Window(since=None))
+    sessions, failures = ClaudeCodeReader(root=root, mcp_logs=read_mcp_logs((cache,))).collect(
+        Window(since=None)
+    )
     assert len(failures) == 1 and str(broken) in failures[0].message
     assert len(sessions) == 1, "the unreadable file never becomes a session of its own"
     assert sessions[0].mcp_log_state == "session_id_collision"
