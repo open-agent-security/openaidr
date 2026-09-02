@@ -31,7 +31,7 @@ import contextlib
 import io
 import json
 import re
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -117,7 +117,6 @@ class ClaudeCodeReader:
             self._injected_mcp_logs if self._injected_mcp_logs is not None else read_mcp_logs()
         )
         mcp_logs = self._mcp_logs
-        sessions: list[Session] = []
         failures: list[ReaderFailure] = [
             # The log itself could still be read; only these specific files
             # inside it could not, and each is one file, not a failed kind
@@ -125,6 +124,12 @@ class ClaudeCodeReader:
             ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: could not be read")
             for path in mcp_logs.unreadable
         ]
+        # Parsed before any session is built, not per file: whether this raw
+        # session id is safe to look up in the MCP log at all (see
+        # `_ambiguous_transcript_ids`) depends on every transcript project
+        # directory that claims it, and that is only knowable once every file
+        # in this pass has been read.
+        parsed: list[tuple[Path, bool, list[AgentEvent]]] = []
         for path in sorted(self._root.glob("**/*.jsonl")):
             try:
                 in_window = _within_window(path, window)
@@ -132,7 +137,7 @@ class ClaudeCodeReader:
                 # The file listed by the glob a moment ago is gone, replaced or
                 # otherwise inaccessible by the time it is stat'd. One missing
                 # transcript is not a failed kind: report it and move on to the
-                # rest, the same isolation `_read_file` already gives a
+                # rest, the same isolation `_parse_file` already gives a
                 # transcript it cannot parse.
                 failures.append(
                     ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
@@ -140,14 +145,21 @@ class ClaudeCodeReader:
                 continue
             if not in_window:
                 continue
-            file_sessions, file_failure = self._read_file(path)
-            sessions.extend(file_sessions)
+            events, file_failure = self._parse_file(path)
             if file_failure is not None:
                 failures.append(file_failure)
+                continue
+            parsed.append((path, path.parent.name == _SUBAGENT_DIR, events))
+        ambiguous_ids = _ambiguous_transcript_ids(parsed)
+        sessions = [
+            self._session(event, path, is_subagent, ambiguous_ids)
+            for path, is_subagent, events in parsed
+            for event in events
+        ]
         return sessions, failures
 
-    def _read_file(self, path: Path) -> tuple[list[Session], ReaderFailure | None]:
-        """Parse one file upstream, then normalise what comes back.
+    def _parse_file(self, path: Path) -> tuple[list[AgentEvent], ReaderFailure | None]:
+        """Parse one file upstream; normalising what comes back is the caller's job.
 
         Upstream narrates its progress on stdout, which would corrupt this
         package's own machine-readable output, so it is captured rather than
@@ -165,8 +177,7 @@ class ClaudeCodeReader:
         captured = sink.getvalue().strip()
         if captured:
             return [], ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {captured}")
-        is_subagent = path.parent.name == _SUBAGENT_DIR
-        return [self._session(event, path, is_subagent) for event in events], None
+        return events, None
 
     def _project_root(self, event: AgentEvent, path: Path) -> str | None:
         """Where the session ran, from the best evidence available.
@@ -224,7 +235,9 @@ class ClaudeCodeReader:
         raw = _strip_source_prefix(session_id)
         return recorded.get(raw) or recorded.get(session_id)
 
-    def _session(self, event: AgentEvent, path: Path, is_subagent: bool) -> Session:
+    def _session(
+        self, event: AgentEvent, path: Path, is_subagent: bool, ambiguous_ids: set[str]
+    ) -> Session:
         raw_id = _strip_source_prefix(event.session_id)
         # A subagent's records carry its parent's session id, so the file's own
         # path is what makes it a distinct session (ADR-0001).
@@ -242,6 +255,17 @@ class ClaudeCodeReader:
             # another's, so it is withheld rather than attributed on a
             # guess (ADR-0002, ADR-0003's argument).
             enrichment = _MCPEnrichment(state="not_attempted")
+        elif raw_id in ambiguous_ids:
+            # More than one project's *transcript* claims this raw session id
+            # -- the same collision the collector reports one layer up
+            # (ADR-0001) -- so a cache log found under exactly one project is
+            # not evidence of whose transcript it belongs to. `for_session`'s
+            # single-match fast path (ADR-0004) trusts that match only because
+            # it assumes one session id names one session; once the transcript
+            # side breaks that assumption, handing the log to either candidate
+            # is the same confident wrong answer a cache-side collision is
+            # already withheld for.
+            enrichment = _MCPEnrichment(state="session_id_collision")
         else:
             # The cache files a log under a mangled *project* directory, so a
             # session id is only unique within one of them; this is the
@@ -422,6 +446,38 @@ class _MCPEnrichment:
 
     def transport_for(self, server: str | None) -> str | None:
         return self.transports.get(server) if server else None
+
+
+def _ambiguous_transcript_ids(
+    parsed: list[tuple[Path, bool, list[AgentEvent]]],
+) -> set[str]:
+    """Raw session ids more than one project's transcript claims.
+
+    A subagent's records carry its *parent's* session id by construction
+    (ADR-0001) and never reach `_mcp_enrichment` at all, so counting a
+    subagent file here would manufacture a collision out of the one case that
+    is not one.
+
+    `for_session`'s single-match fast path (ADR-0004) hands over a cache log
+    found under exactly one project on the reasoning that the cache's own
+    mangled directory name cannot be compared to the transcript's, so a
+    session id found under one project is that session's log whatever either
+    is called. That reasoning holds only while exactly one transcript claims
+    the id in the first place. A copied, restored or independently rooted
+    project is the ordinary way two transcript files end up sharing one raw
+    session id -- the same collision the collector already reports one layer
+    up -- and once it happens, a single cache-side match cannot say which of
+    the two transcripts it belongs to. Handing it to either is the same
+    silent misattribution a cache-side collision is already withheld for.
+    """
+    projects_by_id: dict[str, set[str]] = defaultdict(set)
+    for path, is_subagent, events in parsed:
+        if is_subagent:
+            continue
+        project = path.parent.name
+        for event in events:
+            projects_by_id[_strip_source_prefix(event.session_id)].add(project)
+    return {raw_id for raw_id, projects in projects_by_id.items() if len(projects) > 1}
 
 
 def _calls_mcp(event: AgentEvent) -> bool:

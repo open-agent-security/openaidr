@@ -760,6 +760,31 @@ def test_a_collided_session_id_uses_the_log_filed_under_its_own_project(
     assert [c.status for c in _mcp_calls([session])] == ["ok"]
 
 
+def test_two_transcript_projects_sharing_a_session_id_both_withhold(tmp_path: Path) -> None:
+    """The collision the collector reports (ADR-0001) can happen on the
+    *transcript* side too: a copied or restored project puts the same raw
+    session id under two transcript project directories. `for_session`'s
+    single-match fast path (ADR-0004) would otherwise hand its one cache-side
+    log entry to whichever transcript asks first -- here, `-project-one`'s,
+    since its per-tool count happens to agree -- even though nothing says the
+    log is that transcript's rather than `-project-two`'s. Neither transcript's
+    own project can be shown to be the log's, so both withhold."""
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    _transcript(root, ["search"], project="-project-two")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+    sessions = _collect(root, cache)
+    assert len(sessions) == 2
+    assert {s.mcp_log_state for s in sessions} == {"session_id_collision"}
+    assert all(s.mcp_connections == () for s in sessions)
+    assert [c.status for c in _mcp_calls(sessions)] == ["unknown", "unknown"]
+
+
 def test_a_malformed_line_before_the_end_marks_its_server_incomplete(tmp_path: Path) -> None:
     """A torn *final* line is an ordinary live append; an earlier one is loss.
 
