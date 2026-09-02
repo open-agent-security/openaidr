@@ -142,6 +142,28 @@ def test_a_provider_call_id_reused_across_calls_withholds_both_outcomes(
         assert call.result is None
 
 
+def test_a_withheld_calls_duration_is_not_read_from_the_reused_call_id(tmp_path: Path) -> None:
+    """`started`/`ended` are keyed on the bare provider call id, with no
+    occurrence to disambiguate a reused one -- the same ambiguity that gets a
+    withheld call's result stripped. Reading them anyway would hand the call a
+    duration measured off whichever of the colliding calls wrote to that key
+    last, the same silent misattribution the result was withheld to avoid."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use("s1", "u1", "2026-08-01T10:00:00.000Z", "dup-id", "Read"),
+            assistant_tool_use("s1", "u2", "2026-08-01T10:00:05.000Z", "dup-id", "Read"),
+            tool_result("s1", "u3", "2026-08-01T10:00:10.000Z", "dup-id", "file contents"),
+        ],
+    )
+    calls = _calls(tmp_path)
+    assert len(calls) == 2
+    for call in calls:
+        assert call.status == "pending"
+        assert call.duration_ms is None
+
+
 def test_distinct_provider_ids_with_identical_arguments_withhold_both_outcomes(
     tmp_path: Path,
 ) -> None:

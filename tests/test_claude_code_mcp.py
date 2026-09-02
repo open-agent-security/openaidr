@@ -12,7 +12,13 @@ from openaidr.readers.base import Window
 from openaidr.readers.claude_code import ClaudeCodeReader
 from openaidr.readers.claude_code_mcp import cache_roots, read_mcp_logs
 from tests.fixtures import mcp_logs as log
-from tests.fixtures.claude_jsonl import assistant_tool_use, tool_result, user_text, write_session
+from tests.fixtures.claude_jsonl import (
+    assistant_tool_use,
+    tool_result,
+    user_text,
+    write_session,
+    write_subagent_session,
+)
 
 SESSION = "11111111-2222-3333-4444-555555555555"
 
@@ -313,6 +319,54 @@ def test_a_session_that_never_touched_mcp_is_not_a_gap(tmp_path: Path) -> None:
     log.write_server_log(cache, "books", [log.connected("other")])
     (session,) = _collect(root, cache)
     assert session.mcp_log_state == "applied"
+
+
+def test_a_subagent_session_does_not_inherit_the_parents_mcp_log(tmp_path: Path) -> None:
+    """A subagent's records carry the *parent's* session id (ADR-0001), and so
+    does the MCP log's own `sessionId` tag -- the same collision the session
+    identity works around. Applying the log to a subagent by that shared id
+    would hand it the parent's connections and, wherever per-tool counts
+    happen to agree, an outcome that was never necessarily its own."""
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    write_session(
+        root,
+        "-p",
+        [
+            user_text(SESSION, "u0", "2026-01-01T00:00:00Z", "go"),
+            assistant_tool_use(SESSION, "a0", "2026-01-01T00:00:01Z", "toolu_0", "Read"),
+            tool_result(SESSION, "r0", "2026-01-01T00:00:02Z", "toolu_0", "x"),
+        ],
+    )
+    write_subagent_session(
+        root,
+        "-p",
+        SESSION,
+        "abc123",
+        [
+            user_text(SESSION, "su0", "2026-01-01T00:00:03Z", "delegated"),
+            assistant_tool_use(
+                SESSION, "sa0", "2026-01-01T00:00:04Z", "toolu_1", "mcp__books__search"
+            ),
+            tool_result(SESSION, "sr0", "2026-01-01T00:00:05Z", "toolu_1", "done"),
+        ],
+    )
+    log.write_server_log(
+        cache,
+        "books",
+        [
+            log.connected(SESSION, transport="stdio"),
+            log.calling(SESSION, "search"),
+            log.completed(SESSION, "search", ms=37),
+        ],
+    )
+    index = read_mcp_logs((cache,))
+    sessions, _ = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
+    subagent = next(s for s in sessions if s.session_id == f"claude-code:{SESSION}:agent-abc123")
+    assert subagent.mcp_log_state == "not_attempted"
+    assert subagent.mcp_connections == ()
+    (call,) = [c for t in subagent.turns for c in t.tool_calls if c.mcp_server]
+    assert call.status == "unknown"
+    assert call.transport is None
 
 
 def test_a_failed_connection_carries_a_category_and_keeps_its_words_local(tmp_path: Path) -> None:
