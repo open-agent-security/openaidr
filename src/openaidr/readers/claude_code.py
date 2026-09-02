@@ -438,9 +438,7 @@ def _turns(
                     transcript,
                     mcp,
                 ),
-                permission_mode=transcript.permission_modes.get(
-                    (raw_session_id, base, occurrence)
-                ),
+                permission_mode=transcript.permission_modes.get((raw_session_id, base, occurrence)),
             )
         )
     return tuple(turns)
@@ -630,9 +628,7 @@ def _tool_calls(
                 denial_kind=denial,
                 provider_call_id=call_id,
                 duration_ms=duration,
-                working_directory=transcript.cwd_at.get(
-                    (raw_session_id, record_uuid, occurrence)
-                ),
+                working_directory=transcript.cwd_at.get((raw_session_id, record_uuid, occurrence)),
                 attributed_skill=skill,
                 attributed_plugin=plugin,
                 transport=mcp.transport_for(outcome.server if outcome else None),
