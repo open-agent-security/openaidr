@@ -51,6 +51,10 @@ def failed(session_id: str, tool: str, ms: int = 12) -> dict:
     return _record(f"Tool '{tool}' failed in {ms}ms", session_id)
 
 
+def still_running(session_id: str, tool: str, seconds: int = 30) -> dict:
+    return _record(f"Tool '{tool}' still running ({seconds}s elapsed)", session_id)
+
+
 def write_server_log(
     cache_root: Path, server: str, records: list[dict], project: str = "-work-project"
 ) -> Path:

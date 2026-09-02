@@ -757,6 +757,19 @@ def test_a_directory_name_containing_a_dash_is_not_mis_split(tmp_path: Path) -> 
     assert session.working_directory == str(nested)
 
 
+def test_two_directories_matching_the_same_encoding_leave_it_unknown(tmp_path: Path) -> None:
+    """`-one-two` decodes as readily to a flat `one-two` directory as to a
+    nested `one/two`; when both exist, picking either would be a guess."""
+    (tmp_path / "one-two").mkdir(parents=True)
+    (tmp_path / "one" / "two").mkdir(parents=True)
+    encoded = str(tmp_path / "one-two").replace("/", "-")
+    record = user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at the repository")
+    del record["cwd"]
+    write_session(tmp_path, encoded, [record])
+    session = _sessions(tmp_path)[0]
+    assert session.working_directory is None
+
+
 def test_a_project_that_no_longer_exists_stays_unknown(tmp_path: Path) -> None:
     """A path that cannot be verified is left unknown rather than invented."""
     record = user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at the repository")
