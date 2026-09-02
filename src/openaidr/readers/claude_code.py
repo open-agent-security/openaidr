@@ -88,10 +88,29 @@ class ClaudeCodeReader:
             return [], []
         if self._mcp_logs is None:
             self._mcp_logs = read_mcp_logs()
+        mcp_logs = self._mcp_logs
         sessions: list[Session] = []
-        failures: list[ReaderFailure] = []
+        failures: list[ReaderFailure] = [
+            # The log itself could still be read; only these specific files
+            # inside it could not, and each is one file, not a failed kind
+            # (ADR-0003's argument, one layer down).
+            ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: could not be read")
+            for path in mcp_logs.unreadable
+        ]
         for path in sorted(self._root.glob("**/*.jsonl")):
-            if not _within_window(path, window):
+            try:
+                in_window = _within_window(path, window)
+            except OSError as error:
+                # The file listed by the glob a moment ago is gone, replaced or
+                # otherwise inaccessible by the time it is stat'd. One missing
+                # transcript is not a failed kind: report it and move on to the
+                # rest, the same isolation `_read_file` already gives a
+                # transcript it cannot parse.
+                failures.append(
+                    ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
+                )
+                continue
+            if not in_window:
                 continue
             file_sessions, file_failure = self._read_file(path)
             sessions.extend(file_sessions)
@@ -367,9 +386,9 @@ def _turns(
                 text=message.content,
                 is_sidechain=is_subagent,
                 tool_calls=_tool_calls(
-                    message.tools, session_id, key, base, compromised, transcript, mcp
+                    message.tools, session_id, key, base, occurrence, compromised, transcript, mcp
                 ),
-                permission_mode=transcript.permission_modes.get(base),
+                permission_mode=transcript.permission_modes.get((base, occurrence)),
             )
         )
     return tuple(turns)
@@ -422,23 +441,27 @@ def _tool_calls(
     session_id: str,
     turn_key: str,
     record_uuid: str,
+    occurrence: int,
     compromised: set[int],
     transcript: _Transcript,
     mcp: _MCPEnrichment,
 ) -> tuple[ToolCall, ...]:
     """Normalise one message's calls, joining each to what the record says about it.
 
-    The join is `(record uuid, position)` — the same tuple span identity is built
-    from, and verified against 1,063 real messages where upstream's tool order
-    matched the record's in every one. It is what makes latency, a real outcome
-    and the provider's own call id reachable at all: the shared event schema
-    carries none of them, and without an identifier per call there is nothing to
-    attach them to.
+    The join is `(record uuid, occurrence, position)` — the same `(uuid,
+    position)` pair span identity is already built from, plus the occurrence a
+    repeated uuid is disambiguated by (ADR-0001), verified against 1,063 real
+    messages where upstream's tool order matched the record's in every one. It
+    is what makes latency, a real outcome and the provider's own call id
+    reachable at all: the shared event schema carries none of them, and without
+    an identifier per call there is nothing to attach them to. Occurrence keeps
+    a resumed session's re-emitted record from lending its data to the
+    original's already-disambiguated turn.
     """
     calls: list[ToolCall] = []
     for index, tool in enumerate(tools):
         server, name = _server_and_tool(tool)
-        call_id = transcript.call_ids.get((record_uuid, index))
+        call_id = transcript.call_ids.get((record_uuid, occurrence, index))
         withheld = id(tool) in compromised
         if withheld:
             status: Status = "pending"
@@ -489,7 +512,7 @@ def _tool_calls(
         duration = _duration(call_id, transcript)
         if duration is None and outcome is not None:
             duration = outcome.duration_ms
-        skill, plugin = transcript.attribution.get(record_uuid, (None, None))
+        skill, plugin = transcript.attribution.get((record_uuid, occurrence), (None, None))
         calls.append(
             ToolCall(
                 span=span_id(session_id, turn_key, index),
@@ -504,7 +527,7 @@ def _tool_calls(
                 denial_kind=denial,
                 provider_call_id=call_id,
                 duration_ms=duration,
-                working_directory=transcript.cwd_at.get(record_uuid),
+                working_directory=transcript.cwd_at.get((record_uuid, occurrence)),
                 attributed_skill=skill,
                 attributed_plugin=plugin,
                 transport=mcp.transport_for(outcome.server if outcome else None),
@@ -634,13 +657,24 @@ class _Transcript:
     versions: dict[str, str]
     #: session id -> how the agent was driven (`cli`, `claude-vscode`, `sdk-cli`).
     entrypoints: dict[str, str]
-    #: record uuid -> the permission mode in effect at that record.
-    permission_modes: dict[str, str]
-    #: (record uuid, position within the message) -> the provider's call id.
-    #: This is the association everything per-call rests on, and it is the same
-    #: tuple span identity is already built from. Verified against 1,063 real
-    #: messages: upstream's tool order matches the record's in every one.
-    call_ids: dict[tuple[str, int], str]
+    #: (record uuid, occurrence) -> the permission mode in effect at that record.
+    #: Occurrence-keyed for the same reason `call_ids` is: a resumed session can
+    #: re-emit a record under the same uuid, and a plain uuid key would let the
+    #: later occurrence's value silently answer for the earlier one.
+    permission_modes: dict[tuple[str, int], str]
+    #: (record uuid, occurrence, position within the message) -> the provider's
+    #: call id. This is the association everything per-call rests on, and the
+    #: (uuid, position) pair is the same one span identity is already built
+    #: from. Verified against 1,063 real messages: upstream's tool order
+    #: matches the record's in every one.
+    #:
+    #: Occurrence-keyed because a resumed session can re-emit a record under
+    #: the same uuid (ADR-0001): without it, a single pass over the file would
+    #: let the later occurrence's call id overwrite the earlier one's at the
+    #: same `(uuid, position)` key, and the disambiguated turn built for the
+    #: first occurrence would silently read the second occurrence's call id,
+    #: result, duration, denial, working directory and attribution.
+    call_ids: dict[tuple[str, int, int], str]
     #: provider call id -> when the call was issued.
     started: dict[str, datetime]
     #: provider call id -> when its result came back.
@@ -672,13 +706,16 @@ class _Transcript:
     #: session id -> the request that started it, recorded apart from the turns
     #: and therefore surviving compaction, which the first user turn does not.
     initial_prompts: dict[str, str] = field(default_factory=dict)
-    #: record uuid -> the directory *that record* ran in. Distinct from `cwds`,
-    #: which is the session's first: a session can `cd`, and a relative path in
-    #: a tool argument means nothing without the directory it was relative to.
-    cwd_at: dict[str, str] = field(default_factory=dict)
-    #: record uuid -> (skill, plugin) the agent attributed the record to. Its
-    #: own attribution, not an inference from names.
-    attribution: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)
+    #: (record uuid, occurrence) -> the directory *that record* ran in.
+    #: Distinct from `cwds`, which is the session's first: a session can `cd`,
+    #: and a relative path in a tool argument means nothing without the
+    #: directory it was relative to. Occurrence-keyed for the same reason
+    #: `call_ids` is.
+    cwd_at: dict[tuple[str, int], str] = field(default_factory=dict)
+    #: (record uuid, occurrence) -> (skill, plugin) the agent attributed the
+    #: record to. Its own attribution, not an inference from names.
+    #: Occurrence-keyed for the same reason `call_ids` is.
+    attribution: dict[tuple[str, int], tuple[str | None, str | None]] = field(default_factory=dict)
     #: session id -> material that reached the model outside the turn structure.
     context: dict[str, list[tuple[str, str | None, str]]] = field(default_factory=dict)
     #: session id -> compaction boundaries, as (trigger, pre, dropped).
@@ -707,19 +744,24 @@ def _recorded(path: Path) -> _Transcript:
     entrypoints: dict[str, str] = {}
     branches: dict[str, str] = {}
     initial_prompts: dict[str, str] = {}
-    cwd_at: dict[str, str] = {}
-    attribution: dict[str, tuple[str | None, str | None]] = {}
+    cwd_at: dict[tuple[str, int], str] = {}
+    attribution: dict[tuple[str, int], tuple[str | None, str | None]] = {}
     context: dict[str, list[tuple[str, str | None, str]]] = {}
     compactions: dict[str, list[tuple[str, int | None, int | None]]] = {}
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]] = {}
-    permission_modes: dict[str, str] = {}
-    call_ids: dict[tuple[str, int], str] = {}
+    permission_modes: dict[tuple[str, int], str] = {}
+    call_ids: dict[tuple[str, int, int], str] = {}
     started: dict[str, datetime] = {}
     ended: dict[str, datetime] = {}
     errored: dict[str, bool] = {}
     denials: dict[str, str] = {}
     results: dict[str, str] = {}
     modes: dict[str, str] = {}
+    #: uuid -> how many records with that uuid have been seen so far. A resumed
+    #: session can re-emit a record under the same uuid, and this is what keeps
+    #: the re-emitted record's own data from overwriting the original's at the
+    #: same key (ADR-0001).
+    uuid_occurrences: dict[str, int] = {}
 
     try:
         with path.open(encoding="utf-8") as handle:
@@ -755,18 +797,22 @@ def _recorded(path: Path) -> _Transcript:
                     modes[session_id] = declared
                 mode = modes.get(session_id) if session_id is not None else None
                 uuid = record.get("uuid")
+                occurrence = 0
+                if isinstance(uuid, str) and uuid:
+                    occurrence = uuid_occurrences.get(uuid, 0)
+                    uuid_occurrences[uuid] = occurrence + 1
                 if mode is not None and isinstance(uuid, str) and uuid:
-                    permission_modes[uuid] = mode
+                    permission_modes[(uuid, occurrence)] = mode
                 if isinstance(uuid, str) and uuid:
                     where = record.get("cwd")
                     if isinstance(where, str) and where:
-                        cwd_at[uuid] = where
+                        cwd_at[(uuid, occurrence)] = where
                     skill, plugin = (
                         record.get("attributionSkill"),
                         record.get("attributionPlugin"),
                     )
                     if isinstance(skill, str) or isinstance(plugin, str):
-                        attribution[uuid] = (
+                        attribution[(uuid, occurrence)] = (
                             skill if isinstance(skill, str) else None,
                             plugin if isinstance(plugin, str) else None,
                         )
@@ -785,7 +831,7 @@ def _recorded(path: Path) -> _Transcript:
                         continue
                     if kind == "tool_use":
                         if isinstance(uuid, str) and uuid:
-                            call_ids[(uuid, position)] = identifier
+                            call_ids[(uuid, occurrence, position)] = identifier
                         position += 1
                         if timestamp is not None:
                             started[identifier] = timestamp

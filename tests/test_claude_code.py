@@ -86,6 +86,37 @@ def test_a_repeated_sequence_id_does_not_collide(tmp_path: Path) -> None:
     assert len(set(spans)) == len(spans)
 
 
+def test_a_repeated_sequence_id_keeps_each_occurrences_own_call_id(tmp_path: Path) -> None:
+    """The recovery pass keyed `call_ids` on the record uuid alone would let the
+    second occurrence's provider call id overwrite the first's at the same
+    `(uuid, position)` key -- so the first, already-disambiguated turn would
+    silently read the second's id, result and working directory instead of its
+    own. Occurrence must be part of that key, not just of the turn key."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use(
+                "s1", "dup", "2026-08-01T10:00:00.000Z", "toolu_1", "Read", cwd="/first"
+            ),
+            assistant_tool_use(
+                "s1", "dup", "2026-08-01T10:00:01.000Z", "toolu_2", "Bash", cwd="/second"
+            ),
+            tool_result("s1", "r1", "2026-08-01T10:00:02.000Z", "toolu_1", "first contents"),
+            tool_result("s1", "r2", "2026-08-01T10:00:03.000Z", "toolu_2", "second contents"),
+        ],
+    )
+    session = _sessions(tmp_path)[0]
+    first_call = session.turns[0].tool_calls[0]
+    second_call = session.turns[1].tool_calls[0]
+    assert (first_call.tool_name, first_call.provider_call_id) == ("Read", "toolu_1")
+    assert (second_call.tool_name, second_call.provider_call_id) == ("Bash", "toolu_2")
+    assert first_call.result == "first contents"
+    assert second_call.result == "second contents"
+    assert first_call.working_directory == "/first"
+    assert second_call.working_directory == "/second"
+
+
 def test_a_provider_call_id_reused_across_calls_withholds_both_outcomes(
     tmp_path: Path,
 ) -> None:
@@ -378,6 +409,34 @@ def test_the_window_excludes_files_modified_before_it(tmp_path: Path) -> None:
     assert ClaudeCodeReader(root=tmp_path).collect(Window(since=since)) == ([], [])
 
 
+def test_a_transcript_that_vanishes_during_the_window_check_does_not_lose_the_others(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The window check stats a file the glob just listed a moment earlier.
+
+    A file that disappears, is replaced, or otherwise cannot be stat'd in that
+    gap must not raise out of `collect` entirely — that would discard every
+    session already accumulated from other transcripts and report a
+    whole-reader failure over one missing file.
+    """
+    write_session(tmp_path, "-a", [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "one")])
+    gone = write_session(tmp_path, "-b", [user_text("s2", "u2", "2026-08-01T10:00:00.000Z", "two")])
+
+    real_stat = Path.stat
+
+    def flaky_stat(self: Path, *args: object, **kwargs: object) -> object:
+        if self == gone:
+            raise OSError("vanished")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    since = datetime.now(UTC) - timedelta(days=14)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=since))
+
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+    assert any(str(gone) in f.message and "vanished" in f.message for f in failures)
+
+
 def test_a_long_result_is_carried_whole(tmp_path: Path) -> None:
     """Upstream abridges every result to 1,000 characters from the middle — a cap
     that on one corpus sat *below* the median result size and cut 38% of results.
@@ -427,6 +486,7 @@ def test_a_call_with_no_recorded_body_falls_back_and_says_it_was_abridged() -> N
         "claude-code:s1",
         "u1",
         "u1",
+        0,
         set(),
         empty,
         _MCPEnrichment(state="not_attempted"),
