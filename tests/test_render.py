@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from openaidr.collector import Collection
-from openaidr.model import Session, ToolCall, Turn
+from openaidr.model import MCPConnection, Session, ToolCall, Turn
 from openaidr.readers.base import ReaderFailure
 from openaidr.render import parse_since, render_json, render_text
 
@@ -261,6 +261,31 @@ def test_mcp_coverage_names_not_attempted_rather_than_leaving_it_unexplained() -
     output = render_text(Collection(sessions=[session], failures=[]))
     assert "0 of 1 sessions with MCP calls enriched" in output
     assert "1 not attempted: a subagent transcript" in output
+
+
+def test_a_connection_that_failed_before_any_call_is_still_reported() -> None:
+    """A server can fail during startup, before any call is ever issued -- the
+    session then has `mcp_connections` but no MCP tool call, and the failure
+    must not disappear just because there is no call to attach it to."""
+    turn = Turn(position=0, key="u1", role="assistant", text="", is_sidechain=False, tool_calls=())
+    session = Session(
+        session_id="claude-code:s1",
+        agent_kind="claude-code",
+        source="claude",
+        started_at=_START,
+        model=None,
+        working_directory=None,
+        machine=None,
+        user=None,
+        mcp_log_state="applied",
+        mcp_connections=(
+            MCPConnection(server="books", connected=False, failure_category="auth"),
+        ),
+        turns=(turn,),
+    )
+    output = render_text(Collection(sessions=[session], failures=[]))
+    assert "no MCP call was issued, but 1 session(s) recorded a connection attempt" in output
+    assert "connections that failed:  1 auth" in output
 
 
 def test_the_summary_states_the_remainder_when_the_tool_list_is_cut() -> None:

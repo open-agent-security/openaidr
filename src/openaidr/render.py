@@ -14,7 +14,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
 from openaidr.collector import Collection
-from openaidr.model import Session, Turn
+from openaidr.model import MCPConnection, Session, Turn
 
 #: Distinct tool names to list before summarising the rest; the remainder is
 #: always stated, since a truncated list with no marker reads as the whole.
@@ -74,11 +74,25 @@ def _mcp_coverage_lines(collection: Collection) -> list[str]:
     if not sessions:
         return []
     with_mcp = [s for s in sessions if any(c.mcp_server for t in s.turns for c in t.tool_calls)]
-    if not with_mcp:
+    with_connections = [s for s in sessions if s.mcp_connections]
+    if not with_mcp and not with_connections:
         return []
+    lines: list[str] = []
+    if not with_mcp:
+        # A server can fail before any call is issued -- the connection log
+        # still has a record, and a consumer reading only the call-scoped
+        # section below would see nothing where a failed connection actually
+        # happened.
+        lines += [
+            "",
+            f"MCP connection logs — no MCP call was issued, but {len(with_connections)} "
+            "session(s) recorded a connection attempt",
+        ]
+        connections = [c for s in sessions for c in s.mcp_connections]
+        return lines + _mcp_connection_lines(connections)
     states = Counter(s.mcp_log_state for s in with_mcp)
     applied = states.get("applied", 0)
-    lines = [
+    lines += [
         "",
         (f"MCP connection logs — {applied} of {len(with_mcp)} sessions with MCP calls enriched"),
     ]
@@ -122,6 +136,17 @@ def _mcp_coverage_lines(collection: Collection) -> list[str]:
             "finished first. Transport kept."
         )
     connections = [c for s in sessions for c in s.mcp_connections]
+    return lines + _mcp_connection_lines(connections)
+
+
+def _mcp_connection_lines(connections: list[MCPConnection]) -> list[str]:
+    """Transport and failure-category counts, over whatever connections exist.
+
+    Shared by both branches of `_mcp_coverage_lines`: a connection can exist
+    for a session that never issued an MCP call at all, when the server fails
+    before any call is made.
+    """
+    lines: list[str] = []
     if connections:
         transports = Counter(c.transport for c in connections if c.transport)
         failed = Counter(c.failure_category for c in connections if c.failure_category)

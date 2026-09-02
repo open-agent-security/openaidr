@@ -320,6 +320,30 @@ def test_a_status_the_transcript_states_is_never_overwritten(tmp_path: Path) -> 
     assert call.status == "error"
 
 
+def test_an_unresolved_log_does_not_downgrade_a_transcript_proven_return(tmp_path: Path) -> None:
+    """A `still running` outcome cannot un-prove a return the transcript itself recorded.
+
+    The log is snapshotted once, before any transcript is read, so it can catch a
+    call still in flight that has a result on disk by the time this transcript is
+    parsed. `unknown` there is not silence -- it is the record proving the call
+    returned, with no `is_error` to say how. Downgrading that to `pending` would
+    be the log overwriting evidence rather than filling the gap it left.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"])
+    log.write_server_log(
+        cache,
+        "books",
+        [
+            log.connected(SESSION),
+            log.calling(SESSION, "search"),
+            log.still_running(SESSION, "search"),
+        ],
+    )
+    (call,) = _mcp_calls(_collect(root, cache))
+    assert call.status == "unknown"
+
+
 def test_no_cache_directory_is_reported_not_assumed_empty(tmp_path: Path) -> None:
     """A machine we cannot read and a machine running no MCP must differ.
 

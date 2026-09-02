@@ -177,11 +177,13 @@ class ClaudeCodeReader:
         Only when the file itself says nothing do we fall back to decoding the
         directory Claude Code names after the project root
         (`-Users-me-Projects-thing`). That decoding is ambiguous — a dash
-        separates path segments *and* appears inside directory names — so
-        candidates are rebuilt greedily against the filesystem and returned only
-        if they exist. An ambiguous split therefore cannot invent a path, and a
-        project since renamed or deleted stays unknown rather than becoming a
-        confident wrong answer.
+        separates path segments *and* appears inside directory names — so every
+        way of regrouping the parts into an existing directory is tried, and a
+        path is returned only if exactly one way completes. Two candidate
+        splits that both resolve to real, distinct directories are exactly as
+        unverifiable as one that resolves to none, so both stay unknown rather
+        than the first one tried becoming a confident wrong answer; so does a
+        project since renamed or deleted.
         """
         if event.project_path:
             return event.project_path
@@ -635,13 +637,18 @@ def _tool_calls(
         outcome = mcp.take(server, name) if server is not None else None
         if outcome is not None and (status == "unknown" or withheld):
             # `ok is None` means the client reported the call still running and
-            # nothing ever followed. That is not an outcome to assert, so the
-            # call stays `pending` -- but the elapsed time below is the client's
-            # own measure of how long it waited, which is what separates a hang
-            # from a call that simply has not finished yet.
+            # nothing ever followed -- from the log's own vantage point, not an
+            # outcome to assert. But the log is snapshotted once, before this
+            # transcript is even read (`collect()`), so a call it caught mid-flight
+            # can have a result on disk by the time this record is parsed. `status`
+            # already reflects that later, more current read: `unknown` means the
+            # transcript itself proved a return, and downgrading a proven return to
+            # `pending` here would be the log overwriting evidence rather than
+            # filling a gap. Only a call withheld for its own reasons -- never
+            # proven to have returned by anything -- takes `pending` from this.
             if outcome.ok is not None:
                 status = "ok" if outcome.ok else "error"
-            else:
+            elif withheld:
                 status = "pending"
         # `started`/`ended` are keyed on the bare provider call id, with no
         # occurrence to disambiguate it -- exactly what made `call_id` itself
@@ -1273,23 +1280,34 @@ def _timestamp(value: object) -> datetime | None:
 
 
 def _decode_project_directory(name: str) -> str | None:
-    """`-Users-me-Projects-thing` -> `/Users/me/Projects/thing`, if it exists."""
+    """`-Users-me-Projects-thing` -> `/Users/me/Projects/thing`, if it uniquely exists.
+
+    A dash separates path segments *and* appears inside directory names, so more
+    than one regrouping of the parts can each resolve to a real directory (e.g.
+    both `/a-b/c` and `/a/b-c` on disk for `-a-b-c`). Picking the first one found
+    would be exactly the confident wrong answer this module refuses elsewhere —
+    so every full regrouping is tried, and a path is returned only when exactly
+    one of them resolves to an existing directory.
+    """
     parts = [part for part in name.lstrip("-").split("-") if part]
     if not parts:
         return None
-    current = Path("/")
-    index = 0
-    while index < len(parts):
-        # Longest first: a directory whose own name contains a dash must win over
-        # the shorter prefix that merely looks like one.
-        for end in range(len(parts), index, -1):
-            candidate = current / "-".join(parts[index:end])
-            if candidate.is_dir():
-                current, index = candidate, end
-                break
-        else:
-            return None
-    return str(current)
+    matches = _project_directory_candidates(Path("/"), parts)
+    if len(matches) == 1:
+        return str(matches.pop())
+    return None
+
+
+def _project_directory_candidates(current: Path, parts: list[str]) -> set[Path]:
+    """Every existing directory `parts` can regroup into, starting under `current`."""
+    if not parts:
+        return {current}
+    matches: set[Path] = set()
+    for end in range(len(parts), 0, -1):
+        candidate = current / "-".join(parts[:end])
+        if candidate.is_dir():
+            matches |= _project_directory_candidates(candidate, parts[end:])
+    return matches
 
 
 def _within_window(path: Path, window: Window) -> bool:
