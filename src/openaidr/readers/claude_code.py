@@ -31,6 +31,7 @@ import contextlib
 import io
 import json
 import re
+import stat
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -139,7 +140,22 @@ class ClaudeCodeReader:
         #: both are claimants by filename alone, same as an out-of-window file.
         unparsed: list[Path] = []
         for path in sorted(self._root.glob("**/*.jsonl")):
-            if not path.is_file():
+            try:
+                is_dir = stat.S_ISDIR(path.stat().st_mode)
+            except OSError as error:
+                # `Path.is_file()` is not used for this probe: before Python
+                # 3.14 it propagates some `OSError`s (e.g. a permission
+                # failure) and swallows others, and from 3.14 it swallows
+                # every `OSError` and reports `False` -- indistinguishable
+                # from an ordinary directory either way. `stat()` always
+                # raises, on every supported version, so a real I/O failure
+                # is reported the same as any other unreadable file instead
+                # of silently vanishing.
+                failures.append(
+                    ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
+                )
+                continue
+            if is_dir:
                 # `glob` matches a directory whose name happens to end in
                 # `.jsonl` too, not only files. Such a directory is not a
                 # transcript under any interpretation, so it must not reach
@@ -498,22 +514,35 @@ def _ambiguous_transcript_ids(
     Handing it to either is the same silent misattribution a cache-side
     collision is already withheld for.
 
-    A file the window excluded, or one this pass tried and failed to parse, is
-    still one of those claimants (ADR-0008): neither was opened for its raw
-    session id, so both are read from their name instead, the same way and for
-    the same reason. `--since` defaults to 14d, so the ordinary case for the
-    first is that one of two twins was touched recently and the other was not;
-    a failed parse is rarer but no different once it happens -- a corrupted or
-    truncated copy of a session still claims that session's id. Claude Code
-    files a transcript as `<session id>.jsonl`, which held for all 437
-    non-subagent transcripts on the corpus this was measured against. That
-    leaves one shape uncovered -- a copy *renamed* in place, whose name no
-    longer states its contents -- and ADR-0008 records why it is not worth a
-    read of every file on disk to close.
+    A file the window excluded, one this pass tried and failed to parse, or one
+    upstream accepted but judged to carry no reportable session, is still one
+    of those claimants (ADR-0008): none of the three was opened for its raw
+    session id -- upstream's own trivial-session judgement (see
+    `test_a_session_the_dependency_judges_trivial_is_not_reported`) is silent
+    on what that id even was -- so all three are read from their name instead,
+    the same way and for the same reason. `--since` defaults to 14d, so the
+    ordinary case for the first is that one of two twins was touched recently
+    and the other was not; a failed parse or an empty result is rarer but no
+    different once it happens -- a corrupted, truncated, or merely trivial
+    copy of a session still claims that session's id. Claude Code files a
+    transcript as `<session id>.jsonl`, which held for all 437 non-subagent
+    transcripts on the corpus this was measured against. That leaves one shape
+    uncovered -- a copy *renamed* in place, whose name no longer states its
+    contents -- and ADR-0008 records why it is not worth a read of every file
+    on disk to close.
     """
     paths_by_id: dict[str, set[Path]] = defaultdict(set)
     for path, is_subagent, events in parsed:
         if is_subagent:
+            continue
+        if not events:
+            # Upstream parsed the file without error but returned nothing
+            # reportable for it (e.g. a single message it judges too trivial
+            # to carry a session). No event survived to name this file's raw
+            # session id, so -- like an out-of-window or failed-parse file --
+            # it is read from the filename instead, rather than dropping out
+            # of the claimant set as if it had never existed.
+            paths_by_id[path.stem].add(path)
             continue
         for event in events:
             paths_by_id[_strip_source_prefix(event.session_id)].add(path)

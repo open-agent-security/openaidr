@@ -877,6 +877,36 @@ def test_an_in_window_transcript_that_fails_to_parse_still_claims_its_raw_sessio
     assert [c.status for c in _mcp_calls(sessions)] == ["unknown"]
 
 
+def test_a_trivial_in_window_transcript_still_claims_its_raw_session_id(
+    tmp_path: Path,
+) -> None:
+    """A file upstream parses without error but judges too trivial to report is
+    claimant by filename, the same as one that failed to parse or fell outside
+    the window (ADR-0008).
+
+    Upstream drops a session whose single message is five characters or fewer
+    and calls no tool (see `test_a_session_the_dependency_judges_trivial_is_
+    not_reported` in `test_claude_code.py`). No event survives to name this
+    file's raw session id via the parsed path, so it must be read from the
+    filename instead -- otherwise the readable twin looks like the id's sole
+    holder and receives a log that may be the trivial file's.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    write_session(root, "-project-two", [user_text(SESSION, "u0", "2026-01-01T00:00:00Z", "hi")])
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+    sessions = _collect(root, cache)
+    assert len(sessions) == 1, "the trivial file never becomes a session of its own"
+    assert sessions[0].mcp_log_state == "session_id_collision"
+    assert sessions[0].mcp_connections == ()
+    assert [c.status for c in _mcp_calls(sessions)] == ["unknown"]
+
+
 def test_a_subagent_outside_the_window_does_not_manufacture_a_collision(
     tmp_path: Path,
 ) -> None:

@@ -537,6 +537,56 @@ def test_a_transcript_that_vanishes_during_the_window_check_does_not_lose_the_ot
     assert any(str(gone) in f.message and "vanished" in f.message for f in failures)
 
 
+def test_a_transcript_whose_type_cannot_be_probed_does_not_lose_the_others(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The directory-vs-file probe stats a file the glob just listed a moment
+    earlier, the same gap the window check has. It uses `Path.stat()` rather
+    than `Path.is_file()`: before Python 3.14 `is_file()` propagates some
+    `OSError`s and swallows others, and from 3.14 it swallows every `OSError`
+    and reports `False` -- indistinguishable from an ordinary directory
+    either way. `stat()` always raises, on every supported version, so a
+    genuine I/O failure here is isolated to one file instead of silently
+    vanishing or crashing the whole pass.
+    """
+    real_stat = Path.stat
+
+    write_session(
+        tmp_path, "-a", [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at one thing")]
+    )
+    gone = write_session(
+        tmp_path, "-b", [user_text("s2", "u2", "2026-08-01T10:00:00.000Z", "look at another")]
+    )
+
+    def flaky_stat(self: Path, *args: object, **kwargs: object):
+        if self == gone:
+            raise OSError("vanished")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+    assert any(str(gone) in f.message and "vanished" in f.message for f in failures)
+
+
+def test_a_directory_matching_the_glob_is_skipped_without_a_failure(tmp_path: Path) -> None:
+    """`**/*.jsonl` matches a directory whose name happens to end in `.jsonl`
+    too, not only files. Such a directory is not a transcript under any
+    interpretation, so it must be skipped silently rather than reaching
+    `_parse_file` -- which would fail on it -- or being reported as a failure.
+    """
+    write_session(
+        tmp_path, "-a", [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at one thing")]
+    )
+    (tmp_path / "-a" / "not-a-transcript.jsonl").mkdir()
+
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+    assert failures == []
+
+
 def test_a_long_result_is_carried_whole(tmp_path: Path) -> None:
     """Upstream abridges every result to 1,000 characters from the middle — a cap
     that on one corpus sat *below* the median result size and cut 38% of results.
