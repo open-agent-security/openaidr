@@ -356,9 +356,7 @@ class ClaudeCodeReader:
         # `applied` alone says nothing about this: the log and the transcript
         # still agree on totals, so the guard above never fires. Counted here
         # so it can be reported rather than read as full coverage.
-        overlap_withheld = sum(
-            n for key, n in transcript_counts.items() if key in logs.unordered
-        )
+        overlap_withheld = sum(n for key, n in transcript_counts.items() if key in logs.unordered)
         return _MCPEnrichment(
             state="applied",
             connections=connections,
