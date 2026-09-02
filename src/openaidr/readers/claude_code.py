@@ -437,7 +437,21 @@ class ClaudeCodeReader:
         if logs is None:
             # Only a session that actually called an MCP tool is missing
             # anything; the rest simply never opened a connection.
-            state: MCPLogState = "no_log_for_session" if _calls_mcp(event) else "applied"
+            if not _calls_mcp(event):
+                return _MCPEnrichment(state="applied")
+            # Ordinarily "no log at all" means the cache was pruned. But when
+            # this session's own project had a server log this read could not
+            # scan (`_walk_log_dirs`'s `onerror`, ADR-0003 one layer down),
+            # "no log found" is an artifact of that failure rather than
+            # evidence the cache was ever pruned, and reporting it the same
+            # way would read as absence when it is really unread data.
+            calls_incomplete_server = any(
+                (project, server) in index.incomplete_project_servers
+                for server, _tool in _mcp_tool_counts(event)
+            )
+            state: MCPLogState = (
+                "count_mismatch" if calls_incomplete_server else "no_log_for_session"
+            )
             return _MCPEnrichment(state=state)
         connections = tuple(
             MCPConnection(
