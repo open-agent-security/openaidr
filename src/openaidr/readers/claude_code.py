@@ -126,9 +126,9 @@ class ClaudeCodeReader:
         ]
         # Parsed before any session is built, not per file: whether this raw
         # session id is safe to look up in the MCP log at all (see
-        # `_ambiguous_transcript_ids`) depends on every transcript project
-        # directory that claims it, and that is only knowable once every file
-        # in this pass has been read.
+        # `_ambiguous_transcript_ids`) depends on every transcript file that
+        # claims it, and that is only knowable once every file in this pass
+        # has been read.
         parsed: list[tuple[Path, bool, list[AgentEvent]]] = []
         for path in sorted(self._root.glob("**/*.jsonl")):
             try:
@@ -213,7 +213,12 @@ class ClaudeCodeReader:
         recorded = self._recorded_cwd(path, event.session_id)
         if recorded:
             return recorded
-        directory = path.parent.parent if path.parent.name == _SUBAGENT_DIR else path.parent
+        # A subagent transcript lives two levels below the project directory
+        # (`<project>/<sessionId>/subagents/agent-<id>.jsonl`, ADR-0001), not
+        # one -- `path.parent` is `subagents` and `path.parent.parent` is the
+        # session id's own directory, not the mangled project name this
+        # decodes.
+        directory = path.parent.parent.parent if path.parent.name == _SUBAGENT_DIR else path.parent
         return _decode_project_directory(directory.name)
 
     def _read(self, path: Path) -> _Transcript:
@@ -256,10 +261,10 @@ class ClaudeCodeReader:
             # guess (ADR-0002, ADR-0003's argument).
             enrichment = _MCPEnrichment(state="not_attempted")
         elif raw_id in ambiguous_ids:
-            # More than one project's *transcript* claims this raw session id
-            # -- the same collision the collector reports one layer up
-            # (ADR-0001) -- so a cache log found under exactly one project is
-            # not evidence of whose transcript it belongs to. `for_session`'s
+            # More than one transcript file claims this raw session id -- the
+            # same collision the collector reports one layer up (ADR-0001) --
+            # so a cache log found under exactly one project is not evidence
+            # of whose transcript it belongs to. `for_session`'s
             # single-match fast path (ADR-0004) trusts that match only because
             # it assumes one session id names one session; once the transcript
             # side breaks that assumption, handing the log to either candidate
@@ -451,7 +456,7 @@ class _MCPEnrichment:
 def _ambiguous_transcript_ids(
     parsed: list[tuple[Path, bool, list[AgentEvent]]],
 ) -> set[str]:
-    """Raw session ids more than one project's transcript claims.
+    """Raw session ids more than one transcript file claims.
 
     A subagent's records carry its *parent's* session id by construction
     (ADR-0001) and never reach `_mcp_enrichment` at all, so counting a
@@ -463,21 +468,24 @@ def _ambiguous_transcript_ids(
     mangled directory name cannot be compared to the transcript's, so a
     session id found under one project is that session's log whatever either
     is called. That reasoning holds only while exactly one transcript claims
-    the id in the first place. A copied, restored or independently rooted
-    project is the ordinary way two transcript files end up sharing one raw
-    session id -- the same collision the collector already reports one layer
-    up -- and once it happens, a single cache-side match cannot say which of
-    the two transcripts it belongs to. Handing it to either is the same
-    silent misattribution a cache-side collision is already withheld for.
+    the id in the first place. A copied or restored transcript is the
+    ordinary way two files end up sharing one raw session id -- the same
+    collision the collector already reports one layer up -- and it can land
+    beside the original under the *same* project directory just as easily as
+    under a different one, so this is keyed on the file itself rather than on
+    project name: two files agreeing on a project would otherwise collapse
+    into one entry and hide the collision. Once it happens, a single
+    cache-side match cannot say which of the transcripts it belongs to.
+    Handing it to either is the same silent misattribution a cache-side
+    collision is already withheld for.
     """
-    projects_by_id: dict[str, set[str]] = defaultdict(set)
+    paths_by_id: dict[str, set[Path]] = defaultdict(set)
     for path, is_subagent, events in parsed:
         if is_subagent:
             continue
-        project = path.parent.name
         for event in events:
-            projects_by_id[_strip_source_prefix(event.session_id)].add(project)
-    return {raw_id for raw_id, projects in projects_by_id.items() if len(projects) > 1}
+            paths_by_id[_strip_source_prefix(event.session_id)].add(path)
+    return {raw_id for raw_id, paths in paths_by_id.items() if len(paths) > 1}
 
 
 def _calls_mcp(event: AgentEvent) -> bool:

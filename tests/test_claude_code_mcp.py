@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -772,6 +773,32 @@ def test_two_transcript_projects_sharing_a_session_id_both_withhold(tmp_path: Pa
     root, cache = tmp_path / "projects", tmp_path / "cache"
     _transcript(root, ["search"], project="-project-one")
     _transcript(root, ["search"], project="-project-two")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+    sessions = _collect(root, cache)
+    assert len(sessions) == 2
+    assert {s.mcp_log_state for s in sessions} == {"session_id_collision"}
+    assert all(s.mcp_connections == () for s in sessions)
+    assert [c.status for c in _mcp_calls(sessions)] == ["unknown", "unknown"]
+
+
+def test_two_transcript_files_in_the_same_project_sharing_a_session_id_both_withhold(
+    tmp_path: Path,
+) -> None:
+    """The transcript-side collision `_ambiguous_transcript_ids` guards against
+    is not only a two-*project* scenario. A restored or manually copied
+    transcript can land beside the original under a different filename in the
+    *same* project directory, still carrying the original's raw session id.
+    Keying the check on project name rather than the file itself would
+    collapse both files into one project entry and miss exactly this case."""
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    original = root / "-project-one" / f"{SESSION}.jsonl"
+    shutil.copy(original, original.with_name(f"{SESSION}-restored.jsonl"))
     log.write_server_log(
         cache,
         "books",

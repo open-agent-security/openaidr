@@ -19,6 +19,7 @@ from tests.fixtures.claude_jsonl import (
     tool_result,
     user_text,
     write_session,
+    write_subagent_session,
 )
 
 
@@ -835,6 +836,22 @@ def test_the_project_root_is_recovered_when_upstream_reports_none(tmp_path: Path
     record = user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at the repository")
     del record["cwd"]
     write_session(tmp_path, encoded, [record])
+    session = _sessions(tmp_path)[0]
+    assert session.working_directory == str(project)
+
+
+def test_a_subagents_project_root_is_recovered_two_directories_up(tmp_path: Path) -> None:
+    """A subagent transcript lives at
+    `<project>/<sessionId>/subagents/agent-<id>.jsonl` (ADR-0001) -- two
+    directories below the project root, not one. Decoding `path.parent.parent`
+    would read the session id's own directory name as if it were the encoded
+    project path, and a session id never decodes to a real directory."""
+    project = tmp_path / "work" / "my-project"
+    project.mkdir(parents=True)
+    encoded = str(project).replace("/", "-")
+    record = user_text("s1", "su0", "2026-08-01T10:00:00.000Z", "delegated")
+    del record["cwd"]
+    write_subagent_session(tmp_path, encoded, "s1", "abc123", [record])
     session = _sessions(tmp_path)[0]
     assert session.working_directory == str(project)
 
