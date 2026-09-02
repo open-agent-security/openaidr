@@ -380,6 +380,16 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
             continue
         if is_dir:
             present.append(root)
+        else:
+            # The candidate exists but is a regular file (or a symlink to
+            # one), not a directory -- a misconfigured `CLAUDE_CLI_CACHE_DIR`
+            # or a stray file at a default path, not the ordinary absence the
+            # `FileNotFoundError` branch above handles. Folding it into
+            # `present` would try to `os.walk()` a non-directory; leaving it
+            # out of both lists would make it indistinguishable from a root
+            # that was never configured, the same falsehood-as-absence gap
+            # the `OSError` branch above closes.
+            unreadable.append(str(root))
     if not present:
         # Every candidate that exists having errored (`unreadable` non-empty)
         # is a different fact from none of them existing at all -- the one
