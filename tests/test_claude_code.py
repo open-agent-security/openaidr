@@ -419,19 +419,20 @@ def test_a_transcript_that_vanishes_during_the_window_check_does_not_lose_the_ot
     session already accumulated from other transcripts and report a
     whole-reader failure over one missing file.
     """
+    import openaidr.readers.claude_code as claude_code
+
     write_session(tmp_path, "-a", [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "one")])
     gone = write_session(tmp_path, "-b", [user_text("s2", "u2", "2026-08-01T10:00:00.000Z", "two")])
 
-    real_stat = Path.stat
+    real_within_window = claude_code._within_window
 
-    def flaky_stat(self: Path, *args: object, **kwargs: object) -> object:
-        if self == gone:
+    def flaky_within_window(path: Path, window: Window) -> bool:
+        if path == gone:
             raise OSError("vanished")
-        return real_stat(self, *args, **kwargs)
+        return real_within_window(path, window)
 
-    monkeypatch.setattr(Path, "stat", flaky_stat)
-    since = datetime.now(UTC) - timedelta(days=14)
-    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=since))
+    monkeypatch.setattr(claude_code, "_within_window", flaky_within_window)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
 
     assert [s.session_id for s in sessions] == ["claude-code:s1"]
     assert any(str(gone) in f.message and "vanished" in f.message for f in failures)
