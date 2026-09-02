@@ -85,8 +85,10 @@ def _mcp_coverage_lines(collection: Collection) -> list[str]:
         # happened.
         lines += [
             "",
-            f"MCP connection logs — no MCP call was issued, but {len(with_connections)} "
-            "session(s) recorded a connection attempt",
+            (
+                f"MCP connection logs — no MCP call was issued, but {len(with_connections)} "
+                "session(s) recorded a connection attempt"
+            ),
         ]
         connections = [c for s in sessions for c in s.mcp_connections]
         return lines + _mcp_connection_lines(connections)
