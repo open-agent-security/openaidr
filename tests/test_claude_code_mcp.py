@@ -485,6 +485,35 @@ def test_an_undecodable_log_is_reported_not_silently_dropped(tmp_path: Path) -> 
     assert any(str(path) in f.message for f in failures)
 
 
+def test_an_unreadable_file_withholds_outcomes_for_its_whole_server(tmp_path: Path) -> None:
+    """A server's log can be split across more than one file, one per run.
+
+    Here the readable file alone already has a count that matches what the
+    transcript expects -- exactly the coincidence that makes a partial read
+    dangerous to trust: the unreadable second file's own share of the log was
+    never counted on either side, so a guard built only from what could be
+    opened has no way to tell "this really is the whole log" from "this only
+    looks complete." Connection facts, which do not depend on the ordinal
+    count, are unaffected.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"])
+    log.write_server_log(
+        cache, "books", [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")]
+    )
+    directory = cache / "-work-project" / "mcp-logs-books"
+    (directory / "2026-01-02T00-00-00-000Z.jsonl").write_bytes(b"\xff\xfe not valid utf-8")
+
+    index = read_mcp_logs((cache,))
+    assert index.incomplete_servers == frozenset({"books"})
+
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "count_mismatch"
+    assert [c.status for c in _mcp_calls([session])] == ["unknown"]
+    (connection,) = session.mcp_connections
+    assert connection.transport == "stdio"
+
+
 def test_the_cache_root_can_be_overridden(tmp_path: Path, monkeypatch) -> None:
     """Which is what lets this be tested without a real cache on the machine."""
     monkeypatch.setenv("CLAUDE_CLI_CACHE_DIR", str(tmp_path))

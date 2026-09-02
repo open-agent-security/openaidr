@@ -304,7 +304,23 @@ class ClaudeCodeReader:
         # read those as corruption and withhold outcomes over nothing.
         transcript_counts = _mcp_tool_counts(event)
         log_counts = logs.tool_counts()
-        if any(log_counts.get(key, 0) != n for key, n in transcript_counts.items()):
+        # A count agreement is only as trustworthy as the read it was taken
+        # from. A server whose log spans more than one file -- one per run --
+        # can have some of those files unreadable while others parsed cleanly;
+        # `log_counts` then reflects only the readable remainder, and nothing
+        # about a count built from a partial read can tell "this really is
+        # every call" from "this merely looks complete because the missing
+        # file's share went uncounted." Any server this session actually calls
+        # that had an unreadable file anywhere is therefore treated the same
+        # as a count that failed to agree, rather than trusted on a guard run
+        # against data known to be incomplete.
+        touches_incomplete_server = any(
+            server in index.incomplete_servers for server, _tool in transcript_counts
+        )
+        if (
+            touches_incomplete_server
+            or any(log_counts.get(key, 0) != n for key, n in transcript_counts.items())
+        ):
             return _MCPEnrichment(state="count_mismatch", connections=connections)
         transports = {
             server: connection.transport for server, connection in logs.connections.items()
@@ -385,6 +401,7 @@ def _turns(
     turns: list[Turn] = []
     seen: dict[str, int] = {}
     compromised = _compromised_results(messages)
+    reused_call_ids = _reused_call_ids(transcript)
     for message in messages:
         base = message.sequence_id or f"turn-{len(turns)}"
         occurrence = seen.get(base, 0)
@@ -398,12 +415,40 @@ def _turns(
                 text=message.content,
                 is_sidechain=is_subagent,
                 tool_calls=_tool_calls(
-                    message.tools, session_id, key, base, occurrence, compromised, transcript, mcp
+                    message.tools,
+                    session_id,
+                    key,
+                    base,
+                    occurrence,
+                    compromised,
+                    reused_call_ids,
+                    transcript,
+                    mcp,
                 ),
                 permission_mode=transcript.permission_modes.get((base, occurrence)),
             )
         )
     return tuple(turns)
+
+
+def _reused_call_ids(transcript: _Transcript) -> set[str]:
+    """Raw provider call ids this transcript's own recovery pass attaches to
+    more than one call.
+
+    `_compromised_results` only catches upstream's own structural mismatch --
+    two calls that share tool name, type, server and arguments. It says
+    nothing about a literal id reused across two calls whose *shape* differs
+    (one `Read`, one `Bash`), because those land in different structural
+    groups there and neither is flagged. But `call_ids`, `results`, `errored`,
+    `denials`, `started` and `ended` are all keyed on the bare id this reader
+    recovers directly from the raw record -- shape never enters into it -- so
+    a reused id hands every call that carries it whichever call's data this
+    pass's single pass over the file wrote there last, regardless of whether
+    the calls look alike (ADR-0001, ADR-0002's argument extended to this
+    reader's own recovery, not just upstream's).
+    """
+    counts = Counter(transcript.call_ids.values())
+    return {call_id for call_id, count in counts.items() if count > 1}
 
 
 def _compromised_results(messages: list[ChatMessage]) -> set[int]:
@@ -455,6 +500,7 @@ def _tool_calls(
     record_uuid: str,
     occurrence: int,
     compromised: set[int],
+    reused_call_ids: set[str],
     transcript: _Transcript,
     mcp: _MCPEnrichment,
 ) -> tuple[ToolCall, ...]:
@@ -474,7 +520,7 @@ def _tool_calls(
     for index, tool in enumerate(tools):
         server, name = _server_and_tool(tool)
         call_id = transcript.call_ids.get((record_uuid, occurrence, index))
-        withheld = id(tool) in compromised
+        withheld = id(tool) in compromised or (call_id is not None and call_id in reused_call_ids)
         if withheld:
             status: Status = "pending"
             result, size, error_text, truncated = None, None, None, False
@@ -482,15 +528,27 @@ def _tool_calls(
         else:
             denial = transcript.denials.get(call_id) if call_id else None
             status = _status(tool, denial, transcript.errored.get(call_id) if call_id else None)
-            # The record's own body, whole, where the call could be identified.
-            # Upstream's copy is a fallback, and it arrives already abridged —
-            # so `truncated` is derived from whichever body is actually carried.
-            recorded = transcript.results.get(call_id) if call_id else None
-            if recorded is not None:
-                result, truncated, size = recorded, False, len(recorded)
+            if status == "pending":
+                # `_status` returned `pending` from `tool.result is None` --
+                # upstream's own snapshot of the file, taken in a separate read
+                # from this transcript's own recovery pass below. A session
+                # still being written can grow between the two reads, so the
+                # recovery pass can see a record upstream's snapshot never had.
+                # Trusting it here would attach a result to a call this same
+                # status was just derived from *not* having one, an internally
+                # contradictory call.
+                result, truncated, size = None, False, None
             else:
-                truncated, size = _truncation(tool.result)
-                result = tool.result
+                # The record's own body, whole, where the call could be
+                # identified. Upstream's copy is a fallback, and it arrives
+                # already abridged — so `truncated` is derived from whichever
+                # body is actually carried.
+                recorded = transcript.results.get(call_id) if call_id else None
+                if recorded is not None:
+                    result, truncated, size = recorded, False, len(recorded)
+                else:
+                    truncated, size = _truncation(tool.result)
+                    result = tool.result
             error_text = tool.error
         # The connection log answers what the transcript cannot for an MCP
         # call: 129 of 130 measured carry `unknown` here despite every one
@@ -527,7 +585,13 @@ def _tool_calls(
         # withheld call a duration measured off whichever of the colliding
         # calls wrote to that key last, the same silent misattribution its
         # result was already withheld to avoid.
-        duration = None if withheld else _duration(call_id, transcript)
+        #
+        # A call whose status is still `pending` from `tool.result is None`
+        # gets the same treatment as withheld, for the same reason `result`
+        # does above: `ended` can hold a value the recovery pass saw after
+        # upstream's own snapshot did not, and a `pending` call reporting a
+        # duration is the same contradiction as one reporting a result.
+        duration = None if withheld or status == "pending" else _duration(call_id, transcript)
         if duration is None and outcome is not None:
             duration = outcome.duration_ms
         skill, plugin = transcript.attribution.get((record_uuid, occurrence), (None, None))
