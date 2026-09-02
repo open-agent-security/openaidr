@@ -229,7 +229,11 @@ class ClaudeCodeReader:
             # guess (ADR-0002, ADR-0003's argument).
             enrichment = _MCPEnrichment(state="not_attempted")
         else:
-            enrichment = self._mcp_enrichment(raw_id, event)
+            # The cache files a log under a mangled *project* directory, so a
+            # session id is only unique within one of them; this is the
+            # transcript's own project directory, and the only thing that can
+            # break a tie between two of them claiming the same id.
+            enrichment = self._mcp_enrichment(raw_id, path.parent.name, event)
         return Session(
             session_id=session_id,
             agent_kind=map_source(event.source),
@@ -271,7 +275,7 @@ class ClaudeCodeReader:
             ),
         )
 
-    def _mcp_enrichment(self, raw_id: str, event: AgentEvent) -> _MCPEnrichment:
+    def _mcp_enrichment(self, raw_id: str, project: str, event: AgentEvent) -> _MCPEnrichment:
         """What the connection log adds to this session, and whether it may.
 
         **The guard.** The log carries no span and no call id -- only an ordered
@@ -294,7 +298,15 @@ class ClaudeCodeReader:
             return _MCPEnrichment(state="not_attempted")
         if not index.root_found:
             return _MCPEnrichment(state="no_log_root")
-        logs = index.for_session(raw_id)
+        logs, ambiguous = index.for_session(raw_id, project)
+        if ambiguous:
+            # Two projects filed a log under this session id and neither can be
+            # shown to be this one's. Not even the connections survive that:
+            # unlike a count mismatch, where the connection half is a property
+            # of a connection this session certainly had, here it is the
+            # *identity* that is in doubt, so every fact in either entry may
+            # belong to the other project's session (ADR-0001, ADR-0003).
+            return _MCPEnrichment(state="session_id_collision")
         if logs is None:
             # Only a session that actually called an MCP tool is missing
             # anything; the rest simply never opened a connection.
@@ -438,7 +450,7 @@ def _turns(
     turns: list[Turn] = []
     seen: dict[str, int] = {}
     compromised = _compromised_results(messages)
-    reused_call_ids = _reused_call_ids(transcript)
+    reused_call_ids = _reused_call_ids(transcript, raw_session_id)
     for message in messages:
         base = message.sequence_id or f"turn-{len(turns)}"
         occurrence = seen.get(base, 0)
@@ -469,9 +481,9 @@ def _turns(
     return tuple(turns)
 
 
-def _reused_call_ids(transcript: _Transcript) -> set[str]:
-    """Raw provider call ids this transcript's own recovery pass attaches to
-    more than one call.
+def _reused_call_ids(transcript: _Transcript, session_id: str) -> set[str]:
+    """Raw provider call ids this session's own records attach to more than one
+    call.
 
     `_compromised_results` only catches upstream's own structural mismatch --
     two calls that share tool name, type, server and arguments. It says
@@ -485,7 +497,11 @@ def _reused_call_ids(transcript: _Transcript) -> set[str]:
     the calls look alike (ADR-0001, ADR-0002's argument extended to this
     reader's own recovery, not just upstream's).
     """
-    counts = Counter(transcript.call_ids.values())
+    counts = Counter(
+        call_id
+        for (recorded, _uuid, _occurrence, _position), call_id in transcript.call_ids.items()
+        if recorded == session_id
+    )
     return {call_id for call_id, count in counts.items() if count > 1}
 
 
@@ -568,8 +584,9 @@ def _tool_calls(
             result, size, error_text, truncated = None, None, None, False
             denial: str | None = None
         else:
-            denial = transcript.denials.get(call_id) if call_id else None
-            status = _status(tool, denial, transcript.errored.get(call_id) if call_id else None)
+            keyed = (raw_session_id, call_id) if call_id else None
+            denial = transcript.denials.get(keyed) if keyed else None
+            status = _status(tool, denial, transcript.errored.get(keyed) if keyed else None)
             if status == "pending":
                 # `_status` returned `pending` from `tool.result is None` --
                 # upstream's own snapshot of the file, taken in a separate read
@@ -585,7 +602,7 @@ def _tool_calls(
                 # identified. Upstream's copy is a fallback, and it arrives
                 # already abridged — so `truncated` is derived from whichever
                 # body is actually carried.
-                recorded = transcript.results.get(call_id) if call_id else None
+                recorded = transcript.results.get(keyed) if keyed else None
                 if recorded is not None:
                     result, truncated, size = recorded, False, len(recorded)
                 else:
@@ -633,7 +650,11 @@ def _tool_calls(
         # does above: `ended` can hold a value the recovery pass saw after
         # upstream's own snapshot did not, and a `pending` call reporting a
         # duration is the same contradiction as one reporting a result.
-        duration = None if withheld or status == "pending" else _duration(call_id, transcript)
+        duration = (
+            None
+            if withheld or status == "pending"
+            else _duration(raw_session_id, call_id, transcript)
+        )
         if duration is None and outcome is not None:
             duration = outcome.duration_ms
         skill, plugin = transcript.attribution.get(
@@ -668,7 +689,7 @@ def _tool_calls(
     return tuple(calls)
 
 
-def _duration(call_id: str | None, transcript: _Transcript) -> int | None:
+def _duration(session_id: str, call_id: str | None, transcript: _Transcript) -> int | None:
     """How long the call took, where both ends of it were recorded.
 
     Both ends, or nothing: a call whose result never came back has no duration,
@@ -686,7 +707,8 @@ def _duration(call_id: str | None, transcript: _Transcript) -> int | None:
     """
     if call_id is None:
         return None
-    began, finished = transcript.started.get(call_id), transcript.ended.get(call_id)
+    key = (session_id, call_id)
+    began, finished = transcript.started.get(key), transcript.ended.get(key)
     if began is None or finished is None:
         return None
     elapsed = (finished - began).total_seconds() * 1000
@@ -819,16 +841,29 @@ class _Transcript:
     #: already used would read the first session's data at what looks, from
     #: the second session's own count, like occurrence zero.
     call_ids: dict[tuple[str, str, int, int], str]
-    #: provider call id -> when the call was issued.
-    started: dict[str, datetime]
-    #: provider call id -> when its result came back.
-    ended: dict[str, datetime]
-    #: provider call id -> whether the result was an error. Absent where the
-    #: record carries no `is_error`, which is not the same as False.
-    errored: dict[str, bool]
-    #: provider call id -> `toolDenialKind`, where the call was refused.
-    denials: dict[str, str]
-    #: provider call id -> the result body **as the agent recorded it**.
+    #: (session id, provider call id) -> when the call was issued.
+    #:
+    #: Session-keyed for the same reason `call_ids` is, and it is the same
+    #: hazard one identifier along: a provider call id is only promised unique
+    #: within the session that issued it, and one file routinely holds more
+    #: than one session -- 386 of 594 real transcripts on one machine. A bare
+    #: id key lets a second session's record overwrite the first's here, and
+    #: `_reused_call_ids` cannot see it, because only one record ever *issues*
+    #: the id and nothing about the file looks duplicated. The first call would
+    #: then report a stranger's result, a stranger's `is_error` and a duration
+    #: measured against a stranger's clock (ADR-0001).
+    started: dict[tuple[str, str], datetime]
+    #: (session id, provider call id) -> when its result came back.
+    ended: dict[tuple[str, str], datetime]
+    #: (session id, provider call id) -> whether the result was an error.
+    #: Absent where the record carries no `is_error`, which is not the same as
+    #: False.
+    errored: dict[tuple[str, str], bool]
+    #: (session id, provider call id) -> `toolDenialKind`, where the call was
+    #: refused.
+    denials: dict[tuple[str, str], str]
+    #: (session id, provider call id) -> the result body **as the agent
+    #: recorded it**.
     #:
     #: Upstream abridges every result to 1,000 characters from the middle, which
     #: on one corpus held 22% of 56.5M characters and cut 38% of results — with
@@ -840,7 +875,7 @@ class _Transcript:
     #: entire corpus: 117MB peak RSS against an 18MB baseline. A cap can be added
     #: when the reported figure says it is needed; one chosen before then would
     #: be the same arbitrary threshold at a different number.
-    results: dict[str, str]
+    results: dict[tuple[str, str], str]
 
     # Added after the fields above, with defaults, so a consumer or a test
     # that builds this record positionally is not broken by the reader
@@ -897,11 +932,11 @@ def _recorded(path: Path) -> _Transcript:
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]] = {}
     permission_modes: dict[tuple[str, str, int], str] = {}
     call_ids: dict[tuple[str, str, int, int], str] = {}
-    started: dict[str, datetime] = {}
-    ended: dict[str, datetime] = {}
-    errored: dict[str, bool] = {}
-    denials: dict[str, str] = {}
-    results: dict[str, str] = {}
+    started: dict[tuple[str, str], datetime] = {}
+    ended: dict[tuple[str, str], datetime] = {}
+    errored: dict[tuple[str, str], bool] = {}
+    denials: dict[tuple[str, str], str] = {}
+    results: dict[tuple[str, str], str] = {}
     modes: dict[str, str] = {}
     #: (session id, uuid) -> how many records with that uuid have been seen so
     #: far *in that session*. A resumed session can re-emit a record under the
@@ -958,22 +993,36 @@ def _recorded(path: Path) -> _Transcript:
                 # `uuid_occurrences` itself.
                 sid = session_id or ""
                 uuid = record.get("uuid")
+                # Counted over exactly the records upstream turns into a
+                # `ChatMessage`, because that is the population `_turns` counts
+                # *its* occurrence over -- it walks `event.chat_history`, which
+                # upstream builds from a strict subset of the file. Counting
+                # every record here instead would let a record upstream drops
+                # (a `system` boundary, an `attachment`, a `user` record
+                # carrying a tool result) take an occurrence number no turn
+                # will ever ask for, and shift every later record with the same
+                # uuid one place past the key its own turn looks under
+                # (ADR-0001).
+                key_uuid = (
+                    uuid
+                    if isinstance(uuid, str) and uuid and _projects_to_message(record)
+                    else None
+                )
                 occurrence = 0
-                if isinstance(uuid, str) and uuid:
-                    occurrence = uuid_occurrences.get((sid, uuid), 0)
-                    uuid_occurrences[(sid, uuid)] = occurrence + 1
-                if mode is not None and isinstance(uuid, str) and uuid:
-                    permission_modes[(sid, uuid, occurrence)] = mode
-                if isinstance(uuid, str) and uuid:
+                if key_uuid is not None:
+                    occurrence = uuid_occurrences.get((sid, key_uuid), 0)
+                    uuid_occurrences[(sid, key_uuid)] = occurrence + 1
+                    if mode is not None:
+                        permission_modes[(sid, key_uuid, occurrence)] = mode
                     where = record.get("cwd")
                     if isinstance(where, str) and where:
-                        cwd_at[(sid, uuid, occurrence)] = where
+                        cwd_at[(sid, key_uuid, occurrence)] = where
                     skill, plugin = (
                         record.get("attributionSkill"),
                         record.get("attributionPlugin"),
                     )
                     if isinstance(skill, str) or isinstance(plugin, str):
-                        attribution[(sid, uuid, occurrence)] = (
+                        attribution[(sid, key_uuid, occurrence)] = (
                             skill if isinstance(skill, str) else None,
                             plugin if isinstance(plugin, str) else None,
                         )
@@ -991,22 +1040,22 @@ def _recorded(path: Path) -> _Transcript:
                     if not isinstance(identifier, str) or not identifier:
                         continue
                     if kind == "tool_use":
-                        if isinstance(uuid, str) and uuid:
-                            call_ids[(sid, uuid, occurrence, position)] = identifier
+                        if key_uuid is not None:
+                            call_ids[(sid, key_uuid, occurrence, position)] = identifier
                         position += 1
                         if timestamp is not None:
-                            started[identifier] = timestamp
+                            started[(sid, identifier)] = timestamp
                     elif kind == "tool_result":
                         if timestamp is not None:
-                            ended[identifier] = timestamp
+                            ended[(sid, identifier)] = timestamp
                         if isinstance(block.get("is_error"), bool):
-                            errored[identifier] = block["is_error"]
+                            errored[(sid, identifier)] = block["is_error"]
                         if isinstance(denial, str) and denial in _DENIAL_KINDS:
-                            denials[identifier] = denial
+                            denials[(sid, identifier)] = denial
                         body = block.get("content")
                         text = body if isinstance(body, str) else json.dumps(body, default=str)
                         if text:
-                            results[identifier] = text
+                            results[(sid, identifier)] = text
     except OSError:
         pass
 
@@ -1028,6 +1077,53 @@ def _recorded(path: Path) -> _Transcript:
         errored=errored,
         denials=denials,
         results=results,
+    )
+
+
+def _projects_to_message(record: dict[str, object]) -> bool:
+    """Whether upstream would turn this record into a `ChatMessage`.
+
+    A deliberate restatement of `ClaudeParser._extract_message_data` and
+    `_create_entry_from_extracted_session`, and the one place this reader
+    depends on upstream's *filtering* rather than on its output. It is needed
+    because occurrence is a position within a sequence, and the two sides of
+    the join count that position over different files' worth of records unless
+    they agree on which records count: `_turns` counts over
+    `event.chat_history`, and only these records reach it.
+
+    Four ways a record is dropped before it gets there, all of them ordinary in
+    a real transcript: it is not a `user` or `assistant` record at all
+    (`system`, `attachment`, `summary`, `queue-operation`, `last-prompt`); it
+    carries no `message`; it is a `user` record whose content is a tool result,
+    which upstream folds into the call that issued it instead of emitting a
+    turn for; or it is left with neither text nor a tool call once projected.
+
+    Restating a dependency's internals is a cost, and it is the smaller one:
+    the alternative is a silent misjoin that only appears when a uuid repeats,
+    which is the failure this whole occurrence scheme exists to prevent. It is
+    recorded as an upstream ask in `docs/specs/session-collection.md` -- a
+    parser that carried the record's own identity through projection would let
+    this go.
+    """
+    kind = record.get("type")
+    if kind not in ("user", "assistant"):
+        return False
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return False
+    content = message.get("content", "")
+    if kind == "user":
+        if isinstance(content, list) and any(
+            isinstance(item, dict) and item.get("type") == "tool_result" for item in content
+        ):
+            return False
+        return isinstance(content, str) and bool(content)
+    if not isinstance(content, list):
+        return False
+    return any(
+        item.get("type") == "tool_use" or (item.get("type") == "text" and item.get("text"))
+        for item in content
+        if isinstance(item, dict)
     )
 
 

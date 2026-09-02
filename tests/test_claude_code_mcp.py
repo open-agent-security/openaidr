@@ -23,7 +23,7 @@ from tests.fixtures.claude_jsonl import (
 SESSION = "11111111-2222-3333-4444-555555555555"
 
 
-def _transcript(root: Path, tools: list[str]) -> None:
+def _transcript(root: Path, tools: list[str], project: str = "project") -> None:
     """A session calling `tools` over MCP, plus one built-in so it always parses.
 
     Upstream yields nothing for a transcript with no tool calls at all, so a
@@ -50,7 +50,7 @@ def _transcript(root: Path, tools: list[str]) -> None:
             )
         )
         records.append(tool_result(SESSION, f"r{index}", "2026-01-01T00:00:02Z", call_id, "done"))
-    write_session(root, "project", records)
+    write_session(root, project, records)
 
 
 def _collect(root: Path, cache: Path | None):
@@ -441,7 +441,7 @@ def test_an_unresolved_connection_state_stays_unknown(tmp_path: Path) -> None:
         cache, "books", [log.http_transport(SESSION, "https://api.example.test/mcp/")]
     )
     index = read_mcp_logs((cache,))
-    logs = index.for_session(SESSION)
+    logs, _ = index.for_session(SESSION, "-work-project")
     assert logs is not None
     connection = logs.connections["books"]
     assert connection.connected is None
@@ -463,7 +463,7 @@ def test_a_later_success_clears_an_earlier_failed_attempts_category(tmp_path: Pa
         [log.connect_failed(SESSION, 10, "503", "upstream is unwell"), log.connected(SESSION)],
     )
     index = read_mcp_logs((cache,))
-    logs = index.for_session(SESSION)
+    logs, _ = index.for_session(SESSION, "-work-project")
     assert logs is not None
     connection = logs.connections["books"]
     assert connection.connected is True
@@ -486,7 +486,7 @@ def test_failure_categories(tmp_path: Path, status: str | None, detail: str, exp
     cache = tmp_path / "cache"
     log.write_server_log(cache, "books", [log.connect_failed(SESSION, 10, status, detail)])
     index = read_mcp_logs((cache,))
-    logs = index.for_session(SESSION)
+    logs, _ = index.for_session(SESSION, "-work-project")
     assert logs is not None
     connection = logs.connections["books"]
     assert connection.failure_category == expected
@@ -498,7 +498,7 @@ def test_a_torn_final_line_does_not_lose_the_file(tmp_path: Path) -> None:
     path = log.write_server_log(cache, "books", [log.connected(SESSION)])
     path.write_text(path.read_text() + '{"debug": "Tool ', encoding="utf-8")
     index = read_mcp_logs((cache,))
-    logs = index.for_session(SESSION)
+    logs, _ = index.for_session(SESSION, "-work-project")
     assert logs is not None
     assert logs.connections["books"].transport == "stdio"
 
@@ -608,3 +608,123 @@ def test_the_json_document_withholds_the_failure_detail(tmp_path: Path) -> None:
     blob = json.dumps(document)
     assert "sk-secret-value" not in blob
     assert '"failure_category": "auth"' in blob
+
+
+def test_one_session_id_under_two_project_directories_withholds_rather_than_merges(
+    tmp_path: Path,
+) -> None:
+    """The cache files logs under a mangled *project* directory, not under a
+    session, so a session id is only unique within one of them. A copied,
+    restored or independently rooted project can put the same raw session id
+    under two -- the collision the collector already reports for transcripts --
+    and a session-only index merges both projects' logs into one entry. The
+    retained session would then carry another project's connections and, where
+    per-tool counts happen to coincide, its outcomes."""
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-unmangled-elsewhere")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-work-project",
+    )
+    log.write_server_log(
+        cache,
+        "tickets",
+        [log.connected(SESSION, transport="sse")],
+        project="-other-project",
+    )
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "session_id_collision"
+    assert session.mcp_connections == (), "neither project's connections can be attributed"
+    assert [c.status for c in _mcp_calls([session])] == ["unknown"]
+    assert [c.transport for c in _mcp_calls([session])] == [None]
+
+
+def test_a_collided_session_id_uses_the_log_filed_under_its_own_project(
+    tmp_path: Path,
+) -> None:
+    """Withholding is the fallback, not the rule. Where the transcript's own
+    project directory names one of the colliding cache directories, that is
+    which log belongs to it, and the enrichment is neither ambiguous nor
+    withheld."""
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-work-project")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-work-project",
+    )
+    log.write_server_log(
+        cache,
+        "tickets",
+        [log.connected(SESSION, transport="sse")],
+        project="-other-project",
+    )
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "applied"
+    assert [c.server for c in session.mcp_connections] == ["books"]
+    assert [c.status for c in _mcp_calls([session])] == ["ok"]
+
+
+def test_a_malformed_line_before_the_end_marks_its_server_incomplete(tmp_path: Path) -> None:
+    """A torn *final* line is an ordinary live append; an earlier one is loss.
+
+    What the skipped line said is unknowable, and one of the things it can have
+    said is `Calling MCP tool` for a call that overlapped another -- the only
+    evidence that this server's completion order cannot be trusted as its
+    invocation order. The later completions still make the counts agree, so
+    neither the count guard nor the overlap guard sees anything wrong.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"])
+    path = log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+    )
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join([lines[0], '{"debug": "Calling MCP t', *lines[1:]]) + "\n")
+
+    index = read_mcp_logs((cache,))
+    assert index.incomplete_servers == frozenset({"books"})
+
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "count_mismatch"
+    assert [c.status for c in _mcp_calls([session])] == ["unknown"]
+    (connection,) = session.mcp_connections
+    assert connection.transport == "stdio", "the connection fact does not depend on the ordinal"
+
+
+def test_an_outcome_with_no_call_outstanding_withholds_that_tools_ordinals(
+    tmp_path: Path,
+) -> None:
+    """A log that records `Calling` lines and is then missing one has lost the
+    evidence the ordinal join rests on.
+
+    Two calls to `search` here, but only one `Calling` line: the second
+    completion arrives with nothing in flight for that key, which means either
+    a `Calling` line went missing or two calls overlapped. Both make completion
+    order unusable as invocation order, and the counts still agree, so nothing
+    else catches it. A log that records no `Calling` lines at all -- an older
+    client -- is not held to a line it never writes.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search", "search"])
+    log.write_server_log(
+        cache,
+        "books",
+        [
+            log.connected(SESSION, transport="stdio"),
+            log.calling(SESSION, "search"),
+            log.completed(SESSION, "search", ms=5),
+            log.failed(SESSION, "search", ms=20),
+        ],
+    )
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "applied"
+    assert session.mcp_overlap_withheld == 2
+    calls = _mcp_calls([session])
+    assert [c.status for c in calls] == ["unknown", "unknown"]
+    assert [c.transport for c in calls] == ["stdio", "stdio"]

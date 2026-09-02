@@ -191,6 +191,41 @@ def test_mcp_coverage_reports_overlap_withheld_calls_separately_from_applied() -
     assert document["sessions"][0]["mcp_overlap_withheld"] == 1
 
 
+def test_mcp_coverage_names_a_session_id_collision_rather_than_a_pruned_cache() -> None:
+    """Two projects holding a log under one session id is a different answer
+    from no log at all, and reporting it as `0 of 1 enriched` with no reason
+    would read exactly like a pruned cache."""
+    call = ToolCall(
+        span="claude-code:s1:toolu_1",
+        tool_name="search",
+        mcp_server="books",
+        status="unknown",
+        arguments={},
+        result=None,
+        result_size=None,
+        error_text=None,
+        truncated=False,
+    )
+    turn = Turn(
+        position=0, key="u1", role="assistant", text="", is_sidechain=False, tool_calls=(call,)
+    )
+    session = Session(
+        session_id="claude-code:s1",
+        agent_kind="claude-code",
+        source="claude",
+        started_at=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
+        model=None,
+        working_directory=None,
+        machine=None,
+        user=None,
+        mcp_log_state="session_id_collision",
+        turns=(turn,),
+    )
+    output = render_text(Collection(sessions=[session], failures=[]))
+    assert "0 of 1 sessions with MCP calls enriched" in output
+    assert "1 withheld everything: more than one project directory" in output
+
+
 def test_the_summary_states_the_remainder_when_the_tool_list_is_cut() -> None:
     """A truncated list with no marker reads as the whole of it."""
     calls = tuple(

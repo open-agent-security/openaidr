@@ -96,15 +96,23 @@ def _mcp_coverage_lines(collection: Collection) -> list[str]:
     if states.get("count_mismatch"):
         lines.append(
             f"    {states['count_mismatch']} withheld per-call outcomes: the log and the "
-            "transcript disagree on how many calls were made, so which outcome belongs "
-            "to which call cannot be established. Connection facts kept."
+            "transcript disagree on how many calls were made — or the log could not be "
+            "read whole — so which outcome belongs to which call cannot be established. "
+            "Connection facts kept."
+        )
+    if states.get("session_id_collision"):
+        lines.append(
+            f"    {states['session_id_collision']} withheld everything: more than one "
+            "project directory holds a log under this session's id — a copied or "
+            "restored project — and which one is this session's cannot be established."
         )
     overlap_withheld = sum(s.mcp_overlap_withheld for s in with_mcp)
     if overlap_withheld:
         lines.append(
             f"    {overlap_withheld} call(s) within applied sessions still withheld their "
-            "outcome: two or more calls to the same tool overlapped, and the log has "
-            "nothing to say which finished first. Transport kept."
+            "outcome: two or more calls to the same tool overlapped, or the line "
+            "announcing one of them was lost, and the log has nothing to say which "
+            "finished first. Transport kept."
         )
     connections = [c for s in sessions for c in s.mcp_connections]
     if connections:
