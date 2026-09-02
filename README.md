@@ -46,7 +46,7 @@ undocumented cache — and every way it can fall short is reported rather than
 passed off as an absence.
 
 ```console
-$ uv run openaidr sessions --since 2d
+$ uv run openaidr sessions --since 2d --detail
 claude-code:96a1d0d4-d106-4cd1-9031-1e174593f8d0  [claude-code]  2026-08-29T05:11:38+00:00  86 turns
                    142c  Read
                     79c  Bash
