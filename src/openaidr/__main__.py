@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     sessions.add_argument(
         "--detail",
         action="store_true",
-        help="List every tool call. Default: one line per session, plus a summary.",
+        help="List every session and every tool call. Default: the summary alone.",
     )
 
     args = parser.parse_args(argv)

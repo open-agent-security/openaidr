@@ -11,6 +11,18 @@ a subagent transcript carries the *parent's* `sessionId`, and the event schema h
 no field for the file it came from. Parsed that way, a parent and its subagents
 collapse into one identity. Calling upstream per file keeps the path — the only
 thing that distinguishes them — in our hands (ADR-0001).
+
+**Three reads, one rule (ADR-0007).** One `collect()` pass holds three reads of
+the same growing state, taken at three instants: the MCP connection log at the
+top of `collect()`, upstream's `parse_jsonl_file` per file, and this reader's own
+`_recorded` recovery pass over the raw JSONL — oldest to newest, in that order.
+They can legitimately disagree, because the files are append-only and a session
+may still be being written. Every place two of them describe the same call
+resolves it the same way: **identity first**, so a read that cannot be shown to
+be about *this* call contributes nothing however fresh it is; then **freshness**,
+so among the reads that can identify it, the newest wins per fact. `pending`
+means no read saw a result — not merely that the oldest one did not — and a
+`pending` call carries neither a result nor a duration.
 """
 
 from __future__ import annotations
@@ -593,28 +605,35 @@ def _tool_calls(
         else:
             keyed = (raw_session_id, call_id) if call_id else None
             denial = transcript.denials.get(keyed) if keyed else None
-            status = _status(tool, denial, transcript.errored.get(keyed) if keyed else None)
-            if status == "pending":
-                # `_status` returned `pending` from `tool.result is None` --
-                # upstream's own snapshot of the file, taken in a separate read
-                # from this transcript's own recovery pass below. A session
-                # still being written can grow between the two reads, so the
-                # recovery pass can see a record upstream's snapshot never had.
-                # Trusting it here would attach a result to a call this same
-                # status was just derived from *not* having one, an internally
-                # contradictory call.
-                result, truncated, size = None, False, None
+            # The recovery pass is the *newer* read of the same file (ADR-0007):
+            # a session still being written can grow between upstream's snapshot
+            # and this one, so a call upstream saw unfinished can already have
+            # its result here. `keyed` carries the full identity that makes it
+            # unique (ADR-0004) and the ambiguous cases left in the branch above,
+            # so a body found under it is this call's own.
+            recorded = transcript.results.get(keyed) if keyed else None
+            # What the *recovery pass* says about whether the call returned, as
+            # opposed to what it holds of the body. It files an `ended`
+            # timestamp for every result record it reads, whatever that record
+            # carried, and `results` deliberately holds no entry for an empty
+            # body -- so the body alone would report a return with nothing in it
+            # as a call that never came back.
+            returned = keyed is not None and (
+                keyed in transcript.ended or keyed in transcript.errored or recorded is not None
+            )
+            status = _status(
+                tool, denial, transcript.errored.get(keyed) if keyed else None, returned
+            )
+            if recorded is not None:
+                # The record's own body, whole. Upstream's copy is a fallback,
+                # and it arrives already abridged — so `truncated` is derived
+                # from whichever body is actually carried.
+                result, truncated, size = recorded, False, len(recorded)
+            elif tool.result is not None:
+                truncated, size = _truncation(tool.result)
+                result = tool.result
             else:
-                # The record's own body, whole, where the call could be
-                # identified. Upstream's copy is a fallback, and it arrives
-                # already abridged — so `truncated` is derived from whichever
-                # body is actually carried.
-                recorded = transcript.results.get(keyed) if keyed else None
-                if recorded is not None:
-                    result, truncated, size = recorded, False, len(recorded)
-                else:
-                    truncated, size = _truncation(tool.result)
-                    result = tool.result
+                result, truncated, size = None, False, None
             error_text = tool.error
         # The connection log answers what the transcript cannot for an MCP
         # call: 129 of 130 measured carry `unknown` here despite every one
@@ -638,14 +657,14 @@ def _tool_calls(
         if outcome is not None and (status == "unknown" or withheld):
             # `ok is None` means the client reported the call still running and
             # nothing ever followed -- from the log's own vantage point, not an
-            # outcome to assert. But the log is snapshotted once, before this
-            # transcript is even read (`collect()`), so a call it caught mid-flight
-            # can have a result on disk by the time this record is parsed. `status`
-            # already reflects that later, more current read: `unknown` means the
-            # transcript itself proved a return, and downgrading a proven return to
-            # `pending` here would be the log overwriting evidence rather than
-            # filling a gap. Only a call withheld for its own reasons -- never
-            # proven to have returned by anything -- takes `pending` from this.
+            # outcome to assert. The log is the *oldest* of the three reads
+            # (ADR-0007), snapshotted before this transcript is even parsed, so a
+            # call it caught mid-flight can have a result on disk by the time
+            # either later read sees it. `status` already reflects those: an
+            # `unknown` means a newer read proved the call returned, and
+            # downgrading it here would be the oldest read overwriting the
+            # newest. Only a call withheld for its own reasons -- never proven to
+            # have returned by any read -- takes `pending` from this.
             if outcome.ok is not None:
                 status = "ok" if outcome.ok else "error"
             elif withheld:
@@ -657,11 +676,11 @@ def _tool_calls(
         # calls wrote to that key last, the same silent misattribution its
         # result was already withheld to avoid.
         #
-        # A call whose status is still `pending` from `tool.result is None`
-        # gets the same treatment as withheld, for the same reason `result`
-        # does above: `ended` can hold a value the recovery pass saw after
-        # upstream's own snapshot did not, and a `pending` call reporting a
-        # duration is the same contradiction as one reporting a result.
+        # A call whose status is still `pending` gets the same treatment as
+        # withheld: `pending` now means *no* read of the file saw a result
+        # (ADR-0007), so an `ended` timestamp for it would be a fact none of the
+        # reads support, and a `pending` call reporting a duration is the same
+        # contradiction as one reporting a result.
         duration = (
             None
             if withheld or status == "pending"
@@ -670,8 +689,9 @@ def _tool_calls(
         # `outcome.duration_ms` can be a `still running` wait rather than a
         # round trip -- `seal()` gives `ok=None` exactly that elapsed, for a
         # call the log never saw finish. Falling back to it unconditionally
-        # would put a duration on a call still `pending` above, the same
-        # contradiction that guard exists to prevent.
+        # would leave a `pending` call reporting a duration, which is the
+        # corollary ADR-0007 forbids: no call may report a fact its own status
+        # contradicts.
         if duration is None and outcome is not None and status != "pending":
             duration = outcome.duration_ms
         skill, plugin = transcript.attribution.get(
@@ -747,11 +767,21 @@ def _server_and_tool(tool: ToolUsage) -> tuple[str | None, str]:
     return server, name
 
 
-def _status(tool: ToolUsage, denial: str | None, errored: bool | None) -> Status:
+def _status(
+    tool: ToolUsage,
+    denial: str | None,
+    errored: bool | None,
+    returned: bool = False,
+) -> Status:
     """Normalise one outcome, asserting only what the surviving evidence supports.
 
     Every value here is **read**, never inferred. `pending` is structural: no
-    result came back. `rejected` comes from the record's `toolDenialKind`.
+    result came back — in *either* read of the file. Upstream's `tool.result` and
+    `returned` (what this reader's own recovery pass saw) are two reads of a
+    growing file taken at different instants, so a result present in only the
+    newer one is still a result; requiring both would report a returned call as
+    unresolved until the next collection pass (ADR-0007). `rejected` comes from
+    the record's `toolDenialKind`.
     `ok` and `error` come from `is_error` on the result block — the agent's own
     statement about whether the call worked.
 
@@ -766,7 +796,7 @@ def _status(tool: ToolUsage, denial: str | None, errored: bool | None) -> Status
     a claim of success. Its explicit `error`, and any `tool.error` text, are
     still honoured as a last resort where the record itself says nothing.
     """
-    if tool.result is None:
+    if tool.result is None and not returned:
         return "pending"
     if denial is not None:
         return "rejected"

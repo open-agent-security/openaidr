@@ -597,17 +597,16 @@ def test_a_call_with_no_recorded_body_falls_back_and_says_it_was_abridged() -> N
     assert call.result_size == 4000
 
 
-def test_a_pending_status_from_upstreams_own_snapshot_never_carries_a_recovered_result() -> None:
+def test_a_result_only_the_later_recovery_pass_saw_resolves_the_call() -> None:
     """Upstream's parse and this reader's own recovery pass read the same file
-    independently. A session still being written can grow between the two
-    reads, so the recovery pass can see a record upstream's earlier snapshot
-    never had -- exercised directly here by giving `transcript` a `results`/
-    `started`/`ended` entry for a call whose `ToolUsage.result` (upstream's own
-    snapshot) is still `None`. Trusting the recovery pass's later data would
-    produce a `pending` call that nonetheless carries a result and a duration,
-    an internally contradictory call for a transcript that never split across
-    two reads in real use -- reproducing it directly is what makes the race
-    exercisable without contriving an actual concurrent write."""
+    independently, and the recovery pass reads it *later*. A session still being
+    written can grow between the two, so the recovery pass can see a result
+    upstream's earlier snapshot never had -- exercised directly here by giving
+    `transcript` a `results`/`started`/`ended` entry for a call whose
+    `ToolUsage.result` (upstream's own snapshot) is still `None`. The newer read
+    is the better evidence and the key it is filed under is unambiguous, so the
+    call is resolved from it rather than reported `pending` until some later
+    collection pass happens to catch it (ADR-0007)."""
     from openaidr.readers.claude_code import _MCPEnrichment, _tool_calls, _Transcript
 
     class _Usage:
@@ -644,9 +643,106 @@ def test_a_pending_status_from_upstreams_own_snapshot_never_carries_a_recovered_
         _MCPEnrichment(state="not_attempted"),
     )
 
+    # `unknown`, not `ok`: the recovery pass proves the call returned, and the
+    # record carries no `is_error` to say how it went.
+    assert call.status == "unknown"
+    assert call.result == "a result upstream's snapshot never saw"
+    assert call.duration_ms == 5000
+
+
+def test_a_call_neither_read_saw_return_stays_pending() -> None:
+    """The other half of the same rule. `pending` is what remains when *no*
+    read of the file shows a result -- not merely when the older one does not.
+    Same shape as the test above with the recovery pass's `results` entry
+    removed, so the two together pin the rule from both sides."""
+    from openaidr.readers.claude_code import _MCPEnrichment, _tool_calls, _Transcript
+
+    class _Usage:
+        tool_name = "Read"
+        tool_type = "tool"
+        server_name = None
+        arguments: ClassVar[dict[str, object]] = {}
+        result = None
+        status = "success"
+        error = None
+
+    unfinished = _Transcript(
+        {},
+        {},
+        {},
+        {},
+        {("s1", "u1", 0, 0): "t1"},
+        {("s1", "t1"): datetime(2026, 8, 1, 10, 0, 0, tzinfo=UTC)},
+        {},
+        {},
+        {},
+        {},
+    )
+    (call,) = _tool_calls(
+        [_Usage()],  # type: ignore[list-item]
+        "claude-code:s1",
+        "u1",
+        "s1",
+        "u1",
+        0,
+        set(),
+        set(),
+        unfinished,
+        _MCPEnrichment(state="not_attempted"),
+    )
+
     assert call.status == "pending"
     assert call.result is None
     assert call.duration_ms is None
+
+
+def test_a_result_record_with_an_empty_body_still_resolves_the_call() -> None:
+    """A tool result carrying no content is still a return. `results` holds no
+    entry for an empty body by design, so the body alone cannot be what says
+    the call came back -- the recovery pass's own record that a result *arrived*
+    is (ADR-0007). Reading only the body reported such a call `pending`, which
+    claims the call never returned rather than that we hold nothing of what it
+    said."""
+    from openaidr.readers.claude_code import _MCPEnrichment, _tool_calls, _Transcript
+
+    class _Usage:
+        tool_name = "Read"
+        tool_type = "tool"
+        server_name = None
+        arguments: ClassVar[dict[str, object]] = {}
+        result = None
+        status = "success"
+        error = None
+
+    empty_bodied = _Transcript(
+        {},
+        {},
+        {},
+        {},
+        {("s1", "u1", 0, 0): "t1"},
+        {("s1", "t1"): datetime(2026, 8, 1, 10, 0, 0, tzinfo=UTC)},
+        {("s1", "t1"): datetime(2026, 8, 1, 10, 0, 2, tzinfo=UTC)},
+        {},
+        {},
+        {},
+    )
+    (call,) = _tool_calls(
+        [_Usage()],  # type: ignore[list-item]
+        "claude-code:s1",
+        "u1",
+        "s1",
+        "u1",
+        0,
+        set(),
+        set(),
+        empty_bodied,
+        _MCPEnrichment(state="not_attempted"),
+    )
+
+    assert call.status == "unknown"
+    assert call.result is None
+    assert call.result_size is None
+    assert call.duration_ms == 2000
 
 
 def test_an_untruncated_result_reports_its_own_length(tmp_path: Path) -> None:

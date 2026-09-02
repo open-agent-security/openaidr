@@ -10,11 +10,12 @@ import json
 import platform
 import re
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
 from openaidr.collector import Collection
-from openaidr.model import MCPConnection, Session, Turn
+from openaidr.model import MCPConnection, MCPLogState, Session, Turn
 
 #: Distinct tool names to list before summarising the rest; the remainder is
 #: always stated, since a truncated list with no marker reads as the whole.
@@ -61,6 +62,44 @@ def render_text(collection: Collection, detail: bool = False) -> str:
     return "\n".join(lines) + "\n"
 
 
+#: One line per `MCPLogState`, keyed by the state itself.
+#:
+#: A table rather than a chain of `if states.get(...)` branches, because the
+#: failure mode this section exists to prevent is precisely a state nobody
+#: wrote a branch for: it lands in the headline denominator, contributes to
+#: "0 of 1 sessions enriched", and reads to a person as an unexplained gap
+#: rather than as evidence deliberately withheld. `applied` is the one state
+#: with nothing to explain -- the headline already counts it -- and it is
+#: present here holding an empty line so the completeness check has to be
+#: satisfied deliberately rather than by omission.
+_MCP_LOG_STATE_EXPLANATIONS: dict[MCPLogState, Callable[[int], str]] = {
+    "applied": lambda _n: "",
+    "no_log_root": lambda n: (
+        f"{n} could not be read: no cache directory at any known path on "
+        f"{platform.system() or 'this platform'}. Transport, server identity and "
+        "MCP call outcomes are unavailable, not absent."
+    ),
+    "no_log_for_session": lambda n: (
+        f"{n} had MCP calls but no log — the cache is pruned on the agent's schedule, not ours."
+    ),
+    "count_mismatch": lambda n: (
+        f"{n} withheld per-call outcomes: the log and the transcript disagree on "
+        "how many calls were made — or the log could not be read whole — so which "
+        "outcome belongs to which call cannot be established. Connection facts kept."
+    ),
+    "session_id_collision": lambda n: (
+        f"{n} withheld everything: more than one project directory holds a log "
+        "under this session's id — a copied or restored project — and which one is "
+        "this session's cannot be established."
+    ),
+    "not_attempted": lambda n: (
+        f"{n} not attempted: a subagent transcript is keyed by its parent's session "
+        "id, so the log filed under that id cannot be shown to be this subagent's "
+        "share rather than the parent's or a sibling's."
+    ),
+}
+
+
 def _mcp_coverage_lines(collection: Collection) -> list[str]:
     """Whether the MCP connection logs were readable, said once and plainly.
 
@@ -98,37 +137,16 @@ def _mcp_coverage_lines(collection: Collection) -> list[str]:
         "",
         (f"MCP connection logs — {applied} of {len(with_mcp)} sessions with MCP calls enriched"),
     ]
-    if states.get("no_log_root"):
-        lines.append(
-            f"    {states['no_log_root']} could not be read: no cache directory at any "
-            f"known path on {platform.system() or 'this platform'}. Transport, server "
-            "identity and MCP call outcomes are unavailable, not absent."
-        )
-    if states.get("no_log_for_session"):
-        lines.append(
-            f"    {states['no_log_for_session']} had MCP calls but no log — the cache is "
-            "pruned on the agent's schedule, not ours."
-        )
-    if states.get("count_mismatch"):
-        lines.append(
-            f"    {states['count_mismatch']} withheld per-call outcomes: the log and the "
-            "transcript disagree on how many calls were made — or the log could not be "
-            "read whole — so which outcome belongs to which call cannot be established. "
-            "Connection facts kept."
-        )
-    if states.get("session_id_collision"):
-        lines.append(
-            f"    {states['session_id_collision']} withheld everything: more than one "
-            "project directory holds a log under this session's id — a copied or "
-            "restored project — and which one is this session's cannot be established."
-        )
-    if states.get("not_attempted"):
-        lines.append(
-            f"    {states['not_attempted']} not attempted: a subagent transcript is "
-            "keyed by its parent's session id, so the log filed under that id cannot "
-            "be shown to be this subagent's share rather than the parent's or a "
-            "sibling's."
-        )
+    # Driven off the table rather than a branch per state, so a state added to
+    # the model cannot reach the headline denominator while going unexplained
+    # here -- twice the reported defect, once for `not_attempted` and once for a
+    # connection-only session. `test_every_mcp_log_state_is_explained` fails
+    # until the table covers a newly added state.
+    for state, explain in _MCP_LOG_STATE_EXPLANATIONS.items():
+        count = states.get(state, 0)
+        explanation = explain(count) if count else ""
+        if explanation:
+            lines.append(f"    {explanation}")
     overlap_withheld = sum(s.mcp_overlap_withheld for s in with_mcp)
     if overlap_withheld:
         lines.append(

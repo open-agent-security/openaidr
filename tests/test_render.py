@@ -320,3 +320,57 @@ def test_the_summary_states_the_remainder_when_the_tool_list_is_cut() -> None:
     )
     output = render_text(Collection(sessions=[session], failures=[]))
     assert "across 8 further tools" in output
+
+
+def test_every_mcp_log_state_is_explained() -> None:
+    """The guard on a whole class of defect, not one instance of it.
+
+    Two separate review rounds found the same shape: a session whose MCP
+    enrichment did not apply is counted in the "N of M sessions ... enriched"
+    headline, and the reason it did not apply is never printed -- so evidence
+    deliberately withheld reads to a person as an unexplained gap. Fixing the
+    reported state alone leaves the next state added to the model to reproduce
+    it. This asserts the table covers `MCPLogState` exactly, so adding a state
+    without a line for it fails here rather than in review.
+    """
+    from typing import get_args
+
+    from openaidr.model import MCPLogState
+    from openaidr.render import _MCP_LOG_STATE_EXPLANATIONS
+
+    assert set(_MCP_LOG_STATE_EXPLANATIONS) == set(get_args(MCPLogState))
+
+
+def test_a_state_with_no_sessions_in_it_prints_no_line() -> None:
+    """`applied` is in the table holding an empty line -- the headline already
+    counts it -- and a state with a zero count contributes nothing. Neither may
+    leak a bare indent into the output."""
+    call = ToolCall(
+        span="claude-code:s1:u1:0",
+        tool_name="search",
+        mcp_server="github",
+        status="ok",
+        arguments={},
+        result=None,
+        result_size=None,
+        error_text=None,
+        truncated=False,
+    )
+    turn = Turn(
+        position=0, key="u1", role="assistant", text="", is_sidechain=False, tool_calls=(call,)
+    )
+    session = Session(
+        session_id="claude-code:s1",
+        agent_kind="claude-code",
+        source="claude",
+        started_at=_START,
+        model=None,
+        working_directory=None,
+        machine=None,
+        user=None,
+        mcp_log_state="applied",
+        turns=(turn,),
+    )
+    output = render_text(Collection(sessions=[session], failures=[]))
+    assert "1 of 1 sessions with MCP calls enriched" in output
+    assert not any(line.strip() == "" and line for line in output.splitlines())
