@@ -499,7 +499,9 @@ def test_an_unreadable_file_withholds_outcomes_for_its_whole_server(tmp_path: Pa
     root, cache = tmp_path / "projects", tmp_path / "cache"
     _transcript(root, ["search"])
     log.write_server_log(
-        cache, "books", [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")]
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
     )
     directory = cache / "-work-project" / "mcp-logs-books"
     (directory / "2026-01-02T00-00-00-000Z.jsonl").write_bytes(b"\xff\xfe not valid utf-8")

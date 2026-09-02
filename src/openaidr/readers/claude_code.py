@@ -317,9 +317,8 @@ class ClaudeCodeReader:
         touches_incomplete_server = any(
             server in index.incomplete_servers for server, _tool in transcript_counts
         )
-        if (
-            touches_incomplete_server
-            or any(log_counts.get(key, 0) != n for key, n in transcript_counts.items())
+        if touches_incomplete_server or any(
+            log_counts.get(key, 0) != n for key, n in transcript_counts.items()
         ):
             return _MCPEnrichment(state="count_mismatch", connections=connections)
         transports = {
