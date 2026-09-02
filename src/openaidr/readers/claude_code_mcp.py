@@ -88,7 +88,12 @@ class _Connection:
     endpoint: str | None = None
     advertised_name: str | None = None
     advertised_version: str | None = None
-    connected: bool = False
+    #: `None` until the log states an outcome. A server whose log carries only
+    #: an endpoint or a capabilities line -- observed while the connection is
+    #: still being established, or from prose the current patterns do not
+    #: recognise -- has not been *seen to fail*, and defaulting to `False`
+    #: would assert that anyway.
+    connected: bool | None = None
     failure_category: str | None = None
     failure_detail: str | None = None
     duration_ms: int | None = None
@@ -226,6 +231,12 @@ def _apply(message: str, server: str, logs: SessionMCPLogs) -> None:
         connection.transport = found.group(1)
         connection.connected = True
         connection.duration_ms = int(found.group(2))
+        # A retried connection can fail before it succeeds, and the client
+        # logs both lines to the same server's log. A prior failure is not
+        # this connection's final state once a later line says it came up --
+        # carrying it forward would report both success and failure at once.
+        connection.failure_category = None
+        connection.failure_detail = None
         return
 
     found = _HTTP_ENDPOINT.search(message)

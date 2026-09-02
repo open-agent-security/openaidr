@@ -238,7 +238,11 @@ class MCPConnection:
     #: version. A cross-run identity that nothing in the transcript carries.
     advertised_name: str | None = None
     advertised_version: str | None = None
-    connected: bool = False
+    #: `None` when the log never stated an outcome for this connection --
+    #: still being established, or observed only through a line the reader
+    #: does not recognise. Not the same as `False`: absence of evidence a
+    #: connection failed is not evidence it did.
+    connected: bool | None = None
     #: Why the connection failed, in a fixed vocabulary a consumer can act on:
     #: `auth`, `timeout`, `http_status`, `network`, `protocol`, `unknown`.
     failure_category: str | None = None

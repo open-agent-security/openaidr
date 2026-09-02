@@ -340,6 +340,48 @@ def test_a_failed_connection_carries_a_category_and_keeps_its_words_local(tmp_pa
     assert "failure_detail" in LOCAL_ONLY
 
 
+def test_an_unresolved_connection_state_stays_unknown(tmp_path: Path) -> None:
+    """A capabilities or endpoint line alone is not an observed outcome.
+
+    Defaulting to `False` would assert the connection failed on evidence that
+    is merely absent -- the handshake may still be in progress, or the log may
+    state something in prose these patterns do not recognise.
+    """
+    cache = tmp_path / "cache"
+    log.write_server_log(
+        cache, "books", [log.http_transport(SESSION, "https://api.example.test/mcp/")]
+    )
+    index = read_mcp_logs((cache,))
+    logs = index.for_session(SESSION)
+    assert logs is not None
+    connection = logs.connections["books"]
+    assert connection.connected is None
+    assert connection.endpoint == "https://api.example.test/mcp/"
+
+
+def test_a_later_success_clears_an_earlier_failed_attempts_category(tmp_path: Path) -> None:
+    """A retried connection can fail before it comes up.
+
+    The final state is the last line, not the union of every line that came
+    before it -- otherwise the connection reports success and failure at once,
+    and a summary counts it among the failures on the strength of a category
+    that no longer describes anything.
+    """
+    cache = tmp_path / "cache"
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connect_failed(SESSION, 10, "503", "upstream is unwell"), log.connected(SESSION)],
+    )
+    index = read_mcp_logs((cache,))
+    logs = index.for_session(SESSION)
+    assert logs is not None
+    connection = logs.connections["books"]
+    assert connection.connected is True
+    assert connection.failure_category is None
+    assert connection.failure_detail is None
+
+
 @pytest.mark.parametrize(
     ("status", "detail", "expected"),
     [
@@ -370,6 +412,23 @@ def test_a_torn_final_line_does_not_lose_the_file(tmp_path: Path) -> None:
     logs = index.for_session(SESSION)
     assert logs is not None
     assert logs.connections["books"].transport == "stdio"
+
+
+def test_an_undecodable_log_is_reported_not_silently_dropped(tmp_path: Path) -> None:
+    """`MCPLogIndex.unreadable` used to name the file and nothing read it.
+
+    A session that called an MCP tool over `books` would report
+    `no_log_for_session` -- the same state a genuinely pruned cache produces --
+    with no sign that the real cause was a file present but undecodable.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"])
+    path = log.write_server_log(cache, "books", [log.connected(SESSION)])
+    path.write_bytes(b"\xff\xfe not valid utf-8")
+    index = read_mcp_logs((cache,))
+    assert index.unreadable == (str(path),)
+    _sessions, failures = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
+    assert any(str(path) in f.message for f in failures)
 
 
 def test_the_cache_root_can_be_overridden(tmp_path: Path, monkeypatch) -> None:
