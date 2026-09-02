@@ -139,6 +139,14 @@ class ClaudeCodeReader:
         #: both are claimants by filename alone, same as an out-of-window file.
         unparsed: list[Path] = []
         for path in sorted(self._root.glob("**/*.jsonl")):
+            if not path.is_file():
+                # `glob` matches a directory whose name happens to end in
+                # `.jsonl` too, not only files. Such a directory is not a
+                # transcript under any interpretation, so it must not reach
+                # `_parse_file` -- which would fail on it -- and land in
+                # `unparsed`, where its name could collide with a real
+                # transcript's raw session id it merely contains.
+                continue
             try:
                 in_window = _within_window(path, window)
             except OSError as error:
