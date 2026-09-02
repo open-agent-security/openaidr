@@ -80,11 +80,17 @@ class ClaudeCodeReader:
         #: reader kept alive across calls never serves a stale read of a file
         #: that has since grown.
         self._transcripts: dict[Path, _Transcript] = {}
-        #: Read once for the whole machine rather than per session: the logs are
+        #: Read once per `collect()` pass rather than per session: the logs are
         #: filed under a mangled project directory, not under a session, so
         #: finding one session's would mean walking the same tree every time.
-        #: Injectable so a test never depends on a real cache.
-        self._mcp_logs = mcp_logs
+        #: An injected index is authoritative for this reader's whole lifetime
+        #: (what makes a test independent of a real cache); the default is
+        #: instead reloaded on every pass, since the log is append-only the
+        #: same way a transcript is, and a reader kept alive across repeated
+        #: `collect()` calls must see a connection or outcome the log gained
+        #: since the last pass rather than the first pass's snapshot forever.
+        self._injected_mcp_logs = mcp_logs
+        self._mcp_logs: MCPLogIndex | None = mcp_logs
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         if not self._root.is_dir():
@@ -95,8 +101,9 @@ class ClaudeCodeReader:
         # a growing file's new records each time, not the recovery data an
         # earlier, shorter read of the same path already cached.
         self._transcripts = {}
-        if self._mcp_logs is None:
-            self._mcp_logs = read_mcp_logs()
+        self._mcp_logs = (
+            self._injected_mcp_logs if self._injected_mcp_logs is not None else read_mcp_logs()
+        )
         mcp_logs = self._mcp_logs
         sessions: list[Session] = []
         failures: list[ReaderFailure] = [

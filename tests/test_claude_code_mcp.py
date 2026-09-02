@@ -553,6 +553,39 @@ def test_the_cache_root_can_be_overridden(tmp_path: Path, monkeypatch) -> None:
     assert cache_roots() == (tmp_path,)
 
 
+def test_a_reused_reader_does_not_serve_a_stale_mcp_log_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The MCP log is append-only the same way a transcript is, so a reader kept
+    alive across repeated `collect()` calls (the steady-state design) must see a
+    connection or outcome the log gained since the last pass. Only an *injected*
+    index -- what makes a test independent of a real cache -- is meant to survive
+    unchanged for the reader's whole lifetime; the default must be reloaded every
+    pass rather than cached from the first `collect()` call forever."""
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setenv("CLAUDE_CLI_CACHE_DIR", str(cache))
+    _transcript(root, ["search"])
+
+    reader = ClaudeCodeReader(root=root)
+    (first,) = reader.collect(Window(since=None))
+    assert first.mcp_log_state == "no_log_for_session"
+    (first_call,) = _mcp_calls([first])
+    assert first_call.status == "unknown"
+    assert first_call.transport is None
+
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+    )
+    (second,) = reader.collect(Window(since=None))
+    assert second.mcp_log_state == "applied"
+    (second_call,) = _mcp_calls([second])
+    assert second_call.status == "ok"
+    assert second_call.transport == "stdio"
+
+
 def test_the_json_document_withholds_the_failure_detail(tmp_path: Path) -> None:
     from openaidr.collector import Collection
     from openaidr.render import render_json
