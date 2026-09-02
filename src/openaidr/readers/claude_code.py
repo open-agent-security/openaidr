@@ -94,6 +94,11 @@ class ClaudeCodeReader:
         #: reader kept alive across calls never serves a stale read of a file
         #: that has since grown.
         self._transcripts: dict[Path, _Transcript] = {}
+        #: Recovery reads that failed on this pass, reported once each. Scoped
+        #: to the pass for the same reason `_transcripts` is: a file that could
+        #: not be read now may read cleanly on the next pass, and a failure
+        #: kept from an earlier one would be reported forever.
+        self._transcript_failures: list[ReaderFailure] = []
         #: Read once per `collect()` pass rather than per session: the logs are
         #: filed under a mangled project directory, not under a session, so
         #: finding one session's would mean walking the same tree every time.
@@ -129,6 +134,7 @@ class ClaudeCodeReader:
         # a growing file's new records each time, not the recovery data an
         # earlier, shorter read of the same path already cached.
         self._transcripts = {}
+        self._transcript_failures = []
         self._mcp_logs = (
             self._injected_mcp_logs if self._injected_mcp_logs is not None else read_mcp_logs()
         )
@@ -230,11 +236,22 @@ class ClaudeCodeReader:
                 continue
             parsed.append((path, path.parent.name == _SUBAGENT_DIR, events))
         ambiguous_ids = _ambiguous_transcript_ids(parsed, unparsed)
+        # A directory the walk could not enter yields no file *names*, and a
+        # name is the whole of what `_ambiguous_transcript_ids` falls back to
+        # for a file it cannot read (ADR-0008). So an unscanned subtree is not
+        # one more unreadable file: it is the claimant set no longer being
+        # known to be complete, for every session id at once, since a copied
+        # transcript can sit under any project directory (ADR-0009).
+        discovery_incomplete = bool(walk_failures)
         sessions = [
-            self._session(event, path, is_subagent, ambiguous_ids)
+            self._session(event, path, is_subagent, ambiguous_ids, discovery_incomplete)
             for path, is_subagent, events in parsed
             for event in events
         ]
+        # Extended after the sessions are built, not before: `_read` is what
+        # discovers a failed recovery read, and it is only reached from
+        # `_session`.
+        failures.extend(self._transcript_failures)
         return sessions, failures
 
     def _parse_file(self, path: Path) -> tuple[list[AgentEvent], ReaderFailure | None]:
@@ -301,11 +318,20 @@ class ClaudeCodeReader:
         return _decode_project_directory(directory.name)
 
     def _read(self, path: Path) -> _Transcript:
-        """What this transcript records, read once per file."""
+        """What this transcript records, read once per file.
+
+        A read that failed is reported once, on the pass that failed it, rather
+        than once per field that asked for it: `self._transcripts` caches the
+        (empty) result, so the second caller finds it here and adds nothing.
+        """
         cached = self._transcripts.get(path)
         if cached is None:
-            cached = _recorded(path)
+            cached, failure = _recorded(path)
             self._transcripts[path] = cached
+            if failure is not None:
+                self._transcript_failures.append(
+                    ReaderFailure(agent_kind=self.agent_kind, message=failure)
+                )
         return cached
 
     def _recorded_cwd(self, path: Path, session_id: str) -> str | None:
@@ -320,7 +346,12 @@ class ClaudeCodeReader:
         return recorded.get(raw) or recorded.get(session_id)
 
     def _session(
-        self, event: AgentEvent, path: Path, is_subagent: bool, ambiguous_ids: set[str]
+        self,
+        event: AgentEvent,
+        path: Path,
+        is_subagent: bool,
+        ambiguous_ids: set[str],
+        discovery_incomplete: bool,
     ) -> Session:
         raw_id = _strip_source_prefix(event.session_id)
         # A subagent's records carry its parent's session id, so the file's own
@@ -350,6 +381,13 @@ class ClaudeCodeReader:
             # is the same confident wrong answer a cache-side collision is
             # already withheld for.
             enrichment = _MCPEnrichment(state="session_id_collision")
+        elif discovery_incomplete:
+            # Reported after the collision above, not before: a collision this
+            # pass actually observed is the sharper statement, and it is true
+            # of this session id in particular rather than of the pass as a
+            # whole. Both withhold the same amount; only one of them explains
+            # why accurately (ADR-0009).
+            enrichment = _MCPEnrichment(state="transcript_discovery_incomplete")
         else:
             # The cache files a log under a mangled *project* directory, so a
             # session id is only unique within one of them; this is the
@@ -425,6 +463,18 @@ class ClaudeCodeReader:
             # draws for the transcript root, one layer down.
             state: MCPLogState = "log_root_unreadable" if index.root_unreadable else "no_log_root"
             return _MCPEnrichment(state=state)
+        if index.discovery_incomplete:
+            # The mirror of the transcript-side check in `_session`, one
+            # directory tree over. `for_session`'s single-match fast path
+            # (ADR-0004) reads a session id found under exactly one project as
+            # that session's log; that holds only while every project which
+            # filed a log under the id was enumerated, and an unscanned cache
+            # subtree can hold any project, including one whose mangled name
+            # this read never saw. Nothing survives that -- unlike a count
+            # mismatch, where the connection half is a property of a connection
+            # this session certainly had, here it is the *identity* that is in
+            # doubt, so the connections go too (ADR-0009).
+            return _MCPEnrichment(state="log_discovery_incomplete")
         logs, ambiguous, resolved_project = index.for_session(raw_id, project)
         if ambiguous:
             # Two projects filed a log under this session id and neither can be
@@ -439,18 +489,27 @@ class ClaudeCodeReader:
             # anything; the rest simply never opened a connection.
             if not _calls_mcp(event):
                 return _MCPEnrichment(state="applied")
-            # Ordinarily "no log at all" means the cache was pruned. But when
-            # this session's own project had a server log this read could not
-            # scan (`_walk_log_dirs`'s `onerror`, ADR-0003 one layer down),
-            # "no log found" is an artifact of that failure rather than
-            # evidence the cache was ever pruned, and reporting it the same
+            # Ordinarily "no log at all" means the cache was pruned. But when a
+            # server this session calls had a log file this read could not open
+            # or decode, "no log found" is an artifact of that failure rather
+            # than evidence the cache was ever pruned, and reporting it the same
             # way would read as absence when it is really unread data.
+            #
+            # Matched on the server name alone, not on the scoped pair
+            # `incomplete_project_servers` holds. Nothing resolved here, so
+            # there is no cache-side project to scope against -- and the
+            # transcript's own `project` cannot stand in for one: the two
+            # manglings are different functions, and most cache directories
+            # measured on one machine have no counterpart under
+            # `~/.claude/projects` at all (ADR-0009's table), so comparing the
+            # names could only ever fail to match and the guard never fired. The
+            # scoped pair is still what a *resolved* log is checked against
+            # below, where the cache project is known (ADR-0006).
             calls_incomplete_server = any(
-                (project, server) in index.incomplete_project_servers
-                for server, _tool in _mcp_tool_counts(event)
+                server in index.incomplete_servers for server, _tool in _mcp_tool_counts(event)
             )
             state: MCPLogState = (
-                "count_mismatch" if calls_incomplete_server else "no_log_for_session"
+                "log_discovery_incomplete" if calls_incomplete_server else "no_log_for_session"
             )
             return _MCPEnrichment(state=state)
         connections = tuple(
@@ -1153,13 +1212,23 @@ class _Transcript:
     )
 
 
-def _recorded(path: Path) -> _Transcript:
-    """Read one transcript once, for everything upstream drops.
+def _recorded(path: Path) -> tuple[_Transcript, str | None]:
+    """Read one transcript once, for everything upstream drops, and say whether
+    the read itself failed.
 
     A best-effort read of a file upstream has already parsed: a line that will
     not decode is skipped rather than raised on, because the session it belongs
     to has been built successfully and losing it over a recovery pass would turn
     a missing field into a missing session.
+
+    **A failed read is reported, not swallowed.** This is the *second* read of
+    the same file (ADR-0007), taken at a later instant than upstream's, so it
+    can fail where the first succeeded -- and everything per-call rides on it:
+    the provider call id, the result body, both ends of the duration, the
+    denial kind, the permission mode. Losing it silently leaves a session shaped
+    exactly like one whose calls genuinely never returned, with nothing on the
+    run to say a read was lost, which is the substitution of absence for
+    falsehood this package refuses everywhere else.
 
     The permission mode is carried forward across records in file order within
     the session that declared it — it is declared on a turn and holds until the
@@ -1302,8 +1371,15 @@ def _recorded(path: Path) -> _Transcript:
                         text = body if isinstance(body, str) else json.dumps(body, default=str)
                         if text:
                             results[(sid, identifier)] = text
-    except OSError:
-        pass
+    except (OSError, UnicodeDecodeError) as error:
+        # `UnicodeDecodeError` is a `ValueError`, not an `OSError`, so it
+        # escaped this guard entirely and took the whole kind down with it --
+        # the one outcome every other read in this module is careful to avoid.
+        # It is reachable for the same reason a permission failure is: upstream
+        # can decode a file that has since gained a byte that will not.
+        failure = f"{path}: {error}"
+    else:
+        failure = None
 
     return _Transcript(
         cwds=cwds,
@@ -1323,7 +1399,7 @@ def _recorded(path: Path) -> _Transcript:
         errored=errored,
         denials=denials,
         results=results,
-    )
+    ), failure
 
 
 def _projects_to_message(record: dict[str, object]) -> bool:
@@ -1526,22 +1602,52 @@ def _decode_project_directory(name: str) -> str | None:
     parts = [part for part in name.lstrip("-").split("-") if part]
     if not parts:
         return None
-    matches = _project_directory_candidates(Path("/"), parts)
-    if len(matches) == 1:
+    matches, complete = _project_directory_candidates(Path("/"), parts)
+    # A single match is only unambiguous once every other regrouping was tested
+    # and ruled out. One that could not be tested is as unverifiable as one that
+    # resolved, so an incomplete search stays unknown rather than reporting the
+    # only answer it happened to be able to check.
+    if complete and len(matches) == 1:
         return str(matches.pop())
     return None
 
 
-def _project_directory_candidates(current: Path, parts: list[str]) -> set[Path]:
-    """Every existing directory `parts` can regroup into, starting under `current`."""
+def _project_directory_candidates(current: Path, parts: list[str]) -> tuple[set[Path], bool]:
+    """Every existing directory `parts` can regroup into, and whether every
+    regrouping could actually be tested.
+
+    `Path.is_dir()` is refused here for the same reason it is refused for the
+    roots and the per-file probes: before Python 3.14 it propagates some
+    `OSError`s -- which took the whole kind down from inside this recursion --
+    and swallows others, and from 3.14 it swallows every one and reports
+    `False`, indistinguishable from a candidate that does not exist. Either way
+    a candidate this process cannot stat would leave the comparison silently,
+    and two real matches collapsing into one is precisely the confident wrong
+    answer `_decode_project_directory` exists to refuse. `stat()` always
+    raises, on every supported version, so an untestable candidate is reported
+    as untestable instead.
+    """
     if not parts:
-        return {current}
+        return {current}, True
     matches: set[Path] = set()
+    complete = True
     for end in range(len(parts), 0, -1):
         candidate = current / "-".join(parts[:end])
-        if candidate.is_dir():
-            matches |= _project_directory_candidates(candidate, parts[end:])
-    return matches
+        try:
+            is_dir = stat.S_ISDIR(candidate.stat().st_mode)
+        except FileNotFoundError:
+            # This regrouping simply does not exist, which is the ordinary
+            # answer for all but one branch of the search.
+            continue
+        except OSError:
+            complete = False
+            continue
+        if not is_dir:
+            continue
+        found, subtree_complete = _project_directory_candidates(candidate, parts[end:])
+        matches |= found
+        complete = complete and subtree_complete
+    return matches, complete
 
 
 def _within_window(path: Path, window: Window) -> bool:

@@ -1386,3 +1386,110 @@ def test_a_result_recorded_under_another_session_does_not_answer_for_this_one(
     assert call.result == "first contents"
     assert call.status != "error", "the stranger's `is_error` is not this call's"
     assert call.duration_ms == 1000, "measured against this session's own result record"
+
+
+def test_a_project_directory_candidate_that_cannot_be_statted_leaves_it_unknown(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The decoding is only unambiguous once every regrouping was actually tried.
+
+    `-one-two` decodes as readily to a flat `one-two` as to a nested `one/two`,
+    and both existing is what keeps it unknown. `Path.is_dir()` cannot be used
+    to test a candidate for the same reason it is refused for the roots and the
+    per-file probes: before Python 3.14 it propagates some `OSError`s and
+    swallows others, and from 3.14 it swallows every one and reports `False` --
+    indistinguishable from a candidate that does not exist. A candidate this
+    process cannot stat would therefore drop out of the comparison, and two
+    real matches would collapse into the single confident wrong answer this
+    decoding exists to refuse.
+    """
+    (tmp_path / "one-two").mkdir(parents=True)
+    (tmp_path / "one" / "two").mkdir(parents=True)
+    blocked = tmp_path / "one"
+    real_stat = os.stat
+
+    def flaky_stat(path, *args, **kwargs):
+        if str(path) == str(blocked):
+            raise PermissionError(13, "Permission denied", str(blocked))
+        return real_stat(path, *args, **kwargs)
+
+    record = user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at the repository")
+    del record["cwd"]
+    encoded = str(tmp_path / "one-two").replace("/", "-")
+    write_session(tmp_path, encoded, [record])
+    monkeypatch.setattr(os, "stat", flaky_stat)
+    session = _sessions(tmp_path)[0]
+    assert session.working_directory is None
+
+
+def test_a_recovery_read_that_fails_is_reported_rather_than_silently_dropped(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The recovery pass is a *second* read of a file upstream already parsed
+    (ADR-0007), taken at a later instant, so it can fail where the first
+    succeeded -- and everything per-call rides on it: the provider call id, the
+    result body, both ends of the duration, the denial kind, the permission
+    mode. Swallowing that failure leaves a session shaped exactly like one
+    whose calls genuinely never returned, with nothing on the run to say a read
+    was lost.
+    """
+    write_session(
+        tmp_path,
+        "-work",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "read it"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+            tool_result("s1", "r1", "2026-08-01T10:00:02.000Z", "toolu_1", "contents"),
+        ],
+    )
+    transcript = next(tmp_path.rglob("*.jsonl"))
+    real_open = Path.open
+    calls: list[int] = []
+
+    def flaky_open(self, *args, **kwargs):
+        if self == transcript:
+            calls.append(1)
+            raise PermissionError(13, "Permission denied", str(transcript))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flaky_open)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert calls, "the recovery pass never reached the transcript"
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+    assert any(str(transcript) in f.message for f in failures)
+
+
+def test_a_transcript_that_stops_decoding_between_the_two_reads_is_not_a_failed_kind(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A `UnicodeDecodeError` is not an `OSError`, so it escaped the recovery
+    pass's guard entirely and took the whole kind down with it -- the one
+    outcome every other read in this module is careful to avoid. It is reachable
+    because the two reads are of a growing file at two instants: upstream can
+    decode a file that has since gained a byte that will not.
+    """
+    write_session(
+        tmp_path,
+        "-work",
+        [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "read it")],
+    )
+    transcript = next(tmp_path.rglob("*.jsonl"))
+    parsed = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+    assert [s.session_id for s in parsed[0]] == ["claude-code:s1"]
+
+    real_open = Path.open
+
+    def undecodable_open(self, *args, **kwargs):
+        if self == transcript:
+            monkeypatch.undo()
+            with real_open(self, "ab") as handle:
+                handle.write(b"\xff\xfe not utf-8\n")
+            monkeypatch.setattr(Path, "open", undecodable_open)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", undecodable_open)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+    assert any(str(transcript) in f.message for f in failures)

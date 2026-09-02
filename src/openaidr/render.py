@@ -106,6 +106,17 @@ _MCP_LOG_STATE_EXPLANATIONS: dict[MCPLogState, Callable[[int], str]] = {
         "copy or restore, in the same project or another — and which one is "
         "this session's cannot be established."
     ),
+    "transcript_discovery_incomplete": lambda n: (
+        f"{n} withheld everything: a transcript directory could not be scanned, so "
+        "whether another file on disk claims this session's id — a copy or a restore "
+        "— cannot be established. The log found for it may be that file's."
+    ),
+    "log_discovery_incomplete": lambda n: (
+        f"{n} withheld everything: part of the cache could not be read whole, so "
+        "neither this session's log nor its absence is established — a log found "
+        "under one project may not be the only one filed under this id, and a log "
+        "not found may simply be in the part that went unread."
+    ),
     "not_attempted": lambda n: (
         f"{n} not attempted: a subagent transcript is keyed by its parent's session "
         "id, so the log filed under that id cannot be shown to be this subagent's "

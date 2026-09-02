@@ -199,11 +199,13 @@ MCPLogState = Literal[
     "no_log_for_session",
     "count_mismatch",
     "session_id_collision",
+    "transcript_discovery_incomplete",
+    "log_discovery_incomplete",
     "not_attempted",
 ]
 """Whether this session's MCP connection log could be read, and why not.
 
-Seven states rather than a boolean, because they call for different responses.
+Nine states rather than a boolean, because they call for different responses.
 A missing cache root is very likely an unsupported platform and is a property
 of the machine; an unreadable one is a permission or transient filesystem
 failure on a root that does exist, and must not read the same as a platform
@@ -215,9 +217,14 @@ mismatch is the guard in `claude_code_mcp` declining to attribute outcomes it
 cannot place; a session id collision is more than one project claiming this
 session's id -- two projects having filed a log under it, two transcript
 projects sharing it, or both -- so nothing found under that id can be shown to
-be this session's alone. Collapsing them would make "we could not look"
-indistinguishable from "there was nothing to find" -- the confusion this
-package exists to avoid.
+be this session's alone; and the two `*_discovery_incomplete` states are a
+directory -- on the transcript side or the cache side -- that this pass could
+not scan at all, which is weaker evidence than any of the above and therefore
+withholds more: a scan that yields no file *names* cannot establish that the
+entries it did find are every entry filed under this session id, and that
+uniqueness is the precondition the whole join rests on (ADR-0009). Collapsing
+them would make "we could not look" indistinguishable from "there was nothing
+to find" -- the confusion this package exists to avoid.
 
 `applied` does not mean every call got an outcome: a server whose log was pruned
 while another's survived leaves some calls unenriched within an applied session.

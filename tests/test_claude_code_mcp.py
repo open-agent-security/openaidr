@@ -464,7 +464,7 @@ def test_an_inaccessible_mcp_cache_root_is_reported_as_a_failure(
     assert any(str(cache) in f.message and "could not be read" in f.message for f in failures)
 
 
-def test_a_log_directory_the_walk_cannot_scan_is_reported_and_withholds_outcomes(
+def test_a_log_directory_the_walk_cannot_scan_is_reported_and_withholds_enrichment(
     tmp_path: Path, monkeypatch
 ) -> None:
     """`Path.glob()` suppresses every `OSError` raised while scanning the
@@ -473,10 +473,14 @@ def test_a_log_directory_the_walk_cannot_scan_is_reported_and_withholds_outcomes
     the session that called it would read as `no_log_for_session` -- the same
     as a pruned cache -- rather than as data withheld. Reading walks the tree
     itself (`os.walk`) rather than globbing it, so the directory it could not
-    scan is at least named as a failure, and the server it belongs to (known
-    from the directory's own name, unlike a failure higher up the tree) is
-    marked incomplete so its outcomes are withheld rather than misreported as
-    a clean count match.
+    scan is at least named as a failure.
+
+    Withheld whole, not merely per-call: a directory that could not be scanned
+    yields no file names, so nothing establishes that the entries this read
+    *did* find are every entry filed under this session id -- the precondition
+    `for_session`'s single-match fast path rests on (ADR-0009). That is an
+    identity doubt rather than a count disagreement, and identity doubt takes
+    the connections with it, exactly as a cache-side collision already does.
     """
     root, cache = tmp_path / "projects", tmp_path / "cache"
     _transcript(root, ["search"], project="-work-project")
@@ -495,10 +499,11 @@ def test_a_log_directory_the_walk_cannot_scan_is_reported_and_withholds_outcomes
     monkeypatch.setattr(os, "scandir", flaky_scandir)
     index = read_mcp_logs((cache,))
     assert any(str(blocked) in entry for entry in index.unreadable)
-    assert ("-work-project", "books") in index.incomplete_project_servers
+    assert index.discovery_incomplete
 
     sessions, failures = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
-    assert sessions[0].mcp_log_state == "count_mismatch"
+    assert sessions[0].mcp_log_state == "log_discovery_incomplete"
+    assert sessions[0].mcp_connections == ()
     assert any(str(blocked) in f.message for f in failures)
 
 
@@ -1268,3 +1273,80 @@ def test_an_outcome_with_no_call_outstanding_withholds_that_tools_ordinals(
     calls = _mcp_calls([session])
     assert [c.status for c in calls] == ["unknown", "unknown"]
     assert [c.transport for c in calls] == ["stdio", "stdio"]
+
+
+def test_a_transcript_subtree_the_walk_cannot_scan_withholds_every_enrichment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A directory discovery could not scan hides files whose *names* were never
+    seen, which is what breaks the claimant set (ADR-0009).
+
+    `for_session`'s single-match fast path hands over a log found under exactly
+    one project on the reasoning that one session id names one session, and
+    `_ambiguous_transcript_ids` is what establishes that. It reads a file's raw
+    session id from its own name when it cannot read the file (ADR-0008) --
+    which presumes a name was seen at all. A project directory `os.walk` could
+    not enter yields no names, so a transcript inside it claiming the same id
+    as a readable one is invisible, and the readable twin is left looking like
+    the sole claimant.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-a")
+    (root / "-b").mkdir(parents=True, exist_ok=True)
+    (root / "-b" / f"{SESSION}.jsonl").write_text("{}\n", encoding="utf-8")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-a",
+    )
+    blocked = root / "-b"
+    real_scandir = os.scandir
+
+    def flaky_scandir(path="."):
+        if path == str(blocked):
+            raise PermissionError(13, "Permission denied", str(blocked))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", flaky_scandir)
+    index = read_mcp_logs((cache,))
+    sessions, failures = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
+
+    (session,) = sessions
+    assert session.mcp_log_state == "transcript_discovery_incomplete"
+    assert session.mcp_connections == ()
+    assert [c.status for c in _mcp_calls(sessions)] == ["unknown"]
+    assert any(str(blocked) in f.message for f in failures)
+
+
+def test_an_unresolved_log_for_an_incomplete_server_is_not_called_a_pruned_cache(
+    tmp_path: Path,
+) -> None:
+    """Absence is only absence once the read that would have found it succeeded.
+
+    The cache's own mangled project name is not the transcript's -- 99 of 139
+    cache directories on one machine have no counterpart under
+    `~/.claude/projects`, which is why `for_session` breaks ties on it rather
+    than requiring it to match. So a marker keyed on the *transcript's* project
+    name can never match a cache-side one, and with no log resolved for this
+    session there is no cache project to scope against at all: the only sound
+    question left is whether a server this session calls had unread evidence
+    anywhere (ADR-0009). Answering it with the transcript's name reported a
+    pruned cache for a log that was merely unread.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-work-project")
+    path = log.write_server_log(
+        cache,
+        "books",
+        [log.connected("some-other-session"), log.completed("some-other-session", "search")],
+        project="-cache-mangled-name-n0kpsc",
+    )
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join([lines[0], '{"debug": "Calling MCP t', *lines[1:]]) + "\n")
+
+    index = read_mcp_logs((cache,))
+    assert index.incomplete_project_servers == frozenset({("-cache-mangled-name-n0kpsc", "books")})
+
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "log_discovery_incomplete"

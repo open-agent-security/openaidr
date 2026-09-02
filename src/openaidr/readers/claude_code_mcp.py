@@ -205,6 +205,22 @@ class MCPLogIndex:
     #: `read_mcp_logs`), which is otherwise indistinguishable from one that
     #: was never configured.
     unreadable: tuple[str, ...] = ()
+    #: True when a directory under a cache root could not be scanned at all,
+    #: so the set of entries this read found is not known to be every entry on
+    #: disk.
+    #:
+    #: Weaker evidence than `incomplete_project_servers`, and it withholds
+    #: more. An unreadable *file* was still named by the directory that holds
+    #: it, so both the project and the server it belongs to are known and the
+    #: loss can be scoped to that pair (ADR-0006). An unscanned *directory*
+    #: yields no names at all: any project, any server and any session id can
+    #: be inside it. `for_session`'s single-match fast path trusts a session id
+    #: found under exactly one project on the reasoning that one session id
+    #: names one session -- which presumes every project that filed a log under
+    #: that id was enumerated. Once a subtree went unscanned, it was not, so no
+    #: session's identity survives the lookup and the connections go with it,
+    #: the same way a cache-side collision already takes them (ADR-0009).
+    discovery_incomplete: bool = False
     #: `(cache project directory, server)` pairs with at least one log file
     #: this read could not open or decode.
     #:
@@ -221,6 +237,21 @@ class MCPLogIndex:
     #: what lets a consumer of this index withhold per-call attribution for it
     #: rather than trust a count comparison run against a partial read.
     incomplete_project_servers: frozenset[tuple[str, str]] = frozenset()
+
+    @cached_property
+    def incomplete_servers(self) -> frozenset[str]:
+        """`incomplete_project_servers` with the project dropped.
+
+        The scoped pair is what a session with a *resolved* log is checked
+        against (ADR-0006): the cache project it resolved under is known, so a
+        same-named server's unread file in an unrelated project must not
+        withhold anything here. A session whose log resolved to nothing has no
+        cache project to scope against -- and cannot borrow the transcript's,
+        which is a different mangling of the same path and disagrees for most
+        directories measured (ADR-0009's table) -- so the only sound question
+        left is whether a server it calls had unread evidence anywhere.
+        """
+        return frozenset(server for _project, server in self.incomplete_project_servers)
 
     def for_session(
         self, session_id: str, project: str
@@ -362,21 +393,18 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
 
     by_session: dict[tuple[str, str], SessionMCPLogs] = defaultdict(SessionMCPLogs)
     incomplete_project_servers: set[tuple[str, str]] = set()
+    discovery_incomplete = False
     for root in present:
         log_dirs, walk_failures = _walk_log_dirs(root)
-        for error in walk_failures:
-            failed = Path(str(error.filename))
-            unreadable.append(str(failed))
-            if failed.name.startswith(_LOG_DIR_PREFIX):
-                # The directory that could not be scanned was itself a
-                # server's log, not merely an ancestor of one, so the server
-                # it belongs to is known even though its files are not --
-                # unlike a failure higher up the tree, where an unscanned
-                # project directory could hide any number of servers this
-                # read never learns the names of.
-                incomplete_project_servers.add(
-                    (failed.parent.name, failed.name[len(_LOG_DIR_PREFIX) :])
-                )
+        # Whatever level of the tree it failed at, a directory that could not be
+        # scanned yields no file names, so nothing bounds what was inside it --
+        # not the servers, and not the session ids. It is deliberately not
+        # scoped to the pair the way an unreadable file is (ADR-0006): naming
+        # the server for a failed `mcp-logs-<server>` directory would state the
+        # completeness half of the loss and leave the identity half, which is
+        # the stronger claim, unstated (ADR-0009).
+        discovery_incomplete = discovery_incomplete or bool(walk_failures)
+        unreadable.extend(str(error.filename) for error in walk_failures)
         for directory, names in log_dirs:
             server = directory.name[len(_LOG_DIR_PREFIX) :]
             project = directory.parent.name
@@ -397,6 +425,7 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
     return MCPLogIndex(
         by_session=dict(by_session),
         root_found=True,
+        discovery_incomplete=discovery_incomplete,
         unreadable=tuple(sorted(unreadable)),
         incomplete_project_servers=frozenset(incomplete_project_servers),
     )
