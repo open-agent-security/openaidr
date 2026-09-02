@@ -18,7 +18,7 @@ kind](#one-contract-per-agent-kind)).
 
 | | `adr-sensor` supplies | OpenAIDR adds |
 |---|---|---|
-| **Agent formats** | Seven kinds parsed | Nothing — this is why the dependency exists |
+| **Agent formats** | Seven kinds parsed, of which this package instantiates **one** ([Agent kind coverage](#agent-kind-coverage)) | Nothing — this is why the dependency exists |
 | **Discovery** | A whole-tree pass keyed on the `sessionId` field | Which files exist, and which session each one *is* — the per-file call that keeps a subagent distinct from its parent |
 | **Span identity** | No identifier on a tool call | Derived from session, turn key and the call's index within that turn |
 | **Status** | `success` / `unknown`, per parser | `pending` from a missing result, `rejected` inferred from the refusal wording that survives in the result body |
@@ -29,7 +29,79 @@ Two properties of that dependency shape this design and are stated where they
 bite: it has a single published release, and it truncates long tool arguments
 and results before OpenAIDR sees them.
 
-### What the dependency cannot carry
+## Agent kind coverage
+
+**One kind today: `claude-code`.** `default_readers()` returns exactly one
+reader, and `AGENT_KIND_BY_SOURCE` holds exactly one row. Every other agent kind
+is **not read at all** — not read shallowly, not read and marked. A Codex or
+Cursor session sitting on the same machine is absent from this package's output
+entirely.
+
+**"The dependency parses it" is not "OpenAIDR reads it",** and the gap between
+those two statements is the most likely thing to be misread about this package.
+`adr-sensor` ships parsers for seven kinds; this package instantiates one of
+them. Reading a kind takes two more things that are ours: a reader implementing
+the collection contract, and a row mapping the agent's own on-disk source name to
+an agent kind. Neither exists for any kind but Claude Code.
+
+Nor is an unread kind the same as a *kind-anonymous* one. Kind-anonymous
+(see [Source vocabulary](#source-vocabulary)) describes a session this package
+**collected** and could not place. A kind with no reader produces no session to
+place, so it never reaches that path and never appears in a coverage count. The
+absence is total and silent, which is why it is declared here.
+
+### Codex and Cursor are the intended next kinds
+
+Both are still to do. What follows is not a plan but the measurement that should
+inform one, taken from one active development machine so the cost is known before
+the work is scheduled rather than discovered during it. Both would arrive
+**dependency-only** — the recoveries the Claude Code reader performs are per-kind
+and none of them would carry over.
+
+| | Measured |
+|---|---|
+| **Volume available** | 242 Codex rollouts and 6 Cursor conversations, against 616 Claude Code sessions |
+| **Codex: the dependency reads 15% of tool calls** | It has a branch for `function_call` and none for `custom_tool_call`, which is where Codex puts most invocations — **619 read against 3,586 dropped**. A Codex session's call list would be a sixth of what ran, and closing it needs one branch rather than a new source |
+| **Codex: `error` is unreachable** | The dependency marks a call `pending` when issued and `success` when any output arrives, without inspecting it, so a command that exited non-zero reads `ok`. All 619 calls read `ok` |
+| **Codex: results are not always strings** | 52 of 619 outputs are lists of content blocks, so `ToolUsage.result` does not match its own annotation and a reader must normalise it or raise |
+| **Cursor: no directory and no model** | `project_path` and `model` are unset on every conversation. A session with no directory cannot be resolved against a project by a consumer — the sharpest single consequence |
+| **Cursor: no result bodies** | The dependency passes a result through for the tool `list_dir` alone. Cursor recorded **1,178 result bodies across 1,448 calls**, of which **0** would survive, because `list_dir` appears zero times |
+| **Both: no MCP evidence** | The connection log is a Claude Code artifact. `mcp_connections` would be empty and `mcp_log_state` `not_attempted` on every session, so no transport, endpoint, advertised identity or failure category — and `mcp_server` would be `None` on every call, absent a measured per-kind name-splitting rule |
+| **Both: no timings, refusals, context items, compactions, provider refusals, permission mode or subagent marker** | All per-kind recoveries. Cursor does record which cancellations were refusals — `userDecision` reads `rejected` on 12 of 1,448 calls — and the dependency drops it |
+
+### Cursor cannot be added dependency-only without breaking span identity
+
+This one is a blocker rather than a fidelity cost, and it is the reason Cursor is
+not simply the cheaper of the two.
+
+The dependency keys each message on `checkpointId or _bubble_id or seq_<n>`.
+Measured on a real `state.vscdb`, `checkpointId` covers **22 of 2,165** bubbles
+and `_bubble_id` covers **none**, so 2,143 messages fall back to a *position*.
+`cursorDiskKV` is declared `key TEXT UNIQUE ON CONFLICT REPLACE` and
+`EXPLAIN QUERY PLAN` reports a plain `SCAN` for the query the dependency runs, so
+bubbles arrive in rowid order — and a bubble Cursor *rewrites* is deleted and
+reinserted at the end of it. The conflict clause exists because rewriting is
+normal. One rewritten bubble therefore shifts every position after its old slot,
+and a later turn silently inherits the key, and the span, an earlier one held.
+
+Stable span identity across re-reads is this package's published contract
+(ADR-0001), so that is not a thinner answer but a wrong one: a consumer keeps
+reading a stored span successfully while it points at a different call.
+
+Cursor itself records what is needed — `bubbleId` on **2,165 of 2,165** bubbles,
+unique on every one and equal to its own row key's last segment, and `toolCallId`
+on **1,448 of 1,448** calls. Both are dropped by the dependency. So adding Cursor
+requires at least the `bubbleId` recovery, which is the `project_path` shape of
+recovery — one key off a record upstream has already parsed — rather than the
+MCP-log shape that reads a separate source and joins it on ordinals.
+
+Ordering is a separate question and cannot be fully closed at any price:
+`composerData.fullConversationHeadersOnly` is an ordered bubble list covering
+only the renderable thread — 14 of 171 bubbles in one conversation, 239 of 1,359
+in another — so Cursor turns would arrive in an order that is not conversation
+order even with identity fixed.
+
+## What the dependency cannot carry
 
 Measured against `adr-sensor` 1.0.0, not assumed. Its unified event model is
 session-shaped: one timestamp per session, tool outcomes collapsed to `success`
@@ -54,7 +126,7 @@ from. Parsed that way a parent and its subagents collapse into one identity, so
 this package walks the tree itself and calls upstream per file, which keeps the
 path — the only thing that distinguishes them.
 
-### What the dependency drops, and where the fix has to live
+## What the dependency drops, and where the fix has to live
 
 **All of it is now read here, in one pass.** What began as a list of upstream
 asks became a list of recoveries, because contributing upstream is not an option
@@ -63,7 +135,9 @@ kept as the record of what was missing and what closed it.
 
 The cost is stated plainly rather than buried: this reader knows nine keys of
 Claude Code's JSONL, and every recovery is per-kind. A second agent kind gets
-sessions from the dependency for free and none of this. The division that
+sessions from the dependency for free and none of this — measured, for the two
+kinds most likely to be added next, in
+[Agent kind coverage](#agent-kind-coverage). The division that
 actually holds is **the dependency owns event extraction across kinds; the reader
 owns per-kind recovery of what the shared schema drops** — which is a defensible
 architecture, and not the one "we depend on a parser" describes.
@@ -294,7 +368,9 @@ Given a kind and a window, return sessions; given a kind and a watermark, return
 what changed.
 
 **The window is applied to a session file's modification time**, not to the
-timestamps inside it. That bounds the work before anything is parsed, which is
+timestamps inside it. That holds for every kind read today, all of which keep one
+file per session; a kind that keeps its sessions in a database has nothing to
+stat and would have to state its own basis. That bounds the work before anything is parsed, which is
 what keeps a cold pass affordable, and it means a session is returned whole when
 its file was written inside the window — including turns that happened before it.
 The alternative, filtering on activity timestamps, cannot be evaluated without

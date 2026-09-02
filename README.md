@@ -2,9 +2,15 @@
 
 Session collection for AI coding agents.
 
-OpenAIDR reads the session state AI coding agents already write to disk — Claude
-Code, Cursor, Codex, opencode, Claude Desktop and others — and normalises it into
-one session model with stable span identity.
+OpenAIDR reads the session state AI coding agents already write to disk and
+normalises it into one session model with stable span identity.
+
+**Today it reads one kind: Claude Code.** Codex and Cursor are the intended next
+kinds and are not read yet — a session from either is absent from the output
+entirely, not collected and marked. The parsing dependency supports more formats
+than this package instantiates, which is a distinction worth holding onto; what
+each additional kind would cost is measured in
+[Agent kind coverage](docs/specs/session-collection.md#agent-kind-coverage).
 
 It answers **what an agent did**, never what that means. No scoring, no identity
 resolution, no findings, no upload path. Interpreting a session is a consumer's
