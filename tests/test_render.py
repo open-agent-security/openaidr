@@ -149,6 +149,48 @@ def test_the_summary_counts_tools_servers_and_outcomes() -> None:
     assert "1 rejected" in output
 
 
+def test_mcp_coverage_reports_overlap_withheld_calls_separately_from_applied() -> None:
+    """`applied` alone would read as full coverage. A session can be `applied`
+    -- the log and transcript agree on totals -- and still have withheld some
+    calls' outcomes because two calls to the same tool overlapped; that has to
+    be its own line, not silently folded into "N of N enriched"."""
+    call = ToolCall(
+        span="claude-code:s1:toolu_1",
+        tool_name="search",
+        mcp_server="books",
+        status="unknown",
+        arguments={},
+        result=None,
+        result_size=None,
+        error_text=None,
+        truncated=False,
+    )
+    turn = Turn(
+        position=0, key="u1", role="assistant", text="", is_sidechain=False, tool_calls=(call,)
+    )
+    session = Session(
+        session_id="claude-code:s1",
+        agent_kind="claude-code",
+        source="claude",
+        started_at=_START,
+        model=None,
+        working_directory=None,
+        machine=None,
+        user=None,
+        mcp_log_state="applied",
+        mcp_overlap_withheld=1,
+        turns=(turn,),
+    )
+    output = render_text(Collection(sessions=[session], failures=[]))
+    assert "1 of 1 sessions with MCP calls enriched" in output
+    assert "1 call(s) within applied sessions still withheld their outcome" in output
+
+    import json
+
+    document = json.loads(render_json(Collection(sessions=[session], failures=[])))
+    assert document["sessions"][0]["mcp_overlap_withheld"] == 1
+
+
 def test_the_summary_states_the_remainder_when_the_tool_list_is_cut() -> None:
     """A truncated list with no marker reads as the whole of it."""
     calls = tuple(

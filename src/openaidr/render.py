@@ -99,6 +99,13 @@ def _mcp_coverage_lines(collection: Collection) -> list[str]:
             "transcript disagree on how many calls were made, so which outcome belongs "
             "to which call cannot be established. Connection facts kept."
         )
+    overlap_withheld = sum(s.mcp_overlap_withheld for s in with_mcp)
+    if overlap_withheld:
+        lines.append(
+            f"    {overlap_withheld} call(s) within applied sessions still withheld their "
+            "outcome: two or more calls to the same tool overlapped, and the log has "
+            "nothing to say which finished first. Transport kept."
+        )
     connections = [c for s in sessions for c in s.mcp_connections]
     if connections:
         transports = Counter(c.transport for c in connections if c.transport)
@@ -279,6 +286,7 @@ def _session_document(session: Session) -> dict[str, object]:
         "source": session.source,
         "working_directory": session.working_directory,
         "mcp_log_state": session.mcp_log_state,
+        "mcp_overlap_withheld": session.mcp_overlap_withheld,
         "mcp_connections": [
             # `failure_detail` is LOCAL_ONLY: a server's own words about a
             # failure can carry a URL or a header fragment, and this document
