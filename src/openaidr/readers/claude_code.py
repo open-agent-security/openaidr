@@ -201,7 +201,19 @@ class ClaudeCodeReader:
         identity = f"{raw_id}:{path.stem}" if is_subagent else raw_id
         session_id = f"{self.agent_kind}:{identity}"
         transcript = self._read(path)
-        enrichment = self._mcp_enrichment(raw_id, event)
+        if is_subagent:
+            # The log is keyed by `raw_id` too, which for a subagent is the
+            # *parent's* session id (ADR-0001) -- the same collision the
+            # session identity above works around. Looking it up here would
+            # hand every subagent the parent's connections and, where
+            # per-tool counts happen to agree, the parent's or a sibling
+            # subagent's outcomes. Nothing survives the dependency boundary
+            # that disambiguates one file's share of that log from
+            # another's, so it is withheld rather than attributed on a
+            # guess (ADR-0002, ADR-0003's argument).
+            enrichment = _MCPEnrichment(state="not_attempted")
+        else:
+            enrichment = self._mcp_enrichment(raw_id, event)
         return Session(
             session_id=session_id,
             agent_kind=map_source(event.source),
@@ -509,7 +521,13 @@ def _tool_calls(
                 status = "ok" if outcome.ok else "error"
             else:
                 status = "pending"
-        duration = _duration(call_id, transcript)
+        # `started`/`ended` are keyed on the bare provider call id, with no
+        # occurrence to disambiguate it -- exactly what made `call_id` itself
+        # ambiguous for a withheld call. Reading them here would hand a
+        # withheld call a duration measured off whichever of the colliding
+        # calls wrote to that key last, the same silent misattribution its
+        # result was already withheld to avoid.
+        duration = None if withheld else _duration(call_id, transcript)
         if duration is None and outcome is not None:
             duration = outcome.duration_ms
         skill, plugin = transcript.attribution.get((record_uuid, occurrence), (None, None))
