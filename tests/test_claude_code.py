@@ -117,6 +117,41 @@ def test_a_repeated_sequence_id_keeps_each_occurrences_own_call_id(tmp_path: Pat
     assert second_call.working_directory == "/second"
 
 
+def test_a_uuid_shared_across_two_sessions_in_one_file_does_not_cross_wires(
+    tmp_path: Path,
+) -> None:
+    """A record's uuid is only promised unique within the session that wrote
+    it, and one file can hold more than one session -- Claude Code keeps
+    appending to the same file across a resume, which mints a new session id.
+    An occurrence counter scoped to the whole file rather than to each session
+    would let a second session's turn, built with its own independently
+    computed occurrence number, silently read the first session's call id,
+    result and working directory instead of its own."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use(
+                "s1", "dup", "2026-08-01T10:00:00.000Z", "toolu_1", "Read", cwd="/first"
+            ),
+            tool_result("s1", "r1", "2026-08-01T10:00:01.000Z", "toolu_1", "first contents"),
+            assistant_tool_use(
+                "s2", "dup", "2026-08-01T10:00:02.000Z", "toolu_2", "Bash", cwd="/second"
+            ),
+            tool_result("s2", "r2", "2026-08-01T10:00:03.000Z", "toolu_2", "second contents"),
+        ],
+    )
+    sessions = {s.session_id: s for s in _sessions(tmp_path)}
+    s1_call = sessions["claude-code:s1"].turns[0].tool_calls[0]
+    s2_call = sessions["claude-code:s2"].turns[0].tool_calls[0]
+    assert (s1_call.tool_name, s1_call.provider_call_id) == ("Read", "toolu_1")
+    assert (s2_call.tool_name, s2_call.provider_call_id) == ("Bash", "toolu_2")
+    assert s1_call.result == "first contents"
+    assert s2_call.result == "second contents"
+    assert s1_call.working_directory == "/first"
+    assert s2_call.working_directory == "/second"
+
+
 def test_a_provider_call_id_reused_across_calls_withholds_both_outcomes(
     tmp_path: Path,
 ) -> None:
@@ -543,6 +578,7 @@ def test_a_call_with_no_recorded_body_falls_back_and_says_it_was_abridged() -> N
         [_Usage()],  # type: ignore[list-item]
         "claude-code:s1",
         "u1",
+        "s1",
         "u1",
         0,
         set(),
@@ -582,7 +618,7 @@ def test_a_pending_status_from_upstreams_own_snapshot_never_carries_a_recovered_
         {},
         {},
         {},
-        {("u1", 0, 0): "t1"},
+        {("s1", "u1", 0, 0): "t1"},
         {"t1": datetime(2026, 8, 1, 10, 0, 0, tzinfo=UTC)},
         {"t1": datetime(2026, 8, 1, 10, 0, 5, tzinfo=UTC)},
         {},
@@ -593,6 +629,7 @@ def test_a_pending_status_from_upstreams_own_snapshot_never_carries_a_recovered_
         [_Usage()],  # type: ignore[list-item]
         "claude-code:s1",
         "u1",
+        "s1",
         "u1",
         0,
         set(),

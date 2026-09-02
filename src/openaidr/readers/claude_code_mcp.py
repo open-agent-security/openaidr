@@ -117,6 +117,31 @@ class SessionMCPLogs:
     #: waiting, for a call that has not yet been resolved by a completion or a
     #: failure. What survives here at end of file never came back.
     waiting: dict[tuple[str, str], int] = field(default_factory=dict)
+    #: `(server, tool)` -> calls to that key currently in flight: a `Calling`
+    #: line seen with no completion or failure after it yet. Tracked only to
+    #: detect overlap; the count itself is never read back out.
+    in_flight: dict[tuple[str, str], int] = field(default_factory=dict)
+    #: `(server, tool)` keys where two or more calls were ever in flight at
+    #: once. The log carries no id per call, so the ordinal join in
+    #: `claude_code.py` trusts that the Nth call to complete is the Nth call
+    #: the transcript issued -- true only while calls to that key run one at a
+    #: time. Two overlapping in flight can complete in either order, and
+    #: nothing in the log says which is which, so once overlap is seen for a
+    #: key its outcomes are withheld for the whole session rather than risk
+    #: swapping two calls' status and duration.
+    unordered: set[tuple[str, str]] = field(default_factory=set)
+
+    def start(self, server: str, tool: str) -> None:
+        key = (server, tool)
+        count = self.in_flight.get(key, 0) + 1
+        self.in_flight[key] = count
+        if count > 1:
+            self.unordered.add(key)
+
+    def finish(self, server: str, tool: str) -> None:
+        key = (server, tool)
+        if key in self.in_flight:
+            self.in_flight[key] = max(0, self.in_flight[key] - 1)
 
     def seal(self) -> None:
         """Turn every unresolved wait into an outcome that says so.
@@ -284,7 +309,10 @@ def _apply(message: str, server: str, logs: SessionMCPLogs) -> None:
 
     found = _CALLING.match(message)
     if found:
-        return  # The completion line is what carries the outcome.
+        # The completion line is what carries the outcome; this is tracked
+        # only to detect two calls to the same key overlapping.
+        logs.start(server, found.group(1))
+        return
 
     found = _COMPLETED.match(message)
     if found:
@@ -305,6 +333,7 @@ def _apply(message: str, server: str, logs: SessionMCPLogs) -> None:
 def _record(logs: SessionMCPLogs, server: str, found: re.Match[str], *, ok: bool) -> None:
     tool = found.group(1)
     logs.waiting.pop((server, tool), None)
+    logs.finish(server, tool)
     duration = found.group(2)
     logs.outcomes[(server, tool)].append(
         MCPCallOutcome(
