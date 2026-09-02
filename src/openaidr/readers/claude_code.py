@@ -106,7 +106,21 @@ class ClaudeCodeReader:
         self._mcp_logs: MCPLogIndex | None = mcp_logs
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
-        if not self._root.is_dir():
+        try:
+            root_is_dir = stat.S_ISDIR(self._root.stat().st_mode)
+        except FileNotFoundError:
+            # No configured or default root is the ordinary state for a
+            # machine that has never run Claude Code -- not a failure.
+            return [], []
+        except OSError as error:
+            # The root exists but could not be statted -- a permission or
+            # transient filesystem failure, unlike the ordinary absence
+            # above. `Path.is_dir()` cannot be used to tell them apart: before
+            # Python 3.14 it propagates some `OSError`s and swallows others,
+            # and from 3.14 it swallows every `OSError` and reports `False`,
+            # indistinguishable from a root that was never configured.
+            return [], [ReaderFailure(agent_kind=self.agent_kind, message=f"{self._root}: {error}")]
+        if not root_is_dir:
             return [], []
         # Scoped to this pass, not this reader's lifetime: a session file is
         # append-only, so a reader kept alive across repeated `collect()` calls
@@ -165,15 +179,26 @@ class ClaudeCodeReader:
                 continue
             try:
                 in_window = _within_window(path, window)
-            except OSError as error:
-                # The file listed by the glob a moment ago is gone, replaced or
-                # otherwise inaccessible by the time it is stat'd. One missing
-                # transcript is not a failed kind: report it and move on to the
-                # rest, the same isolation `_parse_file` already gives a
-                # transcript it cannot parse.
+            except FileNotFoundError as error:
+                # The file listed by the glob a moment ago is gone by the time
+                # it is stat'd. One missing transcript is not a failed kind:
+                # report it and move on to the rest, the same isolation
+                # `_parse_file` already gives a transcript it cannot parse.
+                # There is no file left to claim its raw session id, unlike
+                # the merely-inaccessible case below.
                 failures.append(
                     ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
                 )
+                continue
+            except OSError as error:
+                # Inaccessible rather than gone: the file still exists and its
+                # name still claims its raw session id, so it must not vanish
+                # from the claimant set (ADR-0008) the way an out-of-window or
+                # failed-to-parse file does not.
+                failures.append(
+                    ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
+                )
+                unparsed.append(path)
                 continue
             if not in_window:
                 unparsed.append(path)

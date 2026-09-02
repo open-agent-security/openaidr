@@ -877,6 +877,82 @@ def test_an_in_window_transcript_that_fails_to_parse_still_claims_its_raw_sessio
     assert [c.status for c in _mcp_calls(sessions)] == ["unknown"]
 
 
+def test_a_transcript_gone_during_the_window_check_is_not_a_claimant(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A `FileNotFoundError` from the window check, unlike any other `OSError`,
+    proves the file no longer exists -- there is nothing left to claim its raw
+    session id, so it must not manufacture a collision with a genuinely sole
+    claimant."""
+    from openaidr.readers import claude_code
+
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    gone = root / "-project-two" / f"{SESSION}.jsonl"
+    gone.parent.mkdir(parents=True, exist_ok=True)
+    gone.write_text("{}\n")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+
+    real_within_window = claude_code._within_window
+
+    def flaky_within_window(path: Path, window: Window) -> bool:
+        if path == gone:
+            raise FileNotFoundError("vanished")
+        return real_within_window(path, window)
+
+    monkeypatch.setattr(claude_code, "_within_window", flaky_within_window)
+    sessions = _collect(root, cache)
+    assert len(sessions) == 1, "the vanished file never becomes a session of its own"
+    assert sessions[0].mcp_log_state == "applied"
+
+
+def test_an_in_window_transcript_whose_window_check_fails_still_claims_its_raw_session_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A file whose window check raises is claimant by filename, the same as
+    one that failed to parse or fell outside the window (ADR-0008) -- but only
+    when the error does not establish that the file is gone. A permission or
+    transient I/O failure proves the file still exists, unlike the file
+    vanishing between the glob and the stat, so it must not disappear from the
+    claimant set and let the readable twin look like the id's sole holder.
+    """
+    from openaidr.readers import claude_code
+
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    inaccessible = root / "-project-two" / f"{SESSION}.jsonl"
+    inaccessible.parent.mkdir(parents=True, exist_ok=True)
+    inaccessible.write_text("{}\n")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+
+    real_within_window = claude_code._within_window
+
+    def flaky_within_window(path: Path, window: Window) -> bool:
+        if path == inaccessible:
+            raise OSError("permission denied")
+        return real_within_window(path, window)
+
+    monkeypatch.setattr(claude_code, "_within_window", flaky_within_window)
+    sessions, failures = ClaudeCodeReader(root=root, mcp_logs=read_mcp_logs((cache,))).collect(
+        Window(since=None)
+    )
+    assert len(failures) == 1 and str(inaccessible) in failures[0].message
+    assert len(sessions) == 1, "the inaccessible file never becomes a session of its own"
+    assert sessions[0].mcp_log_state == "session_id_collision"
+    assert sessions[0].mcp_connections == ()
+    assert [c.status for c in _mcp_calls(sessions)] == ["unknown"]
+
+
 def test_a_trivial_in_window_transcript_still_claims_its_raw_session_id(
     tmp_path: Path,
 ) -> None:

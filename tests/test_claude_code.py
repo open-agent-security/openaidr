@@ -587,6 +587,40 @@ def test_a_directory_matching_the_glob_is_skipped_without_a_failure(tmp_path: Pa
     assert failures == []
 
 
+def test_a_missing_root_is_not_a_failure(tmp_path: Path) -> None:
+    """No configured or default root is the ordinary state for a machine that
+    has never run Claude Code, not a failure to report."""
+    assert ClaudeCodeReader(root=tmp_path / "does-not-exist").collect(Window(since=None)) == (
+        [],
+        [],
+    )
+
+
+def test_an_inaccessible_root_is_reported_as_a_failure(tmp_path: Path, monkeypatch) -> None:
+    """A root that exists but cannot be statted -- a permission or transient
+    filesystem failure -- is not the same as one that was never configured.
+    `Path.is_dir()` cannot tell them apart: before Python 3.14 it propagates
+    some `OSError`s and swallows others, and from 3.14 it swallows every
+    `OSError` and reports `False`, indistinguishable from a missing root.
+    """
+    root = tmp_path / "projects"
+    root.mkdir()
+    real_stat = Path.stat
+
+    def flaky_stat(self: Path, *args: object, **kwargs: object):
+        if self == root:
+            raise OSError("permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    sessions, failures = ClaudeCodeReader(root=root).collect(Window(since=None))
+
+    assert sessions == []
+    assert len(failures) == 1
+    assert str(root) in failures[0].message
+    assert "permission denied" in failures[0].message
+
+
 def test_a_long_result_is_carried_whole(tmp_path: Path) -> None:
     """Upstream abridges every result to 1,000 characters from the middle — a cap
     that on one corpus sat *below* the median result size and cut 38% of results.
