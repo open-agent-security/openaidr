@@ -298,7 +298,7 @@ class ClaudeCodeReader:
             return _MCPEnrichment(state="not_attempted")
         if not index.root_found:
             return _MCPEnrichment(state="no_log_root")
-        logs, ambiguous = index.for_session(raw_id, project)
+        logs, ambiguous, resolved_project = index.for_session(raw_id, project)
         if ambiguous:
             # Two projects filed a log under this session id and neither can be
             # shown to be this one's. Not even the connections survive that:
@@ -342,11 +342,16 @@ class ClaudeCodeReader:
         # about a count built from a partial read can tell "this really is
         # every call" from "this merely looks complete because the missing
         # file's share went uncounted." Any server this session actually calls
-        # that had an unreadable file anywhere is therefore treated the same
-        # as a count that failed to agree, rather than trusted on a guard run
-        # against data known to be incomplete.
+        # that had an unreadable file anywhere in *this session's own project*
+        # is therefore treated the same as a count that failed to agree,
+        # rather than trusted on a guard run against data known to be
+        # incomplete -- scoped to `resolved_project` (not the transcript's own
+        # `project`, which can name the same session's log under a different
+        # string, ADR-0004) so an unrelated project's same-named server and its
+        # unreadable file never withhold outcomes here (ADR-0006).
         touches_incomplete_server = any(
-            server in index.incomplete_servers for server, _tool in transcript_counts
+            (resolved_project, server) in index.incomplete_project_servers
+            for server, _tool in transcript_counts
         )
         if touches_incomplete_server or any(
             log_counts.get(key, 0) != n for key, n in transcript_counts.items()

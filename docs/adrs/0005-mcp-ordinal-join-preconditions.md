@@ -1,10 +1,10 @@
 ---
 id: 0005
 title: State the ordinal join's preconditions and withhold when they are unproven
-status: accepted
+status: superseded
 date: 2026-09-02
 supersedes: null
-superseded-by: null
+superseded-by: 0006
 ---
 
 ## Context
