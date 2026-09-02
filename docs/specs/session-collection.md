@@ -365,10 +365,10 @@ changes the shape of the collection rather than being a detail.
 | The source-vocabulary mapping | New, small | A mapping table plus per-kind naming rules, colocated with collection |
 | A watched, in-memory session cache | New | Cold pass then changed-file re-reads; no persistence, nothing on disk |
 
-**This package's only runtime dependency is `adr-sensor`.** It does not import
-`openaca`, and it must never import or mention anything proprietary. It produces
-a model; interpreting that model is a consumer's concern, and OpenAIDR takes no
-position on what a consumer concludes.
+**This package's only runtime dependency is `adr-sensor`.** It must never import
+or mention any downstream consumer or anything proprietary. It produces a model;
+interpreting that model is a consumer's concern, and OpenAIDR takes no position
+on what a consumer concludes.
 
 ## Non-goals
 

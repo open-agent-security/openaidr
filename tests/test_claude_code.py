@@ -745,6 +745,72 @@ def test_a_result_record_with_an_empty_body_still_resolves_the_call() -> None:
     assert call.duration_ms == 2000
 
 
+def test_an_unresolved_mcp_outcome_gives_no_duration_to_a_call_the_transcript_proved_returned() -> (
+    None
+):
+    """`still running` is an elapsed wait, not a round trip, whatever the call's
+    final status turns out to be.
+
+    A call the recovery pass proves returned (`unknown`, `ok` or `error`) can
+    still lack both of its own timestamps -- `_duration` is then `None` on its
+    own account, with nothing to do with the log. The log's own outcome for
+    this key is `ok=None`: the client's last word was `still running`, carrying
+    only how long it had waited when the log was snapshotted, not a completed
+    round trip. That must not stand in as `duration_ms` merely because the
+    status is no longer `pending` -- only an outcome the log itself saw resolve
+    (`ok is not None`) is a real duration.
+    """
+    from collections import deque
+
+    from openaidr.readers.claude_code import _MCPEnrichment, _tool_calls, _Transcript
+    from openaidr.readers.claude_code_mcp import MCPCallOutcome
+
+    class _Usage:
+        tool_name = "search"
+        tool_type = "tool"
+        server_name = "books"
+        arguments: ClassVar[dict[str, object]] = {}
+        result = None
+        status = "success"
+        error = None
+
+    no_timestamps = _Transcript(
+        {},
+        {},
+        {},
+        {},
+        {("s1", "u1", 0, 0): "t1"},
+        {},
+        {},
+        {},
+        {},
+        {("s1", "t1"): "search results"},
+    )
+    still_running = _MCPEnrichment(
+        state="applied",
+        outcomes={
+            ("books", "search"): deque(
+                [MCPCallOutcome(server="books", tool="search", ok=None, duration_ms=45000)]
+            )
+        },
+    )
+    (call,) = _tool_calls(
+        [_Usage()],  # type: ignore[list-item]
+        "claude-code:s1",
+        "u1",
+        "s1",
+        "u1",
+        0,
+        set(),
+        set(),
+        no_timestamps,
+        still_running,
+    )
+
+    assert call.status == "unknown"
+    assert call.duration_ms is None
+
+
 def test_an_untruncated_result_reports_its_own_length(tmp_path: Path) -> None:
     write_session(
         tmp_path,
@@ -842,9 +908,9 @@ def test_the_project_root_is_recovered_when_upstream_reports_none(tmp_path: Path
 def test_a_directory_name_containing_a_dash_is_not_mis_split(tmp_path: Path) -> None:
     """A dash separates path segments and appears inside names; only a candidate
     that exists on disk is returned, so the longer name wins."""
-    nested = tmp_path / "Projects" / "OpenACA-AIDR" / "ADR"
+    nested = tmp_path / "Projects" / "Acme-Widgets" / "ADR"
     nested.mkdir(parents=True)
-    (tmp_path / "Projects" / "OpenACA").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "Projects" / "Acme").mkdir(parents=True, exist_ok=True)
     encoded = str(nested).replace("/", "-")
     record = user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at the repository")
     del record["cwd"]
