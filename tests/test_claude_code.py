@@ -639,6 +639,22 @@ def test_a_non_directory_root_is_reported_as_a_failure(tmp_path: Path) -> None:
     assert str(root) in failures[0].message
 
 
+def test_a_dangling_symlink_root_is_reported_as_a_failure(tmp_path: Path) -> None:
+    """`Path.stat()` follows symlinks, so a symlink whose target does not
+    exist raises the same `FileNotFoundError` a wholly missing root does --
+    but a broken link is a real misconfiguration, not
+    `test_a_missing_root_is_not_a_failure`'s ordinary absence.
+    """
+    root = tmp_path / "projects"
+    os.symlink(tmp_path / "does-not-exist", root)
+
+    sessions, failures = ClaudeCodeReader(root=root).collect(Window(since=None))
+
+    assert sessions == []
+    assert len(failures) == 1
+    assert str(root) in failures[0].message
+
+
 def test_a_subdirectory_the_walk_cannot_scan_is_reported_and_does_not_hide_the_rest(
     tmp_path: Path, monkeypatch
 ) -> None:

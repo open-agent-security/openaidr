@@ -115,9 +115,27 @@ class ClaudeCodeReader:
         try:
             root_is_dir = stat.S_ISDIR(self._root.stat().st_mode)
         except FileNotFoundError:
-            # No configured or default root is the ordinary state for a
-            # machine that has never run Claude Code -- not a failure.
-            return [], []
+            # `stat()` follows symlinks, so this also fires for a dangling
+            # symlink at `self._root` -- indistinguishable from true absence
+            # unless `lstat()` is asked whether anything is there at all.
+            try:
+                self._root.lstat()
+            except FileNotFoundError:
+                # No configured or default root is the ordinary state for a
+                # machine that has never run Claude Code -- not a failure.
+                return [], []
+            except OSError as error:
+                return [], [
+                    ReaderFailure(agent_kind=self.agent_kind, message=f"{self._root}: {error}")
+                ]
+            # `lstat()` succeeded where `stat()` did not: a symlink exists at
+            # `self._root` but its target does not -- a broken
+            # `OPENAIDR_CLAUDE_ROOT` or a stray dangling link at the default
+            # path, not the ordinary absence the inner `FileNotFoundError`
+            # above handles.
+            return [], [
+                ReaderFailure(agent_kind=self.agent_kind, message=f"{self._root}: broken symlink")
+            ]
         except OSError as error:
             # The root exists but could not be statted -- a permission or
             # transient filesystem failure, unlike the ordinary absence

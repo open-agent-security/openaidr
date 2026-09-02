@@ -360,9 +360,25 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
         try:
             is_dir = stat.S_ISDIR(root.stat().st_mode)
         except FileNotFoundError:
-            # No cache at this candidate path is the ordinary state; most
-            # platforms have exactly one candidate, and it usually does not
-            # exist.
+            # `stat()` follows symlinks, so this also fires for a dangling
+            # symlink at `root` -- indistinguishable from true absence unless
+            # `lstat()` is asked whether anything is there at all.
+            try:
+                root.lstat()
+            except FileNotFoundError:
+                # No cache at this candidate path is the ordinary state; most
+                # platforms have exactly one candidate, and it usually does
+                # not exist.
+                continue
+            except OSError:
+                unreadable.append(str(root))
+                continue
+            # `lstat()` succeeded where `stat()` did not: a symlink exists at
+            # `root` but its target does not -- a broken
+            # `CLAUDE_CLI_CACHE_DIR` or a stray dangling link at a default
+            # path, not the ordinary absence the inner `FileNotFoundError`
+            # above handles.
+            unreadable.append(str(root))
             continue
         except OSError:
             # The candidate exists but could not be statted -- a permission

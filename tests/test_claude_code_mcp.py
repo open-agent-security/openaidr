@@ -487,6 +487,30 @@ def test_a_non_directory_mcp_cache_root_is_reported_as_a_failure(tmp_path: Path)
     assert any(str(cache) in f.message and "could not be read" in f.message for f in failures)
 
 
+def test_a_dangling_symlink_mcp_cache_root_is_reported_as_a_failure(tmp_path: Path) -> None:
+    """`Path.stat()` follows symlinks, so a cache root that is a symlink to a
+    target which does not exist raises the same `FileNotFoundError` a wholly
+    missing root does -- but a broken link is a real misconfiguration, not
+    the ordinary absence most platforms' single, usually-nonexistent
+    candidate represents.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    os.symlink(tmp_path / "does-not-exist", cache)
+    _transcript(root, ["search"])
+
+    index = read_mcp_logs((cache,))
+    assert index.root_found is False
+    assert index.root_unreadable is True
+    assert index.unreadable == (str(cache),)
+
+    sessions, failures = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
+    assert (sessions[0].mcp_log_state, [c.status for c in _mcp_calls(sessions)]) == (
+        "log_root_unreadable",
+        ["unknown"],
+    )
+    assert any(str(cache) in f.message and "could not be read" in f.message for f in failures)
+
+
 def test_a_log_directory_the_walk_cannot_scan_is_reported_and_withholds_enrichment(
     tmp_path: Path, monkeypatch
 ) -> None:
