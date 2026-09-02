@@ -844,6 +844,39 @@ def test_a_transcript_outside_the_window_still_claims_its_raw_session_id(
     assert [c.status for c in _mcp_calls(sessions)] == ["unknown"]
 
 
+def test_an_in_window_transcript_that_fails_to_parse_still_claims_its_raw_session_id(
+    tmp_path: Path,
+) -> None:
+    """A file this pass tried and failed to parse is claimant by filename, the
+    same as one the window excluded (ADR-0008).
+
+    Unlike an out-of-window file, this one *was* in scope for the pass -- it
+    was simply unreadable, e.g. a copy corrupted in transit. Dropping it from
+    the claimant set entirely, rather than treating it like the out-of-window
+    case, would let the readable twin look like the id's sole holder and hand
+    it a log that may be the corrupted file's.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    broken = root / "-project-two" / f"{SESSION}.jsonl"
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.write_bytes(b"\xff\xfe not valid utf-8 at all")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+    sessions, failures = ClaudeCodeReader(
+        root=root, mcp_logs=read_mcp_logs((cache,))
+    ).collect(Window(since=None))
+    assert len(failures) == 1 and str(broken) in failures[0].message
+    assert len(sessions) == 1, "the unreadable file never becomes a session of its own"
+    assert sessions[0].mcp_log_state == "session_id_collision"
+    assert sessions[0].mcp_connections == ()
+    assert [c.status for c in _mcp_calls(sessions)] == ["unknown"]
+
+
 def test_a_subagent_outside_the_window_does_not_manufacture_a_collision(
     tmp_path: Path,
 ) -> None:
