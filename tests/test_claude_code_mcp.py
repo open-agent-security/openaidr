@@ -156,9 +156,13 @@ def test_overlapping_calls_to_the_same_tool_withhold_their_ordinal_outcomes(
     )
     (session,) = _collect(root, cache)
     assert session.mcp_log_state == "applied"
+    assert session.mcp_overlap_withheld == 2, "reported, not just silently dropped"
     calls = _mcp_calls([session])
     assert [c.status for c in calls] == ["unknown", "unknown"]
-    assert [c.transport for c in calls] == [None, None]
+    assert [c.transport for c in calls] == ["stdio", "stdio"], (
+        "transport is a connection fact, not an ordinal one -- withholding the "
+        "ambiguous status and duration should not also withhold this"
+    )
     (connection,) = session.mcp_connections
     assert connection.transport == "stdio", "the connection fact is unaffected"
 

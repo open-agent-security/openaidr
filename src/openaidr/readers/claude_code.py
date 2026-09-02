@@ -265,6 +265,7 @@ class ClaudeCodeReader:
             ),
             mcp_connections=enrichment.connections,
             mcp_log_state=enrichment.state,
+            mcp_overlap_withheld=enrichment.overlap_withheld,
             turns=_turns(
                 event.chat_history, session_id, raw_id, is_subagent, transcript, enrichment
             ),
@@ -352,11 +353,18 @@ class ClaudeCodeReader:
         outcomes = {
             key: deque(queue) for key, queue in logs.outcomes.items() if key not in logs.unordered
         }
+        # `applied` alone says nothing about this: the log and the transcript
+        # still agree on totals, so the guard above never fires. Counted here
+        # so it can be reported rather than read as full coverage.
+        overlap_withheld = sum(
+            n for key, n in transcript_counts.items() if key in logs.unordered
+        )
         return _MCPEnrichment(
             state="applied",
             connections=connections,
             outcomes=outcomes,
             transports=transports,
+            overlap_withheld=overlap_withheld,
         )
 
 
@@ -375,6 +383,9 @@ class _MCPEnrichment:
     connections: tuple[MCPConnection, ...] = ()
     outcomes: dict[tuple[str, str], deque[MCPCallOutcome]] = field(default_factory=dict)
     transports: dict[str, str | None] = field(default_factory=dict)
+    #: How many of this transcript's calls fall under a `(server, tool)` key
+    #: the log saw overlap on, and so have no outcome queued for them at all.
+    overlap_withheld: int = 0
 
     def take(self, server: str, tool: str) -> MCPCallOutcome | None:
         queue = self.outcomes.get((server, tool))
@@ -647,7 +658,13 @@ def _tool_calls(
                 working_directory=transcript.cwd_at.get((raw_session_id, record_uuid, occurrence)),
                 attributed_skill=skill,
                 attributed_plugin=plugin,
-                transport=mcp.transport_for(outcome.server if outcome else None),
+                # By `server`, not `outcome.server`: transport is a property of
+                # the connection, established the moment the tool name is
+                # parsed, not of whether an ordinal outcome could be placed for
+                # this particular call. A call withheld for overlap still ran
+                # over a known connection; only its status and duration are
+                # genuinely ambiguous.
+                transport=mcp.transport_for(server),
             )
         )
     return tuple(calls)

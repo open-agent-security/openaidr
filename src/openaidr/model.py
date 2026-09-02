@@ -302,6 +302,16 @@ class Session:
     #: session whose transports are unknown and one whose servers were all
     #: local are not the same answer.
     mcp_log_state: MCPLogState = "not_attempted"
+    #: How many MCP calls in this session had their status and duration
+    #: withheld because they overlapped another call to the same tool.
+    #:
+    #: Independent of `mcp_log_state`: a session missing this many calls'
+    #: worth of outcome is still `applied` overall, since the log and the
+    #: transcript otherwise agree on how many calls were made -- but that
+    #: alone reads as full coverage. Nonzero here is what says some of it was
+    #: nonetheless withheld, and why (ADR-0003's ordinal join has nothing to
+    #: order two calls to the same tool that were in flight at once).
+    mcp_overlap_withheld: int = 0
     #: Times the provider's own safeguards declined and the CLI fell back.
     provider_refusals: tuple[ProviderRefusal, ...] = ()
 
