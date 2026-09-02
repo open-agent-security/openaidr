@@ -344,6 +344,36 @@ def test_an_unresolved_log_does_not_downgrade_a_transcript_proven_return(tmp_pat
     assert call.status == "unknown"
 
 
+def test_a_still_running_outcome_gives_no_duration_to_a_pending_call(tmp_path: Path) -> None:
+    """`still running` is an elapsed wait, not a round trip -- it must not become one.
+
+    The transcript itself has no result for this call, so its status is
+    genuinely `pending`, not merely `unknown`. The log's `still running` line
+    is the client's last word before the snapshot was taken, and carries only
+    how long it had waited so far -- not how long the call actually took. That
+    must not stand in as `duration_ms` for a call the transcript never proved
+    returned.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    records = [
+        user_text(SESSION, "u0", "2026-01-01T00:00:00Z", "go"),
+        assistant_tool_use(SESSION, "a0", "2026-01-01T00:00:01Z", "toolu_0", "mcp__books__search"),
+    ]
+    write_session(root, "project", records)
+    log.write_server_log(
+        cache,
+        "books",
+        [
+            log.connected(SESSION),
+            log.calling(SESSION, "search"),
+            log.still_running(SESSION, "search"),
+        ],
+    )
+    (call,) = _mcp_calls(_collect(root, cache))
+    assert call.status == "pending"
+    assert call.duration_ms is None
+
+
 def test_no_cache_directory_is_reported_not_assumed_empty(tmp_path: Path) -> None:
     """A machine we cannot read and a machine running no MCP must differ.
 
