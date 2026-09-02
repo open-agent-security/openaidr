@@ -687,6 +687,42 @@ def test_a_calls_span_survives_a_reread_of_a_growing_transcript(tmp_path: Path) 
     assert later.span != resolved.span
 
 
+def test_a_reused_reader_does_not_serve_a_stale_recovery_of_a_growing_transcript(
+    tmp_path: Path,
+) -> None:
+    """`ClaudeCodeReader` is meant to be kept alive across repeated `collect()`
+    calls as a session grows (docs/specs/session-collection.md's steady-state
+    design), not only constructed fresh per call as today's CLI happens to do.
+    The per-file `_Transcript` recovery this reader caches must be scoped to one
+    `collect()` pass: a call that only exists once the file has grown must not
+    read back as unrecovered forever because an earlier, shorter read of the
+    same path is still sitting in the cache."""
+    write_session(
+        tmp_path,
+        "-p",
+        [assistant_tool_use("s1", "u1", "2026-08-01T10:00:00.000Z", "t1", "Read")],
+    )
+    reader = ClaudeCodeReader(root=tmp_path)
+    first_sessions, _ = reader.collect(Window(since=None))
+    first_calls = [c for s in first_sessions for t in s.turns for c in t.tool_calls]
+    assert first_calls[0].provider_call_id == "t1"
+
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use("s1", "u1", "2026-08-01T10:00:00.000Z", "t1", "Read"),
+            tool_result("s1", "u2", "2026-08-01T10:00:00.250Z", "t1", "file contents"),
+            user_text("s1", "u3", "2026-08-01T10:00:01.000Z", "go on"),
+            assistant_tool_use("s1", "u4", "2026-08-01T10:00:02.000Z", "t2", "Bash"),
+        ],
+    )
+    second_sessions, _ = reader.collect(Window(since=None))
+    second_calls = [c for s in second_sessions for t in s.turns for c in t.tool_calls]
+
+    assert second_calls[1].provider_call_id == "t2"
+
+
 def test_the_project_root_is_recovered_when_upstream_reports_none(tmp_path: Path) -> None:
     """Upstream reports `cwd` only from the record that first created the
     session, and that record often carries none. The directory holding the

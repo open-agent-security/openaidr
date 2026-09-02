@@ -75,7 +75,10 @@ class ClaudeCodeReader:
         self._root = root if root is not None else DEFAULT_ROOT
         self._parser = ClaudeParser()
         #: transcript path -> everything that file records and upstream drops.
-        #: One read per file, however many sessions or fields ask for it.
+        #: One read per file per `collect()` pass, however many sessions or
+        #: fields ask for it; `collect()` clears this before each pass so a
+        #: reader kept alive across calls never serves a stale read of a file
+        #: that has since grown.
         self._transcripts: dict[Path, _Transcript] = {}
         #: Read once for the whole machine rather than per session: the logs are
         #: filed under a mangled project directory, not under a session, so
@@ -86,6 +89,12 @@ class ClaudeCodeReader:
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         if not self._root.is_dir():
             return [], []
+        # Scoped to this pass, not this reader's lifetime: a session file is
+        # append-only, so a reader kept alive across repeated `collect()` calls
+        # (the steady-state design in docs/specs/session-collection.md) must see
+        # a growing file's new records each time, not the recovery data an
+        # earlier, shorter read of the same path already cached.
+        self._transcripts = {}
         if self._mcp_logs is None:
             self._mcp_logs = read_mcp_logs()
         mcp_logs = self._mcp_logs
