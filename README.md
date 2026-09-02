@@ -71,12 +71,11 @@ interface. Decisions in [`docs/adrs/`](docs/adrs/).
 
 **Pre-alpha.** Session collection works for `claude-code`, backed by a reader of
 our own over Claude Code's JSONL transcripts: sessions, turns, tool calls, and
-span identity. The model has six outcome statuses; this reader currently emits
-three of them (`unknown`, `rejected`, `pending`) from Claude Code's own
-transcripts — `error` is wired for a kind whose parser sets a real failure
-signal, but Claude Code's does not, so it never fires here; `ok` and
-`interrupted` are modelled but not emitted either, for the same reason. One
-cold pass, held in memory.
+span identity. The model has six outcome statuses; this reader emits five of
+them (`unknown`, `rejected`, `pending`, `ok`, `error`) from Claude Code's own
+transcripts and, for MCP calls, its per-server connection logs — `interrupted`
+is modelled but not emitted, since neither source records it. One cold pass,
+held in memory.
 
 Not yet built: incremental collection over a watermark, and the six further
 agent kinds that `adr-sensor` also parses — for `claude-code` the dependency's

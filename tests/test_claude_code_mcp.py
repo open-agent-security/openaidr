@@ -132,6 +132,37 @@ def test_the_ordinal_join_is_positional_within_a_tool(tmp_path: Path) -> None:
     assert [c.status for c in calls] == ["error", "ok", "error"]
 
 
+def test_overlapping_calls_to_the_same_tool_withhold_their_ordinal_outcomes(
+    tmp_path: Path,
+) -> None:
+    """The log carries no id per call, so the ordinal join trusts that the Nth
+    call to complete is the Nth call the transcript issued -- true only while
+    calls to that key run one at a time. Two calls to `search` overlap here
+    (the second `Calling` line arrives before the first call's outcome), and
+    they complete in the opposite order from how the transcript issued them:
+    trusting completion order would swap their status and duration."""
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search", "search"])
+    log.write_server_log(
+        cache,
+        "books",
+        [
+            log.connected(SESSION, transport="stdio"),
+            log.calling(SESSION, "search"),
+            log.calling(SESSION, "search"),
+            log.completed(SESSION, "search", ms=5),
+            log.failed(SESSION, "search", ms=20),
+        ],
+    )
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "applied"
+    calls = _mcp_calls([session])
+    assert [c.status for c in calls] == ["unknown", "unknown"]
+    assert [c.transport for c in calls] == [None, None]
+    (connection,) = session.mcp_connections
+    assert connection.transport == "stdio", "the connection fact is unaffected"
+
+
 def test_a_count_disagreement_withholds_outcomes_and_keeps_connections(tmp_path: Path) -> None:
     """The guard, and why it is not simply "use what is there".
 

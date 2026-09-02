@@ -249,7 +249,9 @@ class ClaudeCodeReader:
             ),
             mcp_connections=enrichment.connections,
             mcp_log_state=enrichment.state,
-            turns=_turns(event.chat_history, session_id, is_subagent, transcript, enrichment),
+            turns=_turns(
+                event.chat_history, session_id, raw_id, is_subagent, transcript, enrichment
+            ),
         )
 
     def _mcp_enrichment(self, raw_id: str, event: AgentEvent) -> _MCPEnrichment:
@@ -324,10 +326,20 @@ class ClaudeCodeReader:
         transports = {
             server: connection.transport for server, connection in logs.connections.items()
         }
+        # A count agreement says the two sides logged the same number of
+        # calls; it says nothing about whether the log's completion order
+        # matches the transcript's invocation order. Two calls to the same key
+        # that overlapped can complete in either order, with nothing in the
+        # log to say which is which, so a key `logs` ever saw overlap on is
+        # left out of the ordinal join entirely rather than risk swapping two
+        # calls' status and duration.
+        outcomes = {
+            key: deque(queue) for key, queue in logs.outcomes.items() if key not in logs.unordered
+        }
         return _MCPEnrichment(
             state="applied",
             connections=connections,
-            outcomes={key: deque(queue) for key, queue in logs.outcomes.items()},
+            outcomes=outcomes,
             transports=transports,
         )
 
@@ -385,6 +397,7 @@ def _mcp_tool_counts(event: AgentEvent) -> Counter[tuple[str, str]]:
 def _turns(
     messages: list[ChatMessage],
     session_id: str,
+    raw_session_id: str,
     is_subagent: bool,
     transcript: _Transcript,
     mcp: _MCPEnrichment,
@@ -417,6 +430,7 @@ def _turns(
                     message.tools,
                     session_id,
                     key,
+                    raw_session_id,
                     base,
                     occurrence,
                     compromised,
@@ -424,7 +438,9 @@ def _turns(
                     transcript,
                     mcp,
                 ),
-                permission_mode=transcript.permission_modes.get((base, occurrence)),
+                permission_mode=transcript.permission_modes.get(
+                    (raw_session_id, base, occurrence)
+                ),
             )
         )
     return tuple(turns)
@@ -496,6 +512,7 @@ def _tool_calls(
     tools: list[ToolUsage],
     session_id: str,
     turn_key: str,
+    raw_session_id: str,
     record_uuid: str,
     occurrence: int,
     compromised: set[int],
@@ -505,20 +522,23 @@ def _tool_calls(
 ) -> tuple[ToolCall, ...]:
     """Normalise one message's calls, joining each to what the record says about it.
 
-    The join is `(record uuid, occurrence, position)` — the same `(uuid,
-    position)` pair span identity is already built from, plus the occurrence a
-    repeated uuid is disambiguated by (ADR-0001), verified against 1,063 real
-    messages where upstream's tool order matched the record's in every one. It
-    is what makes latency, a real outcome and the provider's own call id
-    reachable at all: the shared event schema carries none of them, and without
-    an identifier per call there is nothing to attach them to. Occurrence keeps
-    a resumed session's re-emitted record from lending its data to the
-    original's already-disambiguated turn.
+    The join is `(raw session id, record uuid, occurrence, position)` — the
+    same `(uuid, position)` pair span identity is already built from, plus the
+    occurrence a repeated uuid is disambiguated by, and the raw session id a
+    uuid shared across two sessions in one file is disambiguated by
+    (ADR-0001), verified against 1,063 real messages where upstream's tool
+    order matched the record's in every one. It is what makes latency, a real
+    outcome and the provider's own call id reachable at all: the shared event
+    schema carries none of them, and without an identifier per call there is
+    nothing to attach them to. Occurrence keeps a resumed session's re-emitted
+    record from lending its data to the original's already-disambiguated
+    turn; the session id keeps a second session in the same file from lending
+    its data to a uuid it merely happens to share with the first.
     """
     calls: list[ToolCall] = []
     for index, tool in enumerate(tools):
         server, name = _server_and_tool(tool)
-        call_id = transcript.call_ids.get((record_uuid, occurrence, index))
+        call_id = transcript.call_ids.get((raw_session_id, record_uuid, occurrence, index))
         withheld = id(tool) in compromised or (call_id is not None and call_id in reused_call_ids)
         if withheld:
             status: Status = "pending"
@@ -593,7 +613,9 @@ def _tool_calls(
         duration = None if withheld or status == "pending" else _duration(call_id, transcript)
         if duration is None and outcome is not None:
             duration = outcome.duration_ms
-        skill, plugin = transcript.attribution.get((record_uuid, occurrence), (None, None))
+        skill, plugin = transcript.attribution.get(
+            (raw_session_id, record_uuid, occurrence), (None, None)
+        )
         calls.append(
             ToolCall(
                 span=span_id(session_id, turn_key, index),
@@ -608,7 +630,9 @@ def _tool_calls(
                 denial_kind=denial,
                 provider_call_id=call_id,
                 duration_ms=duration,
-                working_directory=transcript.cwd_at.get((record_uuid, occurrence)),
+                working_directory=transcript.cwd_at.get(
+                    (raw_session_id, record_uuid, occurrence)
+                ),
                 attributed_skill=skill,
                 attributed_plugin=plugin,
                 transport=mcp.transport_for(outcome.server if outcome else None),
@@ -738,16 +762,21 @@ class _Transcript:
     versions: dict[str, str]
     #: session id -> how the agent was driven (`cli`, `claude-vscode`, `sdk-cli`).
     entrypoints: dict[str, str]
-    #: (record uuid, occurrence) -> the permission mode in effect at that record.
-    #: Occurrence-keyed for the same reason `call_ids` is: a resumed session can
-    #: re-emit a record under the same uuid, and a plain uuid key would let the
-    #: later occurrence's value silently answer for the earlier one.
-    permission_modes: dict[tuple[str, int], str]
-    #: (record uuid, occurrence, position within the message) -> the provider's
-    #: call id. This is the association everything per-call rests on, and the
-    #: (uuid, position) pair is the same one span identity is already built
-    #: from. Verified against 1,063 real messages: upstream's tool order
-    #: matches the record's in every one.
+    #: (session id, record uuid, occurrence) -> the permission mode in effect at
+    #: that record. Occurrence-keyed for the same reason `call_ids` is: a
+    #: resumed session can re-emit a record under the same uuid, and a plain
+    #: uuid key would let the later occurrence's value silently answer for the
+    #: earlier one. Session-keyed too: one file can hold more than one session
+    #: (a resume mints a new session id but keeps writing to the same file),
+    #: and a uuid is only guaranteed unique within the session that wrote it --
+    #: a bare `(uuid, occurrence)` key lets one session's record silently
+    #: answer for another's occurrence of the same uuid.
+    permission_modes: dict[tuple[str, str, int], str]
+    #: (session id, record uuid, occurrence, position within the message) ->
+    #: the provider's call id. This is the association everything per-call
+    #: rests on, and the (uuid, position) pair is the same one span identity is
+    #: already built from. Verified against 1,063 real messages: upstream's
+    #: tool order matches the record's in every one.
     #:
     #: Occurrence-keyed because a resumed session can re-emit a record under
     #: the same uuid (ADR-0001): without it, a single pass over the file would
@@ -755,7 +784,14 @@ class _Transcript:
     #: same `(uuid, position)` key, and the disambiguated turn built for the
     #: first occurrence would silently read the second occurrence's call id,
     #: result, duration, denial, working directory and attribution.
-    call_ids: dict[tuple[str, int, int], str]
+    #:
+    #: Session-keyed for the same reason `permission_modes` is: occurrence is
+    #: counted per uuid across the *whole file*, and a uuid is only promised
+    #: unique within the session that wrote it. Without the session id in the
+    #: key, a second session in the same file reusing a uuid the first session
+    #: already used would read the first session's data at what looks, from
+    #: the second session's own count, like occurrence zero.
+    call_ids: dict[tuple[str, str, int, int], str]
     #: provider call id -> when the call was issued.
     started: dict[str, datetime]
     #: provider call id -> when its result came back.
@@ -787,16 +823,18 @@ class _Transcript:
     #: session id -> the request that started it, recorded apart from the turns
     #: and therefore surviving compaction, which the first user turn does not.
     initial_prompts: dict[str, str] = field(default_factory=dict)
-    #: (record uuid, occurrence) -> the directory *that record* ran in.
-    #: Distinct from `cwds`, which is the session's first: a session can `cd`,
-    #: and a relative path in a tool argument means nothing without the
-    #: directory it was relative to. Occurrence-keyed for the same reason
-    #: `call_ids` is.
-    cwd_at: dict[tuple[str, int], str] = field(default_factory=dict)
-    #: (record uuid, occurrence) -> (skill, plugin) the agent attributed the
-    #: record to. Its own attribution, not an inference from names.
-    #: Occurrence-keyed for the same reason `call_ids` is.
-    attribution: dict[tuple[str, int], tuple[str | None, str | None]] = field(default_factory=dict)
+    #: (session id, record uuid, occurrence) -> the directory *that record* ran
+    #: in. Distinct from `cwds`, which is the session's first: a session can
+    #: `cd`, and a relative path in a tool argument means nothing without the
+    #: directory it was relative to. Session- and occurrence-keyed for the same
+    #: reason `call_ids` is.
+    cwd_at: dict[tuple[str, str, int], str] = field(default_factory=dict)
+    #: (session id, record uuid, occurrence) -> (skill, plugin) the agent
+    #: attributed the record to. Its own attribution, not an inference from
+    #: names. Session- and occurrence-keyed for the same reason `call_ids` is.
+    attribution: dict[tuple[str, str, int], tuple[str | None, str | None]] = field(
+        default_factory=dict
+    )
     #: session id -> material that reached the model outside the turn structure.
     context: dict[str, list[tuple[str, str | None, str]]] = field(default_factory=dict)
     #: session id -> compaction boundaries, as (trigger, pre, dropped).
@@ -830,19 +868,29 @@ def _recorded(path: Path) -> _Transcript:
     context: dict[str, list[tuple[str, str | None, str]]] = {}
     compactions: dict[str, list[tuple[str, int | None, int | None]]] = {}
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]] = {}
-    permission_modes: dict[tuple[str, int], str] = {}
-    call_ids: dict[tuple[str, int, int], str] = {}
+    permission_modes: dict[tuple[str, str, int], str] = {}
+    call_ids: dict[tuple[str, str, int, int], str] = {}
     started: dict[str, datetime] = {}
     ended: dict[str, datetime] = {}
     errored: dict[str, bool] = {}
     denials: dict[str, str] = {}
     results: dict[str, str] = {}
     modes: dict[str, str] = {}
-    #: uuid -> how many records with that uuid have been seen so far. A resumed
-    #: session can re-emit a record under the same uuid, and this is what keeps
-    #: the re-emitted record's own data from overwriting the original's at the
-    #: same key (ADR-0001).
-    uuid_occurrences: dict[str, int] = {}
+    #: (session id, uuid) -> how many records with that uuid have been seen so
+    #: far *in that session*. A resumed session can re-emit a record under the
+    #: same uuid, and this is what keeps the re-emitted record's own data from
+    #: overwriting the original's at the same key (ADR-0001).
+    #:
+    #: Session-keyed, not just uuid-keyed: one file can hold more than one
+    #: session (a resume mints a new session id but keeps writing to the same
+    #: file), and a record's uuid is only promised unique within the session
+    #: that wrote it. Counting occurrences per uuid across the whole file would
+    #: let a second session's record land at whatever occurrence number the
+    #: *file-wide* count of that uuid happened to reach -- not the occurrence
+    #: number its own session would compute independently when normalising
+    #: that session's turns -- and read a stranger session's call id, result,
+    #: permission mode, working directory and attribution instead of its own.
+    uuid_occurrences: dict[tuple[str, str], int] = {}
 
     try:
         with path.open(encoding="utf-8") as handle:
@@ -877,23 +925,28 @@ def _recorded(path: Path) -> _Transcript:
                 if session_id is not None and isinstance(declared, str) and declared:
                     modes[session_id] = declared
                 mode = modes.get(session_id) if session_id is not None else None
+                # A uuid is only promised unique within the session that wrote
+                # it, and one file can hold more than one session -- so the
+                # session id joins the uuid in every key below, not just in
+                # `uuid_occurrences` itself.
+                sid = session_id or ""
                 uuid = record.get("uuid")
                 occurrence = 0
                 if isinstance(uuid, str) and uuid:
-                    occurrence = uuid_occurrences.get(uuid, 0)
-                    uuid_occurrences[uuid] = occurrence + 1
+                    occurrence = uuid_occurrences.get((sid, uuid), 0)
+                    uuid_occurrences[(sid, uuid)] = occurrence + 1
                 if mode is not None and isinstance(uuid, str) and uuid:
-                    permission_modes[(uuid, occurrence)] = mode
+                    permission_modes[(sid, uuid, occurrence)] = mode
                 if isinstance(uuid, str) and uuid:
                     where = record.get("cwd")
                     if isinstance(where, str) and where:
-                        cwd_at[(uuid, occurrence)] = where
+                        cwd_at[(sid, uuid, occurrence)] = where
                     skill, plugin = (
                         record.get("attributionSkill"),
                         record.get("attributionPlugin"),
                     )
                     if isinstance(skill, str) or isinstance(plugin, str):
-                        attribution[(uuid, occurrence)] = (
+                        attribution[(sid, uuid, occurrence)] = (
                             skill if isinstance(skill, str) else None,
                             plugin if isinstance(plugin, str) else None,
                         )
@@ -912,7 +965,7 @@ def _recorded(path: Path) -> _Transcript:
                         continue
                     if kind == "tool_use":
                         if isinstance(uuid, str) and uuid:
-                            call_ids[(uuid, occurrence, position)] = identifier
+                            call_ids[(sid, uuid, occurrence, position)] = identifier
                         position += 1
                         if timestamp is not None:
                             started[identifier] = timestamp
