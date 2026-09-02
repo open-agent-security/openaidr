@@ -374,6 +374,40 @@ def test_a_still_running_outcome_gives_no_duration_to_a_pending_call(tmp_path: P
     assert call.duration_ms is None
 
 
+def test_a_completed_log_outcome_resolves_a_call_the_transcript_has_not_written_yet(
+    tmp_path: Path,
+) -> None:
+    """`pending` is a gap, not a statement -- the log can still fill it.
+
+    The transcript has no tool-result record for this call at all, so its
+    status is genuinely `pending`, the same starting point as
+    `test_a_still_running_outcome_gives_no_duration_to_a_pending_call`. But here
+    the log's own line for this call is `completed`, not `still running`: the
+    ordinal join -- already guarded by the per-`(server, tool)` count agreement
+    -- identifies the call independently of whether the transcript has caught up
+    yet, so the outcome and its real round-trip duration must not be withheld
+    just because this reader's other reads have not seen a result.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    records = [
+        user_text(SESSION, "u0", "2026-01-01T00:00:00Z", "go"),
+        assistant_tool_use(SESSION, "a0", "2026-01-01T00:00:01Z", "toolu_0", "mcp__books__search"),
+    ]
+    write_session(root, "project", records)
+    log.write_server_log(
+        cache,
+        "books",
+        [
+            log.connected(SESSION),
+            log.calling(SESSION, "search"),
+            log.completed(SESSION, "search", ms=37),
+        ],
+    )
+    (call,) = _mcp_calls(_collect(root, cache))
+    assert call.status == "ok"
+    assert call.duration_ms == 37
+
+
 def test_no_cache_directory_is_reported_not_assumed_empty(tmp_path: Path) -> None:
     """A machine we cannot read and a machine running no MCP must differ.
 

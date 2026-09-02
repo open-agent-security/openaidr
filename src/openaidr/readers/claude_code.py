@@ -641,12 +641,16 @@ def _tool_calls(
         # actually stated is evidence from the record itself and is never
         # overwritten by a second source.
         #
-        # A withheld duplicate is a gap, not a statement. `pending` there does
-        # not mean the transcript said nothing came back; it means *this reader*
-        # declined to attribute a result it could not place (ADR-0002). The log
-        # can place it -- by ordinal, already guarded by a per-`(server, tool)`
-        # count -- so letting the outcome through is the same rule, not an
-        # exception to it.
+        # `pending` is a gap too, not a statement, whichever of two reasons
+        # produced it: this reader withholding a result it could not place
+        # (ADR-0002), or -- the far more common case -- no transcript read
+        # having recorded a result for this call yet, because the log is the
+        # *oldest* of the three reads (ADR-0007) and can catch a call the
+        # transcript has not finished writing. Either way the log can still
+        # place it -- by ordinal, already guarded by a per-`(server, tool)`
+        # count, an identification method the transcript's own gap or ambiguity
+        # never touches -- so letting the outcome through is the same rule as
+        # the `unknown` case, not an exception to it.
         #
         # It is also the case that matters most. A retry loop is duplicates by
         # definition, so without this the one shape where the outcome is most
@@ -654,21 +658,13 @@ def _tool_calls(
         # rejected calls reached consumers as three `pending` with the failure
         # stripped off, and the loop read as silence.
         outcome = mcp.take(server, name) if server is not None else None
-        if outcome is not None and (status == "unknown" or withheld):
-            # `ok is None` means the client reported the call still running and
-            # nothing ever followed -- from the log's own vantage point, not an
-            # outcome to assert. The log is the *oldest* of the three reads
-            # (ADR-0007), snapshotted before this transcript is even parsed, so a
-            # call it caught mid-flight can have a result on disk by the time
-            # either later read sees it. `status` already reflects those: an
-            # `unknown` means a newer read proved the call returned, and
-            # downgrading it here would be the oldest read overwriting the
-            # newest. Only a call withheld for its own reasons -- never proven to
-            # have returned by any read -- takes `pending` from this.
-            if outcome.ok is not None:
-                status = "ok" if outcome.ok else "error"
-            elif withheld:
-                status = "pending"
+        # `ok is None` means the client reported the call still running and
+        # nothing ever followed -- from the log's own vantage point, not an
+        # outcome to assert. Leaving `status` unchanged in that case is exactly
+        # the corollary ADR-0007 states: a call no read has proven finished must
+        # not report one that has.
+        if outcome is not None and outcome.ok is not None and status in ("unknown", "pending"):
+            status = "ok" if outcome.ok else "error"
         # `started`/`ended` are keyed on the bare provider call id, with no
         # occurrence to disambiguate it -- exactly what made `call_id` itself
         # ambiguous for a withheld call. Reading them here would hand a
