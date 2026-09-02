@@ -859,8 +859,8 @@ def _recorded(path: Path) -> _Transcript:
     entrypoints: dict[str, str] = {}
     branches: dict[str, str] = {}
     initial_prompts: dict[str, str] = {}
-    cwd_at: dict[tuple[str, int], str] = {}
-    attribution: dict[tuple[str, int], tuple[str | None, str | None]] = {}
+    cwd_at: dict[tuple[str, str, int], str] = {}
+    attribution: dict[tuple[str, str, int], tuple[str | None, str | None]] = {}
     context: dict[str, list[tuple[str, str | None, str]]] = {}
     compactions: dict[str, list[tuple[str, int | None, int | None]]] = {}
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]] = {}
