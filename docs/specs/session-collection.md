@@ -300,6 +300,12 @@ its file was written inside the window — including turns that happened before 
 The alternative, filtering on activity timestamps, cannot be evaluated without
 parsing the file it would exclude.
 
+The window bounds **parse work, and which sessions come back** — not what a
+reader may know about the files it did not parse. Facts a reader can read off a
+path it has already listed (ADR-0008: which raw session id a file claims) stay
+whole-corpus, because a question like "is this id claimed twice?" has no
+meaningful window-scoped answer.
+
 The dependency backs the agent kinds it supports; any kind can instead be backed
 by an OpenAIDR-owned reader on the same contract — **per kind, not
 all-or-nothing**. That is what bounds dependency risk to a single module. A

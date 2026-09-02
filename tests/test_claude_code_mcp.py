@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -58,9 +60,9 @@ def _transcript(
     write_session(root, project, records)
 
 
-def _collect(root: Path, cache: Path | None):
+def _collect(root: Path, cache: Path | None, window: Window | None = None):
     index = read_mcp_logs((cache,) if cache is not None else (root / "absent",))
-    sessions, _ = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
+    sessions, _ = ClaudeCodeReader(root=root, mcp_logs=index).collect(window or Window(since=None))
     return sessions
 
 
@@ -810,6 +812,104 @@ def test_two_transcript_files_in_the_same_project_sharing_a_session_id_both_with
     assert {s.mcp_log_state for s in sessions} == {"session_id_collision"}
     assert all(s.mcp_connections == () for s in sessions)
     assert [c.status for c in _mcp_calls(sessions)] == ["unknown", "unknown"]
+
+
+def test_a_transcript_outside_the_window_still_claims_its_raw_session_id(
+    tmp_path: Path,
+) -> None:
+    """The window bounds which sessions are returned, not which files claim an id.
+
+    `--since` defaults to 14d, so the common case is that some transcript
+    sharing a raw session id has an mtime outside the window while its twin
+    has one inside it. If the excluded file is not counted as a claimant, the
+    survivor looks like the id's only holder, and ADR-0004's single-match fast
+    path hands it a log that may be the excluded file's.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    _transcript(root, ["search"], project="-project-two")
+    stale = root / "-project-two" / f"{SESSION}.jsonl"
+    os.utime(stale, (0, 0))
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+    window = Window(since=datetime(2026, 1, 1, tzinfo=UTC))
+    sessions = _collect(root, cache, window)
+    assert len(sessions) == 1, "the excluded file is still excluded from the result"
+    assert sessions[0].mcp_log_state == "session_id_collision"
+    assert sessions[0].mcp_connections == ()
+    assert [c.status for c in _mcp_calls(sessions)] == ["unknown"]
+
+
+def test_a_subagent_outside_the_window_does_not_manufacture_a_collision(
+    tmp_path: Path,
+) -> None:
+    """A subagent file carries its *parent's* session id (ADR-0001), so it is
+    not a claimant however the window falls. The out-of-window claimant set is
+    read from the path rather than the file, so it has to make the same
+    exclusion the parsed side makes -- from the directory, not from records it
+    never read."""
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    subagent = write_subagent_session(
+        root,
+        "-project-one",
+        SESSION,
+        "a1",
+        [
+            user_text(SESSION, "su0", "2026-01-01T00:00:00Z", "go"),
+            assistant_tool_use(SESSION, "sa0", "2026-01-01T00:00:01Z", "toolu_s0", "Read"),
+            tool_result(SESSION, "sr0", "2026-01-01T00:00:02Z", "toolu_s0", "x"),
+        ],
+    )
+    os.utime(subagent, (0, 0))
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+    window = Window(since=datetime(2026, 1, 1, tzinfo=UTC))
+    sessions = _collect(root, cache, window)
+    assert len(sessions) == 1
+    assert sessions[0].mcp_log_state == "applied"
+    assert [c.server for c in sessions[0].mcp_connections] == ["books"]
+
+
+def test_a_renamed_copy_outside_the_window_is_a_known_uncovered_shape(
+    tmp_path: Path,
+) -> None:
+    """Pins the one gap ADR-0008 leaves open, so closing it is a deliberate act.
+
+    An excluded file is never opened, so its claimed id is its filename. A copy
+    *renamed* in place carries the original's id in records nothing reads and a
+    name that no longer says so, and while it sits outside the window there is
+    nothing left to catch it with short of reading every file on disk -- the
+    cost ADR-0008 declines. In-window the same copy *is* caught, because both
+    files are parsed and the check keys on the file rather than the name
+    (`test_two_transcript_files_in_the_same_project_sharing_a_session_id...`).
+
+    If this test starts failing, the gap was closed: update ADR-0008 rather
+    than restoring the old expectation.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    original = root / "-project-one" / f"{SESSION}.jsonl"
+    renamed = original.with_name(f"{SESSION}-restored.jsonl")
+    shutil.copy(original, renamed)
+    os.utime(renamed, (0, 0))
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+    sessions = _collect(root, cache, Window(since=datetime(2026, 1, 1, tzinfo=UTC)))
+    assert len(sessions) == 1
+    assert sessions[0].mcp_log_state == "applied", "the documented limitation, not a passing case"
 
 
 def test_a_malformed_line_before_the_end_marks_its_server_incomplete(tmp_path: Path) -> None:

@@ -130,6 +130,11 @@ class ClaudeCodeReader:
         # claims it, and that is only knowable once every file in this pass
         # has been read.
         parsed: list[tuple[Path, bool, list[AgentEvent]]] = []
+        #: Files the window excluded from the result but not from the claimant
+        #: set (ADR-0008): whether an in-window transcript is the sole holder
+        #: of its raw session id is a fact about every file on disk, not about
+        #: the ones this pass happens to return.
+        outside_window: list[Path] = []
         for path in sorted(self._root.glob("**/*.jsonl")):
             try:
                 in_window = _within_window(path, window)
@@ -144,13 +149,14 @@ class ClaudeCodeReader:
                 )
                 continue
             if not in_window:
+                outside_window.append(path)
                 continue
             events, file_failure = self._parse_file(path)
             if file_failure is not None:
                 failures.append(file_failure)
                 continue
             parsed.append((path, path.parent.name == _SUBAGENT_DIR, events))
-        ambiguous_ids = _ambiguous_transcript_ids(parsed)
+        ambiguous_ids = _ambiguous_transcript_ids(parsed, outside_window)
         sessions = [
             self._session(event, path, is_subagent, ambiguous_ids)
             for path, is_subagent, events in parsed
@@ -455,6 +461,7 @@ class _MCPEnrichment:
 
 def _ambiguous_transcript_ids(
     parsed: list[tuple[Path, bool, list[AgentEvent]]],
+    outside_window: list[Path],
 ) -> set[str]:
     """Raw session ids more than one transcript file claims.
 
@@ -478,6 +485,15 @@ def _ambiguous_transcript_ids(
     cache-side match cannot say which of the transcripts it belongs to.
     Handing it to either is the same silent misattribution a cache-side
     collision is already withheld for.
+
+    A file the window excluded is still one of those claimants (ADR-0008),
+    and `--since` defaults to 14d, so the ordinary case is that one of the two
+    twins was touched recently and the other was not. Such a file is never
+    parsed, so its id is read from its name: Claude Code files a transcript as
+    `<session id>.jsonl`, which held for all 437 non-subagent transcripts on
+    the corpus this was measured against. That leaves one shape uncovered --
+    a copy *renamed* in place, whose name no longer states its contents -- and
+    ADR-0008 records why it is not worth a read of every file on disk to close.
     """
     paths_by_id: dict[str, set[Path]] = defaultdict(set)
     for path, is_subagent, events in parsed:
@@ -485,6 +501,13 @@ def _ambiguous_transcript_ids(
             continue
         for event in events:
             paths_by_id[_strip_source_prefix(event.session_id)].add(path)
+    for path in outside_window:
+        # The same exclusion the parsed side makes, from the only evidence an
+        # unparsed file offers: a subagent's records carry its parent's id, so
+        # counting one would manufacture a collision with its own parent.
+        if path.parent.name == _SUBAGENT_DIR:
+            continue
+        paths_by_id[path.stem].add(path)
     return {raw_id for raw_id, paths in paths_by_id.items() if len(paths) > 1}
 
 
