@@ -568,7 +568,8 @@ def test_a_reused_reader_does_not_serve_a_stale_mcp_log_snapshot(
     _transcript(root, ["search"])
 
     reader = ClaudeCodeReader(root=root)
-    (first,) = reader.collect(Window(since=None))
+    first_sessions, _ = reader.collect(Window(since=None))
+    (first,) = first_sessions
     assert first.mcp_log_state == "no_log_for_session"
     (first_call,) = _mcp_calls([first])
     assert first_call.status == "unknown"
@@ -579,7 +580,8 @@ def test_a_reused_reader_does_not_serve_a_stale_mcp_log_snapshot(
         "books",
         [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
     )
-    (second,) = reader.collect(Window(since=None))
+    second_sessions, _ = reader.collect(Window(since=None))
+    (second,) = second_sessions
     assert second.mcp_log_state == "applied"
     (second_call,) = _mcp_calls([second])
     assert second_call.status == "ok"
