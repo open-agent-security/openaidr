@@ -622,6 +622,23 @@ def test_an_inaccessible_root_is_reported_as_a_failure(tmp_path: Path, monkeypat
     assert "permission denied" in failures[0].message
 
 
+def test_a_non_directory_root_is_reported_as_a_failure(tmp_path: Path) -> None:
+    """A root that exists as a regular file (or a symlink to one) is a
+    misconfigured `OPENAIDR_CLAUDE_ROOT` or a stray file at the default path,
+    not the ordinary absence `test_a_missing_root_is_not_a_failure` covers.
+    Treating it the same as a missing root would report `[]` for both a
+    machine that never ran Claude Code and one whose configuration is wrong.
+    """
+    root = tmp_path / "projects"
+    root.write_text("not a directory")
+
+    sessions, failures = ClaudeCodeReader(root=root).collect(Window(since=None))
+
+    assert sessions == []
+    assert len(failures) == 1
+    assert str(root) in failures[0].message
+
+
 def test_a_subdirectory_the_walk_cannot_scan_is_reported_and_does_not_hide_the_rest(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -127,7 +127,16 @@ class ClaudeCodeReader:
             # indistinguishable from a root that was never configured.
             return [], [ReaderFailure(agent_kind=self.agent_kind, message=f"{self._root}: {error}")]
         if not root_is_dir:
-            return [], []
+            # The root exists but is not a directory -- a misconfigured
+            # `OPENAIDR_CLAUDE_ROOT` or a stray file at the default path, not
+            # the ordinary absence the `FileNotFoundError` branch above
+            # handles. Reporting it as a plain empty collection would make it
+            # indistinguishable from "Claude Code has never run here", which
+            # is exactly the falsehood-as-absence AGENTS.md's conventions
+            # rule out.
+            return [], [
+                ReaderFailure(agent_kind=self.agent_kind, message=f"{self._root}: not a directory")
+            ]
         # Scoped to this pass, not this reader's lifetime: a session file is
         # append-only, so a reader kept alive across repeated `collect()` calls
         # (the steady-state design in docs/specs/session-collection.md) must see
