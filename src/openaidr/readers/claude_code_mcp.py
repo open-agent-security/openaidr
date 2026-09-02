@@ -195,7 +195,8 @@ class MCPLogIndex:
     root_found: bool
     #: Files present but unreadable or unparseable, by path.
     unreadable: tuple[str, ...] = ()
-    #: Servers with at least one log file this read could not open or decode.
+    #: `(cache project directory, server)` pairs with at least one log file
+    #: this read could not open or decode.
     #:
     #: A server's log can be split across several files -- one per run -- so a
     #: session's own connection history can span more than one. Skipping an
@@ -203,17 +204,26 @@ class MCPLogIndex:
     #: *other* files for that server recorded, not the whole story, and the
     #: ordinal join's count guard has no way to tell a genuinely complete count
     #: from one that only looks complete because the missing file's share of it
-    #: went uncounted on both sides. Naming the server here is what lets a
-    #: consumer of this index withhold per-call attribution for it rather than
-    #: trust a count comparison run against a partial read.
-    incomplete_servers: frozenset[str] = frozenset()
+    #: went uncounted on both sides. Scoped to the project too (ADR-0006): a
+    #: server name is not unique across projects, and a session in one project
+    #: must not be withheld over a file it never had a share in, in another
+    #: project that happens to run a same-named server. Naming the pair here is
+    #: what lets a consumer of this index withhold per-call attribution for it
+    #: rather than trust a count comparison run against a partial read.
+    incomplete_project_servers: frozenset[tuple[str, str]] = frozenset()
 
-    def for_session(self, session_id: str, project: str) -> tuple[SessionMCPLogs | None, bool]:
-        """This session's logs, and whether the identity was ambiguous.
+    def for_session(
+        self, session_id: str, project: str
+    ) -> tuple[SessionMCPLogs | None, bool, str | None]:
+        """This session's logs, whether the identity was ambiguous, and which
+        cache-side project directory they were filed under.
 
-        Returns `(logs, ambiguous)`. `ambiguous` is what a caller must withhold
-        on: two projects filed a log under this session id and neither can be
-        shown to be this one's.
+        Returns `(logs, ambiguous, resolved_project)`. `ambiguous` is what a
+        caller must withhold on: two projects filed a log under this session id
+        and neither can be shown to be this one's. `resolved_project` is the
+        *cache's own* project directory name for the match -- not necessarily
+        equal to `project` (see below) -- and is `None` whenever `logs` is,
+        since nothing was resolved to attribute a scoped lookup against.
 
         **Why the project name only breaks ties.** The two directory manglings
         are not the same function. Measured on one machine, 99 of 139 cache
@@ -229,11 +239,12 @@ class MCPLogIndex:
         """
         matches = self._by_id.get(session_id)
         if not matches:
-            return None, False
+            return None, False, None
         if len(matches) == 1:
-            return next(iter(matches.values())), False
+            (only_project, only_logs) = next(iter(matches.items()))
+            return only_logs, False, only_project
         own = matches.get(project)
-        return (own, False) if own is not None else (None, True)
+        return (own, False, project) if own is not None else (None, True, None)
 
     @cached_property
     def _by_id(self) -> dict[str, dict[str, SessionMCPLogs]]:
@@ -283,7 +294,7 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
 
     by_session: dict[tuple[str, str], SessionMCPLogs] = defaultdict(SessionMCPLogs)
     unreadable: list[str] = []
-    incomplete_servers: set[str] = set()
+    incomplete_project_servers: set[tuple[str, str]] = set()
     for root in present:
         for directory in root.glob(f"**/{_LOG_DIR_PREFIX}*"):
             if not directory.is_dir():
@@ -295,10 +306,10 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
                     lines = path.read_text(encoding="utf-8").splitlines()
                 except (OSError, UnicodeDecodeError):
                     unreadable.append(str(path))
-                    incomplete_servers.add(server)
+                    incomplete_project_servers.add((project, server))
                     continue
                 if _read_file(lines, server, project, by_session):
-                    incomplete_servers.add(server)
+                    incomplete_project_servers.add((project, server))
     # Every log has been read, so an unresolved wait is final rather than
     # merely not-yet-answered.
     for logs in by_session.values():
@@ -307,7 +318,7 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
         by_session=dict(by_session),
         root_found=True,
         unreadable=tuple(sorted(unreadable)),
-        incomplete_servers=frozenset(incomplete_servers),
+        incomplete_project_servers=frozenset(incomplete_project_servers),
     )
 
 
@@ -326,8 +337,10 @@ def _read_file(
     call that overlapped another, which is the only evidence that this server's
     completion order is not its invocation order; the surviving completions
     still make the per-tool counts agree, so no other guard sees anything
-    wrong. Naming the server lets the ordinal join decline for it rather than
-    trust a sequence assembled from a read known to have a hole in it.
+    wrong. Naming the project and server together lets the ordinal join decline
+    for that pair rather than trust a sequence assembled from a read known to
+    have a hole in it -- and rather than withhold a same-named server in an
+    unrelated project that never shared the incomplete file (ADR-0006).
     """
     torn = False
     last = max((number for number, line in enumerate(lines) if line.strip()), default=-1)
@@ -368,8 +381,8 @@ def _apply(message: str, server: str, logs: SessionMCPLogs) -> None:
 
     found = _HTTP_ENDPOINT.search(message)
     if found:
-        # The URL is an operator coordinate, not content: OpenACA already
-        # carries an MCP server's URL in the BOM on the same terms.
+        # The URL is an operator coordinate, not content: an MCP URL already
+        # travels in a BOM on these same terms.
         connection.endpoint = found.group(1)
         return
 

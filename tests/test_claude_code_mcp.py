@@ -23,22 +23,24 @@ from tests.fixtures.claude_jsonl import (
 SESSION = "11111111-2222-3333-4444-555555555555"
 
 
-def _transcript(root: Path, tools: list[str], project: str = "project") -> None:
+def _transcript(
+    root: Path, tools: list[str], project: str = "project", session_id: str = SESSION
+) -> None:
     """A session calling `tools` over MCP, plus one built-in so it always parses.
 
     Upstream yields nothing for a transcript with no tool calls at all, so a
     connection-only test still needs one call to have a session to attach to.
     """
     records = [
-        user_text(SESSION, "u0", "2026-01-01T00:00:00Z", "go"),
-        assistant_tool_use(SESSION, "anchor", "2026-01-01T00:00:01Z", "toolu_anchor", "Read"),
-        tool_result(SESSION, "ranchor", "2026-01-01T00:00:02Z", "toolu_anchor", "x"),
+        user_text(session_id, "u0", "2026-01-01T00:00:00Z", "go"),
+        assistant_tool_use(session_id, "anchor", "2026-01-01T00:00:01Z", "toolu_anchor", "Read"),
+        tool_result(session_id, "ranchor", "2026-01-01T00:00:02Z", "toolu_anchor", "x"),
     ]
     for index, name in enumerate(tools):
         call_id = f"toolu_{index}"
         records.append(
             assistant_tool_use(
-                SESSION,
+                session_id,
                 f"a{index}",
                 "2026-01-01T00:00:01Z",
                 call_id,
@@ -49,7 +51,9 @@ def _transcript(root: Path, tools: list[str], project: str = "project") -> None:
                 arguments={"q": f"query-{index}"},
             )
         )
-        records.append(tool_result(SESSION, f"r{index}", "2026-01-01T00:00:02Z", call_id, "done"))
+        records.append(
+            tool_result(session_id, f"r{index}", "2026-01-01T00:00:02Z", call_id, "done")
+        )
     write_session(root, project, records)
 
 
@@ -441,7 +445,7 @@ def test_an_unresolved_connection_state_stays_unknown(tmp_path: Path) -> None:
         cache, "books", [log.http_transport(SESSION, "https://api.example.test/mcp/")]
     )
     index = read_mcp_logs((cache,))
-    logs, _ = index.for_session(SESSION, "-work-project")
+    logs, _, _ = index.for_session(SESSION, "-work-project")
     assert logs is not None
     connection = logs.connections["books"]
     assert connection.connected is None
@@ -463,7 +467,7 @@ def test_a_later_success_clears_an_earlier_failed_attempts_category(tmp_path: Pa
         [log.connect_failed(SESSION, 10, "503", "upstream is unwell"), log.connected(SESSION)],
     )
     index = read_mcp_logs((cache,))
-    logs, _ = index.for_session(SESSION, "-work-project")
+    logs, _, _ = index.for_session(SESSION, "-work-project")
     assert logs is not None
     connection = logs.connections["books"]
     assert connection.connected is True
@@ -486,7 +490,7 @@ def test_failure_categories(tmp_path: Path, status: str | None, detail: str, exp
     cache = tmp_path / "cache"
     log.write_server_log(cache, "books", [log.connect_failed(SESSION, 10, status, detail)])
     index = read_mcp_logs((cache,))
-    logs, _ = index.for_session(SESSION, "-work-project")
+    logs, _, _ = index.for_session(SESSION, "-work-project")
     assert logs is not None
     connection = logs.connections["books"]
     assert connection.failure_category == expected
@@ -498,7 +502,7 @@ def test_a_torn_final_line_does_not_lose_the_file(tmp_path: Path) -> None:
     path = log.write_server_log(cache, "books", [log.connected(SESSION)])
     path.write_text(path.read_text() + '{"debug": "Tool ', encoding="utf-8")
     index = read_mcp_logs((cache,))
-    logs, _ = index.for_session(SESSION, "-work-project")
+    logs, _, _ = index.for_session(SESSION, "-work-project")
     assert logs is not None
     assert logs.connections["books"].transport == "stdio"
 
@@ -542,7 +546,7 @@ def test_an_unreadable_file_withholds_outcomes_for_its_whole_server(tmp_path: Pa
     (directory / "2026-01-02T00-00-00-000Z.jsonl").write_bytes(b"\xff\xfe not valid utf-8")
 
     index = read_mcp_logs((cache,))
-    assert index.incomplete_servers == frozenset({"books"})
+    assert index.incomplete_project_servers == frozenset({("-work-project", "books")})
 
     (session,) = _collect(root, cache)
     assert session.mcp_log_state == "count_mismatch"
@@ -688,13 +692,54 @@ def test_a_malformed_line_before_the_end_marks_its_server_incomplete(tmp_path: P
     path.write_text("\n".join([lines[0], '{"debug": "Calling MCP t', *lines[1:]]) + "\n")
 
     index = read_mcp_logs((cache,))
-    assert index.incomplete_servers == frozenset({"books"})
+    assert index.incomplete_project_servers == frozenset({("-work-project", "books")})
 
     (session,) = _collect(root, cache)
     assert session.mcp_log_state == "count_mismatch"
     assert [c.status for c in _mcp_calls([session])] == ["unknown"]
     (connection,) = session.mcp_connections
     assert connection.transport == "stdio", "the connection fact does not depend on the ordinal"
+
+
+def test_an_incomplete_log_in_one_project_does_not_withhold_a_same_named_server_elsewhere(
+    tmp_path: Path,
+) -> None:
+    """A server name is not unique across projects (ADR-0006).
+
+    `-broken-project` and `-clean-project` each run a server called `books`.
+    Only the first's log is malformed, but a marker keyed on the server name
+    alone would withhold the second project's session too, over a file it
+    never had any share in.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    broken_session = "aaaaaaaa-0000-0000-0000-000000000000"
+    clean_session = "bbbbbbbb-0000-0000-0000-000000000000"
+    _transcript(root, ["search"], project="-broken-project", session_id=broken_session)
+    _transcript(root, ["search"], project="-clean-project", session_id=clean_session)
+    path = log.write_server_log(
+        cache,
+        "books",
+        [log.connected(broken_session, transport="stdio"), log.completed(broken_session, "search")],
+        project="-broken-project",
+    )
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join([lines[0], '{"debug": "Calling MCP t', *lines[1:]]) + "\n")
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(clean_session, transport="stdio"), log.completed(clean_session, "search")],
+        project="-clean-project",
+    )
+
+    index = read_mcp_logs((cache,))
+    assert index.incomplete_project_servers == frozenset({("-broken-project", "books")})
+
+    sessions = _collect(root, cache)
+    broken = next(s for s in sessions if broken_session in s.session_id)
+    clean = next(s for s in sessions if clean_session in s.session_id)
+    assert broken.mcp_log_state == "count_mismatch"
+    assert clean.mcp_log_state == "applied"
+    assert [c.status for c in _mcp_calls([clean])] == ["ok"]
 
 
 def test_an_outcome_with_no_call_outstanding_withholds_that_tools_ordinals(

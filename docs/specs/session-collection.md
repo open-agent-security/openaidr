@@ -23,7 +23,7 @@ kind](#one-contract-per-agent-kind)).
 | **Span identity** | No identifier on a tool call | Derived from session, turn key and the call's index within that turn |
 | **Status** | `success` / `unknown`, per parser | `pending` from a missing result, `rejected` inferred from the refusal wording that survives in the result body |
 | **MCP server** | Populated by some parsers, not all | Per-kind `(server, tool)` normalisation — the join key |
-| **Vocabulary** | Each agent's own name for itself | A mapping to OpenACA agent kinds, with the agent's own name retained alongside it |
+| **Vocabulary** | Each agent's own name for itself | A mapping to this package's own agent kinds, with the agent's own name retained alongside it |
 
 Two properties of that dependency shape this design and are stated where they
 bite: it has a single published release, and it truncates long tool arguments
@@ -176,7 +176,7 @@ declaration — naming and representation are implementation choices.
 | Captures | Notes | |
 |---|---|---|
 | Session identity | Assigned by the agent, namespaced by agent kind | |
-| Agent kind | Which OpenACA kind produced it | |
+| Agent kind | Which agent kind produced it, per this package's own mapping | |
 | Start time | Earliest observed activity. An end time is not available from the dependency | |
 | Turn count | | |
 | Model | As the agent reports it, where it does | |
@@ -301,14 +301,14 @@ The alternative, filtering on activity timestamps, cannot be evaluated without
 parsing the file it would exclude.
 
 The dependency backs the agent kinds it supports; any kind can instead be backed
-by an OpenACA-owned reader on the same contract — **per kind, not
+by an OpenAIDR-owned reader on the same contract — **per kind, not
 all-or-nothing**. That is what bounds dependency risk to a single module. A
 failure in one kind's collection is reported and isolated, never aborting the others.
 
 ## Source vocabulary
 
 Agents name themselves in their own on-disk vocabulary, which differs from
-OpenACA's agent kinds, so this component owns the mapping.
+this package's own agent kinds, so this component owns the mapping.
 
 | Case | Behaviour |
 |---|---|
@@ -332,8 +332,8 @@ a gap.
 
 | Gap | Answered by |
 |---|---|
-| Granted authority — allowed tools, permission mode, whether the session was unattended. One agent kind records this; most do not | OpenACA's manifest scan. **The graph is the fallback for what the transcript does not say** |
-| System configuration. The dependency defines a model no parser populates | OpenACA's own scan, with identities and provenance the dependency cannot derive |
+| Granted authority — allowed tools, permission mode, whether the session was unattended. One agent kind records this; most do not | A consumer's own inventory of granted authority — the fallback for what the transcript does not say |
+| System configuration. The dependency defines a model no parser populates | A consumer's own system inventory, with identities and provenance the dependency cannot derive |
 
 ## Scale
 
