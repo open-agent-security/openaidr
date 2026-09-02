@@ -13,7 +13,13 @@ from typing import ClassVar
 
 from openaidr.readers.base import Window
 from openaidr.readers.claude_code import ClaudeCodeReader
-from tests.fixtures.claude_jsonl import assistant_tool_use, tool_result, user_text, write_session
+from tests.fixtures.claude_jsonl import (
+    assistant_tool_use,
+    system_event,
+    tool_result,
+    user_text,
+    write_session,
+)
 
 
 def _sessions(root: Path):
@@ -619,11 +625,11 @@ def test_a_pending_status_from_upstreams_own_snapshot_never_carries_a_recovered_
         {},
         {},
         {("s1", "u1", 0, 0): "t1"},
-        {"t1": datetime(2026, 8, 1, 10, 0, 0, tzinfo=UTC)},
-        {"t1": datetime(2026, 8, 1, 10, 0, 5, tzinfo=UTC)},
+        {("s1", "t1"): datetime(2026, 8, 1, 10, 0, 0, tzinfo=UTC)},
+        {("s1", "t1"): datetime(2026, 8, 1, 10, 0, 5, tzinfo=UTC)},
         {},
         {},
-        {"t1": "a result upstream's snapshot never saw"},
+        {("s1", "t1"): "a result upstream's snapshot never saw"},
     )
     (call,) = _tool_calls(
         [_Usage()],  # type: ignore[list-item]
@@ -995,3 +1001,82 @@ def test_the_providers_own_call_id_is_carried(tmp_path: Path) -> None:
         ],
     )
     assert _calls(tmp_path)[0].provider_call_id == "toolu_abc"
+
+
+def test_a_record_upstream_never_projects_does_not_shift_the_occurrence(
+    tmp_path: Path,
+) -> None:
+    """Both occurrence counters must count the same records, or neither works.
+
+    A turn's occurrence is counted over `chat_history`, which upstream builds
+    from only the records it projects into a `ChatMessage` -- a `system`
+    record, an `attachment`, and a `user` record carrying a tool result are all
+    dropped before it. Counting occurrences here over *every* record instead
+    would put the assistant record below at occurrence 1 while the turn built
+    for it asks for occurrence 0, so its own call id, result, permission mode,
+    working directory and attribution would all be looked up under a key that
+    holds a different record's -- or, as here, nothing at all.
+    """
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "go"),
+            # Reuses the uuid the assistant record below carries, and never
+            # reaches `chat_history`.
+            system_event("s1", "dup", "2026-08-01T10:00:01.000Z", "compact_boundary"),
+            assistant_tool_use(
+                "s1",
+                "dup",
+                "2026-08-01T10:00:02.000Z",
+                "toolu_1",
+                "Read",
+                cwd="/first",
+                permissionMode="acceptEdits",
+            ),
+            tool_result("s1", "r1", "2026-08-01T10:00:03.000Z", "toolu_1", "first contents"),
+        ],
+    )
+    session = _sessions(tmp_path)[0]
+    turn = next(t for t in session.turns if t.tool_calls)
+    (call,) = turn.tool_calls
+    assert call.provider_call_id == "toolu_1"
+    assert call.result == "first contents"
+    assert call.working_directory == "/first"
+    assert turn.permission_mode == "acceptEdits"
+
+
+def test_a_result_recorded_under_another_session_does_not_answer_for_this_one(
+    tmp_path: Path,
+) -> None:
+    """A provider call id is only promised unique within its own session.
+
+    The uuid-keyed recoveries are session-scoped (ADR-0001) but the
+    provider-call-id-keyed ones -- result, timestamps, `is_error`,
+    `toolDenialKind` -- were keyed on the bare id across the whole file, and
+    one file routinely holds more than one session: 386 of 594 real
+    transcripts on one machine do. A second session recording a result under
+    an id the first session issued therefore overwrote the first session's
+    entry, and the first call silently reported a stranger's result and a
+    duration measured against a stranger's clock. `_reused_call_ids` does not
+    catch it: only one record ever *issues* the id, so nothing looks duplicated.
+    """
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:00.000Z", "toolu_1", "Read"),
+            tool_result("s1", "r1", "2026-08-01T10:00:01.000Z", "toolu_1", "first contents"),
+            assistant_tool_use("s2", "a2", "2026-08-01T10:00:02.000Z", "toolu_2", "Bash"),
+            tool_result("s2", "r2", "2026-08-01T10:00:03.000Z", "toolu_2", "second contents"),
+            # The stranger: session two records a result under session one's id.
+            tool_result(
+                "s2", "r3", "2026-08-01T11:00:00.000Z", "toolu_1", "stranger", is_error=True
+            ),
+        ],
+    )
+    sessions = {s.session_id: s for s in _sessions(tmp_path)}
+    call = sessions["claude-code:s1"].turns[0].tool_calls[0]
+    assert call.result == "first contents"
+    assert call.status != "error", "the stranger's `is_error` is not this call's"
+    assert call.duration_ms == 1000, "measured against this session's own result record"

@@ -197,16 +197,19 @@ MCPLogState = Literal[
     "no_log_root",
     "no_log_for_session",
     "count_mismatch",
+    "session_id_collision",
     "not_attempted",
 ]
 """Whether this session's MCP connection log could be read, and why not.
 
-Five states rather than a boolean, because they call for different responses. A
+Six states rather than a boolean, because they call for different responses. A
 missing cache root is very likely an unsupported platform and is a property of
 the machine; a missing log for one session is a pruned cache; a count mismatch
 is the guard in `claude_code_mcp` declining to attribute outcomes it cannot
-place. Collapsing them would make "we could not look" indistinguishable from
-"there was nothing to find" -- the confusion this package exists to avoid.
+place; a session id collision is two projects having filed a log under the same
+session id, so the logs exist but neither can be shown to be this session's.
+Collapsing them would make "we could not look" indistinguishable from "there
+was nothing to find" -- the confusion this package exists to avoid.
 
 `applied` does not mean every call got an outcome: a server whose log was pruned
 while another's survived leaves some calls unenriched within an applied session.
@@ -303,14 +306,17 @@ class Session:
     #: local are not the same answer.
     mcp_log_state: MCPLogState = "not_attempted"
     #: How many MCP calls in this session had their status and duration
-    #: withheld because they overlapped another call to the same tool.
+    #: withheld because the log cannot order them against the transcript --
+    #: either two calls to the same tool were in flight at once, or the line
+    #: announcing one of them was never readable, which leaves the client's
+    #: completion order unusable as invocation order either way.
     #:
     #: Independent of `mcp_log_state`: a session missing this many calls'
     #: worth of outcome is still `applied` overall, since the log and the
     #: transcript otherwise agree on how many calls were made -- but that
     #: alone reads as full coverage. Nonzero here is what says some of it was
     #: nonetheless withheld, and why (ADR-0003's ordinal join has nothing to
-    #: order two calls to the same tool that were in flight at once).
+    #: order two calls to the same tool it cannot separate).
     mcp_overlap_withheld: int = 0
     #: Times the provider's own safeguards declined and the CLI fell back.
     provider_refusals: tuple[ProviderRefusal, ...] = ()

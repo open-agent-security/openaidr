@@ -31,6 +31,7 @@ import platform
 import re
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 
 __all__ = [
@@ -139,9 +140,27 @@ class SessionMCPLogs:
             self.unordered.add(key)
 
     def finish(self, server: str, tool: str) -> None:
+        """Resolve one in-flight call, or record that the log cannot say which.
+
+        An outcome arriving with nothing outstanding for its key means one of
+        two things, and the log cannot tell them apart: a `Calling` line went
+        missing (a torn record, a rotated or pruned head), or two calls
+        overlapped and the line announcing the second was the one lost. Both
+        make completion order unusable as invocation order, so the key joins
+        `unordered` either way.
+
+        A log that never records a `Calling` line for the key at all is a
+        different case -- an older client that does not write them -- and is
+        not held to a line it was never going to produce.
+        """
         key = (server, tool)
-        if key in self.in_flight:
-            self.in_flight[key] = max(0, self.in_flight[key] - 1)
+        outstanding = self.in_flight.get(key)
+        if outstanding is None:
+            return
+        if outstanding == 0:
+            self.unordered.add(key)
+        else:
+            self.in_flight[key] = outstanding - 1
 
     def seal(self) -> None:
         """Turn every unresolved wait into an outcome that says so.
@@ -162,9 +181,15 @@ class SessionMCPLogs:
 
 @dataclass(frozen=True)
 class MCPLogIndex:
-    """The logs on this machine, keyed by the session that produced them."""
+    """The logs on this machine, keyed by the project and session that wrote them."""
 
-    by_session: dict[str, SessionMCPLogs]
+    #: `(project directory, session id)` -> that session's logs. The cache
+    #: files a log under a mangled *project* directory, so a session id is only
+    #: unique within one of them: a copied, restored or independently rooted
+    #: project can carry the same raw session id under another, which is the
+    #: same collision the collector already reports for transcripts. Keyed on
+    #: both so those two never merge into one entry.
+    by_session: dict[tuple[str, str], SessionMCPLogs]
     #: False when no cache directory exists at any known path -- most often an
     #: unsupported platform, and reported as such rather than as "no MCP here".
     root_found: bool
@@ -183,8 +208,47 @@ class MCPLogIndex:
     #: trust a count comparison run against a partial read.
     incomplete_servers: frozenset[str] = frozenset()
 
-    def for_session(self, session_id: str) -> SessionMCPLogs | None:
-        return self.by_session.get(session_id)
+    def for_session(self, session_id: str, project: str) -> tuple[SessionMCPLogs | None, bool]:
+        """This session's logs, and whether the identity was ambiguous.
+
+        Returns `(logs, ambiguous)`. `ambiguous` is what a caller must withhold
+        on: two projects filed a log under this session id and neither can be
+        shown to be this one's.
+
+        **Why the project name only breaks ties.** The two directory manglings
+        are not the same function. Measured on one machine, 99 of 139 cache
+        directory names have no exact counterpart under `~/.claude/projects`:
+        the cache truncates a long project path and appends a hash suffix
+        (`...-agent-local-ditto-1e835041-318a-4985-a288-3baa1e-n0kpsc`), and
+        the transcript root does not. Requiring the names to agree would
+        therefore withhold enrichment from every project with a long path --
+        losing far more than the collision it guards against. So a session id
+        found under exactly one project is that session's log whatever the
+        directory is called, and the name is consulted only when more than one
+        project claims the id and something has to break the tie.
+        """
+        matches = self._by_id.get(session_id)
+        if not matches:
+            return None, False
+        if len(matches) == 1:
+            return next(iter(matches.values())), False
+        own = matches.get(project)
+        return (own, False) if own is not None else (None, True)
+
+    @cached_property
+    def _by_id(self) -> dict[str, dict[str, SessionMCPLogs]]:
+        """`by_session` inverted to session id, so a lookup is not a scan.
+
+        `collect()` asks once per session against an index holding one entry
+        per session on the machine, which is quadratic if each ask walks the
+        whole index. Built once per index and cached on the instance --
+        `cached_property` writes through `__dict__`, which a frozen dataclass
+        permits.
+        """
+        inverted: dict[str, dict[str, SessionMCPLogs]] = defaultdict(dict)
+        for (project, session_id), logs in self.by_session.items():
+            inverted[session_id][project] = logs
+        return dict(inverted)
 
 
 def cache_roots() -> tuple[Path, ...]:
@@ -217,7 +281,7 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
     if not present:
         return MCPLogIndex(by_session={}, root_found=False)
 
-    by_session: dict[str, SessionMCPLogs] = defaultdict(SessionMCPLogs)
+    by_session: dict[tuple[str, str], SessionMCPLogs] = defaultdict(SessionMCPLogs)
     unreadable: list[str] = []
     incomplete_servers: set[str] = set()
     for root in present:
@@ -225,6 +289,7 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
             if not directory.is_dir():
                 continue
             server = directory.name[len(_LOG_DIR_PREFIX) :]
+            project = directory.parent.name
             for path in sorted(directory.glob("*.jsonl")):
                 try:
                     lines = path.read_text(encoding="utf-8").splitlines()
@@ -232,7 +297,8 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
                     unreadable.append(str(path))
                     incomplete_servers.add(server)
                     continue
-                _read_file(lines, server, by_session)
+                if _read_file(lines, server, project, by_session):
+                    incomplete_servers.add(server)
     # Every log has been read, so an unresolved wait is final rather than
     # merely not-yet-answered.
     for logs in by_session.values():
@@ -245,16 +311,34 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
     )
 
 
-def _read_file(lines: list[str], server: str, by_session: dict[str, SessionMCPLogs]) -> None:
-    for line in lines:
+def _read_file(
+    lines: list[str],
+    server: str,
+    project: str,
+    by_session: dict[tuple[str, str], SessionMCPLogs],
+) -> bool:
+    """Fold one log file into the index; report whether anything was lost.
+
+    Returns `True` when a line anywhere but the end failed to decode. A torn
+    *final* write is ordinary -- the log is appended to live -- but an earlier
+    one is a record that existed and could not be read, and what it said is
+    unknowable. One of the things it can have said is `Calling MCP tool` for a
+    call that overlapped another, which is the only evidence that this server's
+    completion order is not its invocation order; the surviving completions
+    still make the per-tool counts agree, so no other guard sees anything
+    wrong. Naming the server lets the ordinal join decline for it rather than
+    trust a sequence assembled from a read known to have a hole in it.
+    """
+    torn = False
+    last = max((number for number, line in enumerate(lines) if line.strip()), default=-1)
+    for number, line in enumerate(lines):
         line = line.strip()
         if not line:
             continue
         try:
             record = json.loads(line)
         except ValueError:
-            # One malformed line is not a malformed file: the log is appended
-            # to live, so a torn final write is ordinary.
+            torn = torn or number != last
             continue
         if not isinstance(record, dict):
             continue
@@ -262,7 +346,8 @@ def _read_file(lines: list[str], server: str, by_session: dict[str, SessionMCPLo
         message = record.get("debug")
         if not isinstance(session_id, str) or not isinstance(message, str):
             continue
-        _apply(message, server, by_session[session_id])
+        _apply(message, server, by_session[(project, session_id)])
+    return torn
 
 
 def _apply(message: str, server: str, logs: SessionMCPLogs) -> None:
