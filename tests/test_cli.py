@@ -54,6 +54,18 @@ def test_sessions_subcommand_prints_collected_sessions(
     assert "claude-code:s1" in capsys.readouterr().out
 
 
+def test_a_since_window_too_large_to_be_a_date_exits_cleanly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--since` is syntactically valid but too large to subtract from `now()`
+    without going before `datetime.min`, which `parse_since` raises as
+    `OverflowError`. `_sessions` only catches `ValueError` for its controlled
+    exit code 2, so an uncaught `OverflowError` would surface as a traceback
+    instead."""
+    assert main(["sessions", "--since", "999999d"]) == 2
+    assert "openaidr:" in capsys.readouterr().err
+
+
 def test_an_unrecognised_agent_kind_collects_nothing_without_crashing(
     tmp_path, monkeypatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

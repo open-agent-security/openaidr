@@ -37,7 +37,14 @@ def parse_since(value: str | None) -> datetime | None:
         # after this instant can ever be newer than, a plausible-looking but
         # empty request. Reject it rather than silently collecting nothing.
         raise ValueError(f"expected a positive day count, got {value!r}")
-    return datetime.now(UTC) - timedelta(days=days)
+    try:
+        return datetime.now(UTC) - timedelta(days=days)
+    except OverflowError:
+        # A day count large enough to push the cut-off before `datetime.min` is
+        # syntactically a valid count but not a representable date; the caller
+        # only handles `ValueError` for a controlled exit, so this must arrive
+        # as one rather than as an uncaught traceback.
+        raise ValueError(f"day count out of range, got {value!r}") from None
 
 
 def render_text(collection: Collection, detail: bool = False) -> str:
@@ -307,10 +314,11 @@ def _session_lines(session: Session, detail: bool = False) -> list[str]:
             # nothing, where `ok` would have claimed success.
             status = "" if call.status == "unknown" else call.status
             size = f"{call.result_size}c" if call.result_size is not None else "-"
+            duration = f"{call.duration_ms}ms" if call.duration_ms is not None else "-"
             marker = " (sidechain)" if turn.is_sidechain else ""
             if call.truncated:
                 marker += " (truncated)"
-            line = f"    {status:<11} {size:>9}  {name}{marker}"
+            line = f"    {status:<11} {size:>9} {duration:>9}  {name}{marker}"
             # error_text is local-only, not forbidden from local rendering — this
             # text surface is exactly the local reading the spec names it for.
             if call.error_text:
@@ -366,6 +374,7 @@ def _session_document(session: Session) -> dict[str, object]:
                         "mcp_server": call.mcp_server,
                         "status": call.status,
                         "result_size": call.result_size,
+                        "duration_ms": call.duration_ms,
                         "truncated": call.truncated,
                     }
                     for call in turn.tool_calls

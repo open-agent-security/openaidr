@@ -688,11 +688,18 @@ def _tool_calls(
         )
         # `outcome.duration_ms` can be a `still running` wait rather than a
         # round trip -- `seal()` gives `ok=None` exactly that elapsed, for a
-        # call the log never saw finish. Falling back to it unconditionally
-        # would leave a `pending` call reporting a duration, which is the
+        # call the log never saw finish. That wait is only a lower bound on
+        # the eventual duration, not the duration itself, so it is used only
+        # when the log itself saw the call resolve (`outcome.ok is not None`);
+        # otherwise a `pending` call would report a duration, which is the
         # corollary ADR-0007 forbids: no call may report a fact its own status
         # contradicts.
-        if duration is None and outcome is not None and status != "pending":
+        if (
+            duration is None
+            and outcome is not None
+            and outcome.ok is not None
+            and status != "pending"
+        ):
             duration = outcome.duration_ms
         skill, plugin = transcript.attribution.get(
             (raw_session_id, record_uuid, occurrence), (None, None)

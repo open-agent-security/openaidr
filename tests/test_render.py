@@ -19,6 +19,7 @@ def _session() -> Session:
         result_size=6,
         error_text="denied",
         truncated=False,
+        duration_ms=1234,
     )
     turn = Turn(
         position=0, key="u1", role="assistant", text="", is_sidechain=False, tool_calls=(call,)
@@ -54,6 +55,13 @@ def test_text_output_shows_error_text_for_a_failed_call() -> None:
     assert "denied" in output
 
 
+def test_text_output_shows_the_calls_duration() -> None:
+    """Per-call timings are what the README advertises `--detail` for; the
+    detail row must actually carry them, not just the model."""
+    output = render_text(Collection(sessions=[_session()], failures=[]), detail=True)
+    assert "1234ms" in output
+
+
 def test_text_output_reports_a_failed_kind_rather_than_hiding_it() -> None:
     collection = Collection(sessions=[], failures=[ReaderFailure("cursor", "unreadable")])
     output = render_text(collection)
@@ -72,6 +80,7 @@ def test_json_output_is_machine_readable_and_carries_spans() -> None:
     assert call["span"] == "claude-code:s1:toolu_1"
     assert call["status"] == "rejected"
     assert call["result_size"] == 6
+    assert call["duration_ms"] == 1234
     assert document["failures"] == []
 
 
@@ -120,6 +129,17 @@ def test_parse_since_rejects_a_zero_or_negative_count() -> None:
         parse_since("0d")
     with pytest.raises(ValueError):
         parse_since("-3d")
+
+
+def test_parse_since_rejects_a_day_count_too_large_to_be_a_date() -> None:
+    """A day count can be syntactically valid and still push the cut-off before
+    `datetime.min`, which raises `OverflowError` rather than producing a date.
+    The CLI only handles `ValueError` for a controlled exit (`__main__._sessions`),
+    so this must surface as one rather than an uncaught traceback."""
+    import pytest
+
+    with pytest.raises(ValueError):
+        parse_since("999999d")
 
 
 def test_the_default_view_is_the_summary_alone() -> None:

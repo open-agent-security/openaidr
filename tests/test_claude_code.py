@@ -1097,6 +1097,69 @@ def test_a_calls_duration_needs_both_ends_of_it(tmp_path: Path) -> None:
     assert calls[1].duration_ms is None
 
 
+def test_a_still_running_mcp_outcome_does_not_supply_a_missing_duration() -> None:
+    """`still running` is an elapsed wait, not a round trip, whatever the call's
+    status turns out to be.
+
+    The transcript here proves the call returned (`ended` is recorded) but has
+    no usable start/end pair, so `_duration` itself has nothing -- the same gap
+    `test_a_calls_duration_needs_both_ends_of_it` covers without MCP involved.
+    The MCP log's own outcome for this call is `still running`: an elapsed
+    wait taken before the call resolved, not the round trip. Falling back to it
+    unconditionally would mislabel that lower bound as the exact duration --
+    the same "no call may report a fact its own status contradicts" corollary
+    ADR-0007 states, extended from `status` to the `duration_ms` fact."""
+    from collections import deque
+
+    from openaidr.readers.claude_code import _MCPEnrichment, _tool_calls, _Transcript
+    from openaidr.readers.claude_code_mcp import MCPCallOutcome
+
+    class _Usage:
+        tool_name = "mcp__books__search"
+        tool_type = "tool"
+        server_name = None
+        arguments: ClassVar[dict[str, object]] = {}
+        result = None
+        status = "success"
+        error = None
+
+    no_start_recorded = _Transcript(
+        {},
+        {},
+        {},
+        {},
+        {("s1", "u1", 0, 0): "t1"},
+        {},
+        {("s1", "t1"): datetime(2026, 8, 1, 10, 0, 5, tzinfo=UTC)},
+        {},
+        {},
+        {},
+    )
+    enrichment = _MCPEnrichment(
+        state="applied",
+        outcomes={
+            ("books", "search"): deque(
+                [MCPCallOutcome(server="books", tool="search", ok=None, duration_ms=9000)]
+            )
+        },
+    )
+    (call,) = _tool_calls(
+        [_Usage()],  # type: ignore[list-item]
+        "claude-code:s1",
+        "u1",
+        "s1",
+        "u1",
+        0,
+        set(),
+        set(),
+        no_start_recorded,
+        enrichment,
+    )
+
+    assert call.status == "unknown"
+    assert call.duration_ms is None
+
+
 def test_the_providers_own_call_id_is_carried(tmp_path: Path) -> None:
     """Span identity stays derived (ADR-0001) — changing what a span is would move
     every row a consumer has addressed — but the provider's id lets a consumer
