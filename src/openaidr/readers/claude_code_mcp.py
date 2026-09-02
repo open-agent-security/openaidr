@@ -356,6 +356,12 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
     candidates = cache_roots() if roots is None else roots
     present: list[Path] = []
     unreadable: list[str] = []
+    # Set when a candidate could not be statted at all -- unlike a candidate
+    # confirmed to be a non-directory, its type is unknown, so it cannot be
+    # ruled out as a directory holding sessions another, readable candidate
+    # also claims (ADR-0009's argument, applied one level up: an unscanned
+    # *root* withholds exactly as much as an unscanned subdirectory does).
+    root_probe_incomplete = False
     for root in candidates:
         try:
             is_dir = stat.S_ISDIR(root.stat().st_mode)
@@ -372,12 +378,15 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
                 continue
             except OSError:
                 unreadable.append(str(root))
+                root_probe_incomplete = True
                 continue
             # `lstat()` succeeded where `stat()` did not: a symlink exists at
             # `root` but its target does not -- a broken
             # `CLAUDE_CLI_CACHE_DIR` or a stray dangling link at a default
             # path, not the ordinary absence the inner `FileNotFoundError`
-            # above handles.
+            # above handles. A dangling link is confirmed to hold nothing at
+            # this path, so unlike the two `OSError` catches around it, it
+            # does not leave `root`'s type unknown.
             unreadable.append(str(root))
             continue
         except OSError:
@@ -393,6 +402,7 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
             # shape a file-level failure takes below -- `collect()` wraps
             # every entry in `unreadable` with its own "could not be read".
             unreadable.append(str(root))
+            root_probe_incomplete = True
             continue
         if is_dir:
             present.append(root)
@@ -419,7 +429,11 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
 
     by_session: dict[tuple[str, str], SessionMCPLogs] = defaultdict(SessionMCPLogs)
     incomplete_project_servers: set[tuple[str, str]] = set()
-    discovery_incomplete = False
+    # A root whose type could not be determined (see `root_probe_incomplete`
+    # above) might have been a directory holding a second claimant for a
+    # session id or project this pass resolved from the *other*, readable
+    # roots -- the same reason an unscanned subdirectory below sets this flag.
+    discovery_incomplete = root_probe_incomplete
     for root in present:
         log_dirs, walk_failures = _walk_log_dirs(root)
         # Whatever level of the tree it failed at, a directory that could not be

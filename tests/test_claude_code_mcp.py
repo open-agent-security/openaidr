@@ -511,6 +511,44 @@ def test_a_dangling_symlink_mcp_cache_root_is_reported_as_a_failure(tmp_path: Pa
     assert any(str(cache) in f.message and "could not be read" in f.message for f in failures)
 
 
+def test_an_unstattable_root_among_several_withholds_enrichment_from_the_readable_ones(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A root whose type could not be determined might have been a directory
+    holding a second claimant for a session id or project this pass resolved
+    from a *different*, readable root -- the same argument ADR-0009 makes for
+    an unscanned subdirectory, one level up: an unreadable root's contents are
+    as unknown as an unreadable directory's, so its candidacy cannot be ruled
+    out just because another root answered cleanly.
+    """
+    root, cache, blocked = tmp_path / "projects", tmp_path / "cache", tmp_path / "blocked"
+    cache.mkdir()
+    blocked.mkdir()
+    _transcript(root, ["search"])
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+    )
+    real_stat = Path.stat
+
+    def flaky_stat(self: Path, *args: object, **kwargs: object):
+        if self == blocked:
+            raise OSError("permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    index = read_mcp_logs((cache, blocked))
+    assert index.root_found is True
+    assert str(blocked) in index.unreadable
+    assert index.discovery_incomplete
+
+    sessions, failures = ClaudeCodeReader(root=root, mcp_logs=index).collect(Window(since=None))
+    assert sessions[0].mcp_log_state == "log_discovery_incomplete"
+    assert sessions[0].mcp_connections == ()
+    assert any(str(blocked) in f.message for f in failures)
+
+
 def test_a_log_directory_the_walk_cannot_scan_is_reported_and_withholds_enrichment(
     tmp_path: Path, monkeypatch
 ) -> None:
