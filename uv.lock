@@ -57,7 +57,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "adr-sensor", specifier = ">=1.0.0" }]
+requires-dist = [{ name = "adr-sensor", specifier = "==1.0.0" }]
 
 [package.metadata.requires-dev]
 dev = [
