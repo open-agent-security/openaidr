@@ -95,9 +95,9 @@ _MCP_LOG_STATE_EXPLANATIONS: dict[MCPLogState, Callable[[int], str]] = {
         "outcome belongs to which call cannot be established. Connection facts kept."
     ),
     "session_id_collision": lambda n: (
-        f"{n} withheld everything: more than one project directory holds a log "
-        "under this session's id — a copied or restored project — and which one is "
-        "this session's cannot be established."
+        f"{n} withheld everything: more than one project claims this session's id "
+        "— a copied or restored project, sharing the transcript, the log, or both — "
+        "and which one is this session's cannot be established."
     ),
     "not_attempted": lambda n: (
         f"{n} not attempted: a subagent transcript is keyed by its parent's session "

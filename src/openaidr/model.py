@@ -206,10 +206,11 @@ Six states rather than a boolean, because they call for different responses. A
 missing cache root is very likely an unsupported platform and is a property of
 the machine; a missing log for one session is a pruned cache; a count mismatch
 is the guard in `claude_code_mcp` declining to attribute outcomes it cannot
-place; a session id collision is two projects having filed a log under the same
-session id, so the logs exist but neither can be shown to be this session's.
-Collapsing them would make "we could not look" indistinguishable from "there
-was nothing to find" -- the confusion this package exists to avoid.
+place; a session id collision is more than one project claiming this session's
+id -- two projects having filed a log under it, two transcript projects sharing
+it, or both -- so nothing found under that id can be shown to be this session's
+alone. Collapsing them would make "we could not look" indistinguishable from
+"there was nothing to find" -- the confusion this package exists to avoid.
 
 `applied` does not mean every call got an outcome: a server whose log was pruned
 while another's survived leaves some calls unenriched within an applied session.
