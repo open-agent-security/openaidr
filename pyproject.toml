@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Security",
 ]
 dependencies = [
-    "adr-sensor>=1.0.0",
+    "adr-sensor==1.0.0",
 ]
 
 [project.scripts]
@@ -51,3 +51,5 @@ pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Fixture builders live in `tests.fixtures` and are imported by test modules.
+pythonpath = ["."]
