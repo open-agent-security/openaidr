@@ -1,0 +1,13 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/open-agent-security/openaidr/security/advisories/new
+    about: >-
+      Report privately via a GitHub security advisory, not a public issue.
+      See SECURITY.md for what counts as a vulnerability in a tool that reads
+      transcripts.
+  - name: Adding an agent kind
+    url: https://github.com/open-agent-security/openaidr/blob/main/CONTRIBUTING.md#adding-an-agent-kind
+    about: >-
+      The reader contract, end to end. Open a "New agent kind" issue once
+      you have read it.
