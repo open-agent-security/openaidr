@@ -73,7 +73,20 @@ on:
 jobs:
   trigger-claude-via-comment:
     # Bounce 1: Codex review submitted -> @claude addresses it.
-    if: github.event_name == 'pull_request_review' && github.event.review.user.login == 'chatgpt-codex-connector[bot]' && github.event.review.state == 'commented'
+    #
+    # Same-repo only, for a different reason than bounce 2. Unlike
+    # `pull_request`, a `pull_request_review` run on a fork PR DOES get
+    # secrets, so this job would work — it would post "@claude please
+    # address...", and claude.yml would then refuse the fork downstream.
+    # The net effect on an outside contributor's PR is a comment promising
+    # a fix that never arrives, plus a red run. Nothing here checks out
+    # untrusted code, so this is noise rather than exposure; excluding
+    # forks keeps the loop to the repo it was designed for.
+    if: >
+      github.event_name == 'pull_request_review'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.review.user.login == 'chatgpt-codex-connector[bot]'
+      && github.event.review.state == 'commented'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
