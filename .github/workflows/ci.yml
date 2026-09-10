@@ -16,6 +16,13 @@ jobs:
       # Without this, `uv sync --frozen` fails on a clean repo because there's
       # no pyproject.toml/uv.lock to install from. Once the first pyproject.toml
       # lands, the rest of the workflow runs.
+      # Runs unconditionally, before the project gate below: the rule it
+      # enforces ("OpenAIDR installs and runs correctly for someone who has
+      # never heard of any consumer of it") applies to docs and config just as
+      # much as to Python sources, and those exist even on a chore PR.
+      - name: No proprietary references
+        run: bash scripts/check-no-proprietary.sh
+
       - id: project_check
         name: Detect Python project files
         run: |

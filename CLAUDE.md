@@ -2,16 +2,21 @@
 
 ## What this repo is
 
-OpenAIDR reads the session state AI coding agents already write to disk — Claude
-Code, Cursor, Codex, opencode, Claude Desktop and others — and normalises it into
-one session model with stable span identity. It answers *what an agent did*, never
-what that means: no scoring, no identity resolution, no findings, and no upload
-path.
+OpenAIDR reads the session state AI coding agents already write to disk and
+normalises it into one session model with stable span identity. It answers *what
+an agent did*, never what that means: no scoring, no identity resolution, no
+findings, and no upload path.
+
+**It reads one agent kind today: `claude-code`.** Codex and Cursor are the
+intended next kinds and are not read yet — a session from either is absent from
+the output entirely, not collected and marked. `adr-sensor` parses seven kinds;
+this package instantiates one of them. Do not describe the others as supported.
 
 Apache-2.0, and deliberately plumbing rather than judgement. Every new agent
 format is coverage a contributor can add without touching anything that
-interprets the result. The proprietary `stacktrace` package is one consumer;
-nothing in this repository may import, reference or be shaped by it.
+interprets the result. Closed-source consumers of this package exist; nothing in
+this repository may import, reference or be shaped by one, and none may be named
+here.
 
 ## Common commands
 
@@ -64,7 +69,9 @@ Full design: `docs/specs/session-collection.md`. Decisions: `docs/adrs/`.
   ships nothing anywhere. A consumer's boundary is the consumer's to state.
 - **Nothing proprietary.** No import, config key, URL or mention of any closed
   product. The property to hold: OpenAIDR installs and runs correctly for someone
-  who has never heard of Stacktrace. That is one grep in CI.
+  who has never heard of any consumer of it. Enforced by the `No proprietary
+  references` step in `.github/workflows/ci.yml`, and by
+  `scripts/check-no-proprietary.sh` locally.
 - **Per-kind rules, never one global pattern.** A general tool-name pattern
   mis-splits any server name containing the delimiter, and the result is not a
   missing server but the *wrong* one. A silent wrong answer is worse than a gap.

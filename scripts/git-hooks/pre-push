@@ -69,6 +69,17 @@ fi
 
 # ---------- CI-parity local gates ----------
 
+# First, and not behind uv: this one guards what gets published rather than
+# whether the code works, and it costs a grep.
+echo "  → no proprietary references"
+if ! bash scripts/check-no-proprietary.sh > /tmp/openaidr-pre-push-proprietary.log 2>&1; then
+  cat /tmp/openaidr-pre-push-proprietary.log
+  fail "a forbidden proprietary reference is present.
+    OpenAIDR must install and run correctly for someone who has
+    never heard of any consumer of it.
+    To fix: remove the reference (see scripts/check-no-proprietary.sh)"
+fi
+
 echo "  → uv sync"
 if ! uv sync --frozen > /tmp/openaidr-pre-push-uv-sync.log 2>&1; then
   tail -40 /tmp/openaidr-pre-push-uv-sync.log
