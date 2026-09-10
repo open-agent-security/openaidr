@@ -853,6 +853,33 @@ def test_a_reused_reader_does_not_serve_a_stale_mcp_log_snapshot(
     assert second_call.transport == "stdio"
 
 
+def test_the_text_surface_withholds_the_failure_detail(tmp_path: Path) -> None:
+    """A server's own failure words are LOCAL_ONLY on *both* surfaces.
+
+    The text surface reports failures by category, aggregated. It never prints
+    `failure_detail`, which is free text the server author chose and can carry
+    a URL, a header fragment or — as here — a credential the server echoed
+    back. Its JSON sibling below pins the same property for the document.
+    """
+    from openaidr.collector import Collection
+    from openaidr.render import render_text
+
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, [])
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connect_failed(SESSION, 10, "401", "token sk-secret-value rejected")],
+    )
+    sessions = _collect(root, cache)
+    rendered = render_text(Collection(sessions=list(sessions)), detail=True)
+
+    assert "sk-secret-value" not in rendered
+    # The failure is still reported — by category, which is the part a
+    # consumer acts on and the part that travels.
+    assert "auth" in rendered
+
+
 def test_the_json_document_withholds_the_failure_detail(tmp_path: Path) -> None:
     from openaidr.collector import Collection
     from openaidr.render import render_json

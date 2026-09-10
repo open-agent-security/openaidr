@@ -78,3 +78,36 @@ def test_the_json_document_carries_no_conversation_text(tmp_path: Path) -> None:
         env={**os.environ, "OPENAIDR_CLAUDE_ROOT": str(tmp_path)},
     )
     assert "my secret prompt" not in result.stdout
+
+
+def test_the_text_surface_carries_no_conversation_text(tmp_path: Path) -> None:
+    """The text surface is the *local* reading, and it still is not a transcript.
+
+    Its sibling above pins the same property for `--format json`. Pinning it
+    here too is the point: `LOCAL_ONLY` permits a local surface to carry turn
+    text, so nothing in the type system stops a future `--detail` from printing
+    it — only this test does. `--detail` is the widest the text surface goes.
+    """
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "my secret prompt"),
+            assistant_tool_use("s1", "u2", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+            tool_result("s1", "u3", "2026-08-01T10:00:02.000Z", "toolu_1", "a private file body"),
+        ],
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "openaidr", "sessions", "--since", "36500d", "--detail"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "OPENAIDR_CLAUDE_ROOT": str(tmp_path)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    # The session was read, so an empty stdout would pass the assertions below
+    # for the wrong reason.
+    assert "Read" in result.stdout
+    assert "my secret prompt" not in result.stdout
+    assert "a private file body" not in result.stdout
