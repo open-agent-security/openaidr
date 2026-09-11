@@ -10,7 +10,7 @@ Session collection for AI coding agents.
 OpenAIDR reads the session state AI coding agents already write to disk and
 normalises it into one session model with stable span identity.
 
-> **Status:** pre-alpha, on [PyPI](https://pypi.org/project/openaidr/). One
+> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). One
 > agent kind reads today (`claude-code`). Start with
 > [Install and run](#install-and-run), then
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
@@ -149,19 +149,31 @@ and a doc index in
 
 ## Status
 
-**Pre-alpha.** Session collection works for `claude-code`: sessions, turns, tool
+**Beta.** Session collection works for `claude-code`: sessions, turns, tool
 calls, and span identity, read by an OpenAIDR-owned reader that calls
 `adr-sensor`'s Claude Code parser one file at a time and normalises everything
 upstream's shared event schema cannot express. The model has six outcome
 statuses; this reader emits five of them (`unknown`, `rejected`, `pending`,
 `ok`, `error`) from Claude Code's own transcripts and, for MCP calls, its
 per-server connection logs — `interrupted` is modelled but not emitted, since
-neither source records it. One cold pass, held in memory.
+neither source records it.
 
-Not yet built: incremental collection over a watermark, and the six further
-agent kinds that `adr-sensor` also parses — they are simply not read yet. Why
-this reader walks the tree and calls that parser itself, rather than going
-through `adr-sensor`'s own whole-tree walk, is recorded in
+Not yet built, in the order they matter:
+
+- **Two further agent kinds, Codex and Cursor.** What each would cost is
+  measured in [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage)
+  rather than assumed — including why Cursor cannot be added dependency-only
+  without breaking span identity.
+- **Incremental collection.** Every run today is one cold pass: the whole
+  window re-walked and re-parsed from scratch, held in memory. That is
+  affordable once and not on every change. Because sessions are append-only, a
+  steady-state path can instead re-read only the files whose modification time
+  moved, replacing each session with its longer self — and span identity is
+  derived the way it is precisely so that every span already emitted survives
+  that re-read rather than shifting under a consumer.
+
+Why this reader walks the tree and calls `adr-sensor`'s parser per file, rather
+than going through upstream's own whole-tree walk, is recorded in
 [the spec](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#what-the-dependency-cannot-carry).
 
 ## Contributing

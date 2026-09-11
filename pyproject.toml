@@ -12,7 +12,7 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Prasanth G", email = "prasanth@openaca.dev" }]
 keywords = ["ai-security", "agent-security", "observability", "session", "telemetry", "mcp"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",

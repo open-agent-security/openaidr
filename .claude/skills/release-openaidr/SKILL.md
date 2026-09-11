@@ -135,7 +135,9 @@ Follow the shape documented in `docs/releases/README.md`:
 ## Compatibility
 
 <Behavior changes existing consumers will notice — span identity first if
-it moved. Say "pre-alpha, no back-compat hedging" while that's still true.>
+it moved. The package is beta as of 0.1.0: say "beta, no back-compat
+guarantee before 1.0" while that's still true, and name the breaking change
+explicitly rather than hedging the whole release.>
 ```
 
 **Judgment guidelines (apply ruthlessly):**
