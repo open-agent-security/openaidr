@@ -35,7 +35,7 @@ jobs:
 
       - name: Install uv
         if: steps.project_check.outputs.have_project == 'true'
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           # Match pyproject.toml `requires-python`. Pinning here in CI catches
