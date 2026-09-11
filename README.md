@@ -27,12 +27,6 @@ It answers **what an agent did**, never what that means. No scoring, no identity
 resolution, no findings, no upload path. Interpreting a session is a consumer's
 job; OpenAIDR takes no position on what a consumer concludes.
 
-## Why it is separate
-
-Reading an agent's session log and normalising it is *plumbing*, and it runs on
-one machine — so it is open. Every new agent format is coverage a contributor can
-add without touching anything that interprets the result.
-
 ## What OpenAIDR reads, and what it emits
 
 OpenAIDR reads files the agent already wrote — Claude Code's JSONL transcripts
@@ -172,9 +166,12 @@ through `adr-sensor`'s own whole-tree walk, is recorded in
 
 ## Contributing
 
-Adding an agent kind is the contribution this project is shaped around, and
-[`CONTRIBUTING.md`](https://github.com/open-agent-security/openaidr/blob/main/CONTRIBUTING.md)
-walks the reader contract end to end.
+Reading an agent's session log and normalising it is *plumbing*, and every new
+agent format is coverage a contributor can add without touching anything that
+interprets the result. That is the contribution this project is shaped around,
+and [`CONTRIBUTING.md`](https://github.com/open-agent-security/openaidr/blob/main/CONTRIBUTING.md)
+walks the reader contract end to end — the four wiring points, then the traps
+that cost us an ADR each.
 
 ## Security
 
