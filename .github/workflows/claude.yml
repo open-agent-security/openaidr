@@ -61,7 +61,7 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           # For `issue_comment` on a PR, GitHub sets `github.sha` to the
