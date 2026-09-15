@@ -190,6 +190,17 @@ class Turn:
     #: because it *changes mid-session*: a session can enter `bypassPermissions`
     #: partway through, and only the turns after that point ran unguarded.
     permission_mode: str | None = None
+    #: When the record that produced this turn was written, as an instant in
+    #: UTC. None where the record carried no timestamp, or no identity for the
+    #: join to land on -- never a neighbouring turn's value and never the
+    #: moment of collection.
+    #:
+    #: This is the finest clock the model carries, and it is the record's, not
+    #: the call's: every tool call issued in one record shares it, so within a
+    #: turn only span order separates them. A tool call therefore carries no
+    #: absolute time of its own -- its start is this, and its end follows from
+    #: this and its `duration_ms` (ADR-0010).
+    occurred_at: datetime | None = None
 
 
 MCPLogState = Literal[
@@ -335,6 +346,17 @@ class Session:
     mcp_overlap_withheld: int = 0
     #: Times the provider's own safeguards declined and the CLI fell back.
     provider_refusals: tuple[ProviderRefusal, ...] = ()
+    #: The newest record observed for this session, as an instant in UTC.
+    #:
+    #: **Not an end.** Sessions are read while they are still being written, so
+    #: the newest record is the latest activity seen and says nothing about
+    #: whether more is coming. Named for what it is.
+    #:
+    #: **Not the newest turn, either.** Boundary and tool-result records carry
+    #: timestamps without producing turns, so this is routinely later than the
+    #: last `Turn.occurred_at` -- which is what makes it the recency signal for
+    #: a session, where the newest turn alone would understate it.
+    last_activity_at: datetime | None = None
 
     @property
     def turn_count(self) -> int:

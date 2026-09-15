@@ -111,13 +111,13 @@ discards is stated rather than implied.
 
 | This model wants | Survives `adr-sensor` | What this package does |
 |---|---|---|
-| Tool-call time bounds | No — one session-level timestamp | **Not modelled.** A field that is always empty invites consumers to build on a value that never arrives |
+| Per-turn time | No — one session-level timestamp, the earliest | **Modelled**, from each record's own timestamp, recovered in this package's own pass. Absent where a record carried no timestamp, or no identity for the join to land on. See ADR-0010 |
 | `rejected` | No — `toolDenialKind` and `is_error` are both dropped | **Inferred** from the refusal wording left in the result body: 88% of denials recovered at 97% precision, measured over real transcripts |
 | `error` | Only where a parser sets it; the Claude one does not | **Taken only from an explicit upstream status.** Inferring it from result text scored 70% recall at poor precision, and a false `error` maligns a tool that worked |
 | `interrupted` | No | **Not emitted.** The `Status` type carries it for kinds that can supply it |
 | Span identity | No call id — but `sequence_id` carries the record's own key | **Derived** from session, turn key and index within the turn |
 | Sidechain marker | No | **Derived from the file's path**: a transcript under a `subagents` directory is a subagent's, and every turn in it is marked |
-| Session end | No — only the earliest timestamp | **Not modelled.** Session start is available and is carried |
+| Session end | No — only the earliest timestamp | **Not modelled.** Session start is carried, and beside it the newest record observed — which is the latest activity seen, not an end. A session still being written has a newest record either way |
 
 **Discovery is ours, because identity is.** Upstream's whole-tree parse keys each
 session on the `sessionId` field, and every record in a subagent transcript
@@ -252,6 +252,7 @@ declaration — naming and representation are implementation choices.
 | Session identity | Assigned by the agent, namespaced by agent kind | |
 | Agent kind | Which agent kind produced it, per this package's own mapping | |
 | Start time | Earliest observed activity. An end time is not available from the dependency | |
+| Last activity | The newest record observed for this session. **Not an end**, and not the newest turn either: boundary and tool-result records carry timestamps without producing turns, so this is routinely later than the last turn. Absent where no record carried a time | |
 | Turn count | | |
 | Model | As the agent reports it, where it does | |
 | Working directory | | local-only |
@@ -263,6 +264,7 @@ declaration — naming and representation are implementation choices.
 | Captures | Notes | |
 |---|---|---|
 | Position | Stable ordinal within the session | |
+| Occurrence time | When the record that produced this turn was written. Parallel tool calls in one record share it — within a turn, span order is the only finer ordering. Absent where the record carried no time | |
 | Role | Who produced it | |
 | Text | | local-only |
 | Sidechain marker | Belongs to a subagent, not the main thread | |
@@ -277,7 +279,7 @@ declaration — naming and representation are implementation choices.
 | MCP server | Absent for built-in tools | |
 | Arguments | | local-only |
 | Status | Six values — see below | |
-| Duration | Wall clock from the record's own timestamps, not from the dependency's event model, which carries none. For an MCP call the connection log's tool-execution time fills a gap the transcript left, and never replaces a value it stated | |
+| Duration | Wall clock from the record's own timestamps, not from the dependency's event model, which carries none. For an MCP call the connection log's tool-execution time fills a gap the transcript left, and never replaces a value it stated. **No absolute per-call time is carried beside it**: a call's start is its turn's occurrence time, and a call's end follows from the two — carrying either again would restate a value the model already holds, and recovering an end independently would require a join this package refuses (ADR-0010) | |
 | MCP transport | Which transport carried this call, where the connection log could be read. `None` elsewhere, and `None` is *unknown*, never local | |
 | Outcome | The abridged result and error text | local-only |
 | Result size | The size of what the agent produced, not of the abridged copy held here | |
@@ -288,6 +290,37 @@ A session additionally carries its **MCP connections** — one record per server
 **local-only** information serves correlation and local rendering. It never enters
 a finding — a detection receives session identity, kind, start and turn count, and
 nothing more.
+
+Times are **not** local-only. A turn's occurrence time says when something
+happened and nothing about what was said, so it carries no conversation
+material; a consumer that could not date what it found would be left with the
+session's start, which for a long or resumed session is wrong by hours or by
+weeks. Times travel.
+
+**Every time this package reports is timezone-aware and converted to UTC.**
+Transcripts are written on developer machines in every zone, and a session
+resumed after travel can carry more than one offset within a single file, so an
+instant is the only comparable form. Converting an offset-bearing value to UTC
+is lossless — the same instant, one canonical spelling — and it matches the zone
+the dependency already returns the session's start in, so every time on the
+model has the same `tzinfo` whatever produced it. Consumers may rely on that:
+comparing, sorting and folding across sessions is only sound if every value is
+an instant, and a single canonical zone additionally makes the serialised form
+stable for anything that reads a date off it.
+
+**One rule, and it is the dependency's.** A value carrying no offset is taken as
+UTC, exactly as the dependency takes it when producing the session's start. The
+alternative — reporting it absent, on the grounds that a zoneless wall-clock
+reading could be anywhere in a day-wide band — would be stricter, and would put
+two rules in one model: a consumer would have to know that the session's start
+guesses a zone while a turn's time refuses to. The dependency's behaviour cannot
+be changed from here, so matching it is the only way to have a single rule, and
+a single rule is worth more than the strictness. See ADR-0010.
+
+The line that is **not** crossed is between interpreting a value and inventing
+one. A record that carried no time at all yields no time — this package never
+substitutes the moment of collection, a neighbouring turn's value, or the file's
+modification time for a value the transcript does not contain.
 
 This is the trust tenet at its narrowest point. Transcripts are read only on the
 machine that produced them. **OpenAIDR has no upload path at all** — it reads,
@@ -458,6 +491,27 @@ position on what a consumer concludes.
 - Any interpretation: no scoring, no identity resolution, no findings
 - Retaining session content beyond the current view
 - Any upload path — OpenAIDR returns a model and ships nothing anywhere
+- A session end time, or any inference that a session has finished
+- Absolute per-call timestamps, which would restate the turn's own (ADR-0010)
+- Interpolating a time for a turn whose record carried none
+
+## Robustness bar for time
+
+Aims to get right: a turn that could be dated is dated, and never by a
+neighbouring turn's time; every time reported is an instant — timezone-aware and
+normalised to UTC — so that two sessions written in different zones compare
+correctly; a time this package reports is one a record stated, never one it
+computed to fill a hole; `None` means *the file did not say*, and
+is never substituted with the collection time, the file's modification time, or
+any other clock; and the durations this package already publishes are unchanged
+by the addition, because the recovery reads the record's own key and never the
+call-id join those durations rest on.
+
+A finding that a dateable turn is left undated, that a time is invented where a
+record carried none, or that a published duration moved, is above the bar
+however narrow the trigger. That the turn granularity is coarser than a
+per-call one — parallel calls in one record share an instant — is below it, and
+deliberate: a finer value would be the same number written more times.
 
 ## References
 

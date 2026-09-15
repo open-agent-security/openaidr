@@ -35,7 +35,7 @@ import re
 import stat
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from adr_sensor.parsers.claude_parser import ClaudeParser
@@ -457,6 +457,7 @@ class ClaudeCodeReader:
             mcp_connections=enrichment.connections,
             mcp_log_state=enrichment.state,
             mcp_overlap_withheld=enrichment.overlap_withheld,
+            last_activity_at=transcript.last_record.get(raw_id),
             turns=_turns(
                 event.chat_history, session_id, raw_id, is_subagent, transcript, enrichment
             ),
@@ -777,6 +778,7 @@ def _turns(
                     mcp,
                 ),
                 permission_mode=transcript.permission_modes.get((raw_session_id, base, occurrence)),
+                occurred_at=transcript.record_times.get((raw_session_id, base, occurrence)),
             )
         )
     return tuple(turns)
@@ -1237,6 +1239,21 @@ class _Transcript:
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]] = field(
         default_factory=dict
     )
+    #: (session id, record uuid, occurrence) -> when that record was written.
+    #:
+    #: Keyed exactly as `permission_modes` and `cwd_at` are, and for the same
+    #: reasons -- which is the point: this is the *unambiguous* key, counted
+    #: only over the records upstream projects into a turn, so a turn reads its
+    #: own record's time and never a colliding call id's. Nothing here touches
+    #: `started`/`ended`, whose bare-call-id key is what forces those to be
+    #: withheld for a duplicate or reused call.
+    record_times: dict[tuple[str, str, int], datetime] = field(default_factory=dict)
+    #: session id -> the newest record observed for it, over *every* record
+    #: rather than only the projected ones. A `system` boundary or a tool
+    #: result is still activity in that session even though no turn is built
+    #: for it, so a max over turns alone would understate how recently the
+    #: session did anything.
+    last_record: dict[str, datetime] = field(default_factory=dict)
 
 
 def _recorded(path: Path) -> tuple[_Transcript, str | None]:
@@ -1279,6 +1296,8 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
     errored: dict[tuple[str, str], bool] = {}
     denials: dict[tuple[str, str], str] = {}
     results: dict[tuple[str, str], str] = {}
+    record_times: dict[tuple[str, str, int], datetime] = {}
+    last_record: dict[str, datetime] = {}
     modes: dict[str, str] = {}
     #: (session id, uuid) -> how many records with that uuid have been seen so
     #: far *in that session*. A resumed session can re-emit a record under the
@@ -1329,6 +1348,20 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
                 if session_id is not None and isinstance(declared, str) and declared:
                     modes[session_id] = declared
                 mode = modes.get(session_id) if session_id is not None else None
+                # Parsed here rather than below the block that follows, because
+                # the record's own time is now one of the values keyed on
+                # `(session, uuid, occurrence)` inside it.
+                timestamp = _timestamp(record.get("timestamp"))
+                # Folded over *every* record, not only the ones that project to
+                # a turn: a `system` boundary or a tool result is still activity
+                # in this session. Guarded on `session_id is not None` rather
+                # than the `sid` fallback below -- an empty-string session is
+                # not a session, and a max folded under it would be a clock for
+                # nothing.
+                if session_id is not None and timestamp is not None:
+                    seen_at = last_record.get(session_id)
+                    if seen_at is None or timestamp > seen_at:
+                        last_record[session_id] = timestamp
                 # A uuid is only promised unique within the session that wrote
                 # it, and one file can hold more than one session -- so the
                 # session id joins the uuid in every key below, not just in
@@ -1356,6 +1389,8 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
                     uuid_occurrences[(sid, key_uuid)] = occurrence + 1
                     if mode is not None:
                         permission_modes[(sid, key_uuid, occurrence)] = mode
+                    if timestamp is not None:
+                        record_times[(sid, key_uuid, occurrence)] = timestamp
                     where = record.get("cwd")
                     if isinstance(where, str) and where:
                         cwd_at[(sid, key_uuid, occurrence)] = where
@@ -1369,7 +1404,6 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
                             plugin if isinstance(plugin, str) else None,
                         )
 
-                timestamp = _timestamp(record.get("timestamp"))
                 denial = record.get("toolDenialKind")
                 message = record.get("message")
                 blocks = message.get("content") if isinstance(message, dict) else None
@@ -1426,6 +1460,8 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
         errored=errored,
         denials=denials,
         results=results,
+        record_times=record_times,
+        last_record=last_record,
     ), failure
 
 
@@ -1608,12 +1644,33 @@ def _text(value: object) -> str | None:
 
 
 def _timestamp(value: object) -> datetime | None:
+    """A record's timestamp as an instant in UTC, or None where it stated none.
+
+    **One rule, and it is the dependency's** (ADR-0010). `adr-sensor` resolves
+    the session start by converting an offset-bearing value to UTC and taking a
+    value with no offset as UTC; this does the same, so the two time fields on
+    the model cannot resolve a zone differently. A model where the session start
+    guesses and a turn's time refuses to is one a consumer has to memorise.
+
+    Converting to UTC rather than passing the offset through is lossless -- the
+    same instant, one canonical spelling -- and it is what lets times from
+    machines in different zones be compared, sorted and folded at all. `Z` needs
+    no rewriting here: `fromisoformat` accepts it on every Python this package
+    supports.
+
+    An unparseable value is None, which is the *absence* of a time rather than
+    an interpretation of one -- the line this package does not cross is
+    inventing a value the transcript never stated.
+    """
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        moment = datetime.fromisoformat(value)
     except ValueError:
         return None
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
 
 
 def _decode_project_directory(name: str) -> str | None:

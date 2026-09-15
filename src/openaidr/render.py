@@ -319,7 +319,14 @@ def _session_lines(session: Session, detail: bool = False) -> list[str]:
     started = session.started_at.isoformat() if session.started_at else "unknown start"
     kind = session.agent_kind or "unmapped kind"
     calls = sum(len(t.tool_calls) for t in session.turns)
-    header = f"{session.session_id}  [{kind}]  {started}  {session.turn_count} turns  {calls} calls"
+    # Last activity beside the start, not instead of it: a session running for a
+    # day is dated by its start as something that began yesterday, which is true
+    # and useless for judging whether it is the one doing work now.
+    seen = f"  last {session.last_activity_at.isoformat()}" if session.last_activity_at else ""
+    header = (
+        f"{session.session_id}  [{kind}]  {started}{seen}  "
+        f"{session.turn_count} turns  {calls} calls"
+    )
     lines = [header]
     if not detail:
         return lines
@@ -371,6 +378,7 @@ def _session_document(session: Session) -> dict[str, object]:
         "model": session.model,
         "source": session.source,
         "working_directory": session.working_directory,
+        "last_activity_at": session.last_activity_at,
         "mcp_log_state": session.mcp_log_state,
         "mcp_overlap_withheld": session.mcp_overlap_withheld,
         "mcp_connections": [
@@ -384,6 +392,7 @@ def _session_document(session: Session) -> dict[str, object]:
             {
                 "position": turn.position,
                 "role": turn.role,
+                "occurred_at": turn.occurred_at,
                 "is_sidechain": turn.is_sidechain,
                 "tool_calls": [
                     {
