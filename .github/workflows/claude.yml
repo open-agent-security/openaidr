@@ -100,6 +100,16 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
+          # Keep pre-push checks attached to the session until they finish.
+          # Background pushes can be abandoned when the model ends its turn.
+          settings: |
+            {
+              "env": {
+                "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+                "BASH_DEFAULT_TIMEOUT_MS": "600000"
+              }
+            }
+
           # Pay-per-use API-key path. Create a key at
           # https://platform.claude.com/settings/workspaces/default/keys and
           # store it as the ANTHROPIC_API_KEY repo secret. To use the
