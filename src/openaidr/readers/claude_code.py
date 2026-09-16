@@ -425,7 +425,7 @@ class ClaudeCodeReader:
             session_id=session_id,
             agent_kind=map_source(event.source),
             source=event.source,
-            started_at=event.timestamp,
+            started_at=transcript.first_record.get(raw_id),
             model=event.model,
             working_directory=self._project_root(event, path),
             machine=event.hostname,
@@ -1248,6 +1248,17 @@ class _Transcript:
     #: `started`/`ended`, whose bare-call-id key is what forces those to be
     #: withheld for a duplicate or reused call.
     record_times: dict[tuple[str, str, int], datetime] = field(default_factory=dict)
+    #: session id -> the oldest record observed for it, folded over the same
+    #: population as `last_record`.
+    #:
+    #: The session's start is recovered here rather than taken from the
+    #: dependency's event, which substitutes `datetime.now()` for a session
+    #: whose records state no time it can read -- a value that is neither in the
+    #: file nor distinguishable from one that is, and that dates a months-old
+    #: transcript to whenever it happened to be read. Recovered on this side, a
+    #: start is a record's or it is absent, which is the rule the rest of the
+    #: model's times already follow (ADR-0010).
+    first_record: dict[str, datetime] = field(default_factory=dict)
     #: session id -> the newest record observed for it, over *every* record
     #: rather than only the projected ones. A `system` boundary or a tool
     #: result is still activity in that session even though no turn is built
@@ -1297,6 +1308,7 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
     denials: dict[tuple[str, str], str] = {}
     results: dict[tuple[str, str], str] = {}
     record_times: dict[tuple[str, str, int], datetime] = {}
+    first_record: dict[str, datetime] = {}
     last_record: dict[str, datetime] = {}
     modes: dict[str, str] = {}
     #: (session id, uuid) -> how many records with that uuid have been seen so
@@ -1354,11 +1366,20 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
                 timestamp = _timestamp(record.get("timestamp"))
                 # Folded over *every* record, not only the ones that project to
                 # a turn: a `system` boundary or a tool result is still activity
-                # in this session. Guarded on `session_id is not None` rather
-                # than the `sid` fallback below -- an empty-string session is
-                # not a session, and a max folded under it would be a clock for
-                # nothing.
+                # in this session, and the oldest of them is when the session
+                # started whether or not a turn was built for it. Guarded on
+                # `session_id is not None` rather than the `sid` fallback below
+                # -- an empty-string session is not a session, and a fold under
+                # it would be a clock for nothing.
+                #
+                # Both ends are folded per session id, not per file: one file
+                # holds every session a resume minted, and a file-wide fold
+                # would hand the oldest session's start and the newest one's
+                # activity to all of them alike.
                 if session_id is not None and timestamp is not None:
+                    opened_at = first_record.get(session_id)
+                    if opened_at is None or timestamp < opened_at:
+                        first_record[session_id] = timestamp
                     seen_at = last_record.get(session_id)
                     if seen_at is None or timestamp > seen_at:
                         last_record[session_id] = timestamp
@@ -1461,6 +1482,7 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
         denials=denials,
         results=results,
         record_times=record_times,
+        first_record=first_record,
         last_record=last_record,
     ), failure
 

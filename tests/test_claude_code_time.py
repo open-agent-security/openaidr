@@ -150,8 +150,67 @@ def test_a_session_whose_records_carry_no_time_reports_none_not_now(tmp_path: Pa
     del record["timestamp"]
     write_session(tmp_path, "-p", [record])
     session = _sessions(tmp_path)[0]
+    assert session.started_at is None
     assert session.last_activity_at is None
     assert session.turns[0].occurred_at is None
+
+
+def test_a_session_whose_times_are_all_unparseable_reports_none_not_now(tmp_path: Path) -> None:
+    """A stated value nothing can read is as absent as no value at all, and the
+    start is held to it too: every time on the model is one a record stated."""
+    write_session(
+        tmp_path,
+        "-p",
+        [user_text("s1", "u1", "the day before yesterday", "only turn")],
+    )
+    session = _sessions(tmp_path)[0]
+    assert session.started_at is None
+    assert session.last_activity_at is None
+    assert session.turns[0].occurred_at is None
+
+
+def test_a_failed_recovery_read_leaves_the_times_absent_and_reports_why(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The times ride on the recovery pass, so a read that fails after upstream's
+    succeeded loses them -- the same way it already loses the call ids, the
+    durations and the permission mode. Absent and reported, never a start the
+    dependency would have filled with the moment of collection."""
+    write_session(
+        tmp_path,
+        "-p",
+        [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "only turn")],
+    )
+    transcript = next(tmp_path.rglob("*.jsonl"))
+    real_open = Path.open
+
+    def flaky_open(self, *args, **kwargs):
+        if self == transcript:
+            raise PermissionError(13, "Permission denied", str(transcript))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flaky_open)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert sessions[0].started_at is None
+    assert sessions[0].last_activity_at is None
+    assert any(str(transcript) in f.message for f in failures)
+
+
+def test_the_start_counts_records_that_produce_no_turn(tmp_path: Path) -> None:
+    """The counterpart of last activity: a `system` boundary opening a session is
+    when it started, even though no turn is built for it."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            system_event("s1", "u1", "2026-08-01T09:00:00.000Z", "compact_boundary"),
+            user_text("s1", "u2", "2026-08-01T10:00:00.000Z", "first turn"),
+        ],
+    )
+    session = _sessions(tmp_path)[0]
+    assert session.started_at == datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
+    assert session.turns[0].occurred_at == datetime(2026, 8, 1, 10, 0, tzinfo=UTC)
 
 
 def test_one_file_holding_two_sessions_dates_each_by_its_own_records(tmp_path: Path) -> None:
@@ -168,6 +227,8 @@ def test_one_file_holding_two_sessions_dates_each_by_its_own_records(tmp_path: P
     by_id = {s.session_id: s for s in _sessions(tmp_path)}
     assert by_id["claude-code:s1"].last_activity_at == datetime(2026, 8, 1, 10, 0, tzinfo=UTC)
     assert by_id["claude-code:s2"].last_activity_at == datetime(2026, 8, 5, 10, 0, tzinfo=UTC)
+    assert by_id["claude-code:s1"].started_at == datetime(2026, 8, 1, 10, 0, tzinfo=UTC)
+    assert by_id["claude-code:s2"].started_at == datetime(2026, 8, 5, 10, 0, tzinfo=UTC)
 
 
 def test_parallel_calls_in_one_record_share_their_turns_time(tmp_path: Path) -> None:

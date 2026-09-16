@@ -288,6 +288,10 @@ class Session:
     session_id: str
     agent_kind: str | None
     source: str
+    #: The oldest record observed for this session, as an instant in UTC. None
+    #: where no record stated a time this package could read -- never the moment
+    #: of collection, which would date every historical transcript to whenever it
+    #: happened to be read.
     started_at: datetime | None
     model: str | None
     working_directory: str | None
