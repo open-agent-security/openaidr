@@ -279,7 +279,7 @@ declaration — naming and representation are implementation choices.
 | MCP server | Absent for built-in tools | |
 | Arguments | | local-only |
 | Status | Six values — see below | |
-| Duration | Wall clock from the record's own timestamps, not from the dependency's event model, which carries none. For an MCP call the connection log's tool-execution time fills a gap the transcript left, and never replaces a value it stated. **No absolute per-call time is carried beside it**: a call's start is its turn's occurrence time, and a call's end follows from the two — carrying either again would restate a value the model already holds, and recovering an end independently would require a join this package refuses (ADR-0010) | |
+| Duration | Wall clock from the record's own timestamps, not from the dependency's event model, which carries none. For an MCP call the connection log's tool-execution time fills a gap the transcript left, and never replaces a value it stated. **No absolute per-call time is carried beside it**: a call's start is its turn's occurrence time, and — only where the duration is the transcript's own round trip, not one the log filled in — a call's end follows from the two. Carrying either again would restate a value the model already holds, and recovering an end independently would require a join this package refuses (ADR-0010) | |
 | MCP transport | Which transport carried this call, where the connection log could be read. `None` elsewhere, and `None` is *unknown*, never local | |
 | Outcome | The abridged result and error text | local-only |
 | Result size | The size of what the agent produced, not of the abridged copy held here | |
