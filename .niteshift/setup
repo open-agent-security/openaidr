@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Fresh-sandbox setup for openaidr. Finite and idempotent: it installs the
+# locked dependencies and points git at the repo's pre-push gate.
+#
+# There are no services to declare — openaidr is a library plus a CLI, with no
+# long-running process and no browser UI — and nothing to recover on resume,
+# since .venv and .git/config both survive a sandbox restart.
+
+set -euo pipefail
+
+cd "${NITESHIFT_ENVIRONMENT_SETTINGS_DIR:?}/.."
+
+# `--python 3.11` matches the interpreter CI pins, which is also the
+# `requires-python` lower bound. Without it uv picks the sandbox's system
+# Python (3.12), and the pre-push hook below stops being the CI-parity gate it
+# claims to be — a 3.12-only pass would still be red in CI.
+#
+# `--frozen` also matches CI: install exactly what uv.lock says, and fail fast
+# on lockfile drift rather than silently re-resolving to newer transitives.
+uv sync --frozen --python 3.11
+
+# The repo's CI-parity pre-push gate. Niteshift's own default-branch guard hook
+# chains to whatever `core.hooksPath` is set in --local config, so installing
+# here composes with the guard rather than displacing it.
+bash scripts/install-hooks.sh
