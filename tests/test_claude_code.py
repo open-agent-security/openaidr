@@ -1526,3 +1526,39 @@ def test_a_transcript_that_stops_decoding_between_the_two_reads_is_not_a_failed_
 
     assert [s.session_id for s in sessions] == ["claude-code:s1"]
     assert any(str(transcript) in f.message for f in failures)
+
+
+def test_a_transcript_whose_mtime_cannot_be_converted_does_not_lose_the_others(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The window check converts `st_mtime` to an instant, and the conversion
+    rejects values the `stat()` itself returned happily: `fromtimestamp` raises
+    `ValueError` for a NaN or a year past 9999, neither of them an `OSError`.
+
+    Injected rather than written to disk on purpose -- mainstream filesystems
+    clamp `st_mtime` well below that range, so no `os.utime` here can produce
+    one. What is under test is the caller's isolation, not the clamp: a value
+    this reader cannot turn into a time must leave the file unplaced in the
+    window and still claiming its id, never take the whole kind down.
+    """
+    from openaidr.readers import claude_code
+
+    write_session(
+        tmp_path, "-a", [user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "look at one thing")]
+    )
+    bogus = write_session(
+        tmp_path, "-b", [user_text("s2", "u2", "2026-08-01T10:00:00.000Z", "look at another")]
+    )
+
+    real_within_window = claude_code._within_window
+
+    def unconvertible_mtime(path: Path, window: Window) -> bool:
+        if path == bogus:
+            raise ValueError("year 10000 is out of range")
+        return real_within_window(path, window)
+
+    monkeypatch.setattr(claude_code, "_within_window", unconvertible_mtime)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+    assert any(str(bogus) in f.message and "out of range" in f.message for f in failures)
