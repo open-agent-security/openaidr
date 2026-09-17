@@ -243,11 +243,19 @@ class ClaudeCodeReader:
                     ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
                 )
                 continue
-            except OSError as error:
+            except (OSError, OverflowError, ValueError) as error:
                 # Inaccessible rather than gone: the file still exists and its
                 # name still claims its raw session id, so it must not vanish
                 # from the claimant set (ADR-0008) the way an out-of-window or
                 # failed-to-parse file does not.
+                #
+                # The stat is not the only step that can fail here. Turning the
+                # `st_mtime` it returned into an instant rejects a NaN or a year
+                # past 9999 with `ValueError`, and can overflow on the way, and
+                # neither is an `OSError`. Both say the same thing this branch
+                # already handles -- the file is there and its position in the
+                # window is unknowable -- so they are isolated the same way
+                # rather than escaping to fail every session of the kind.
                 failures.append(
                     ReaderFailure(agent_kind=self.agent_kind, message=f"{path}: {error}")
                 )
