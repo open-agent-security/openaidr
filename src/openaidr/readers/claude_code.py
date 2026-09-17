@@ -1460,6 +1460,16 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
         # It is reachable for the same reason a permission failure is: upstream
         # can decode a file that has since gained a byte that will not.
         failure = f"{path}: {error}"
+        # A record folded in before the failing line is genuine, but a session's
+        # recency is a *newest*-over-the-whole-file fold (ADR-0010): a failure
+        # partway through withholds exactly the later records that would have
+        # raised it, so what survives here is not "the newest seen" but "the
+        # newest seen before the read broke" -- a stale answer with no marker
+        # to tell it apart from a complete one. ADR-0010 promises a failed
+        # second read yields no time, not a truncated one.
+        record_times.clear()
+        first_record.clear()
+        last_record.clear()
     else:
         failure = None
 

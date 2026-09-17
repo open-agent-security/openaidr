@@ -197,6 +197,46 @@ def test_a_failed_recovery_read_leaves_the_times_absent_and_reports_why(
     assert any(str(transcript) in f.message for f in failures)
 
 
+def test_a_recovery_read_that_fails_partway_leaves_no_time_not_a_stale_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A read that yields good records before it breaks is the harder case than
+    one that never starts: `first_record`/`last_record`/`record_times` are
+    folded line by line, so a failure after the first line leaves them holding
+    whatever that line stated. ADR-0010 promises a failed second read yields no
+    time -- not the newest time it happened to see before breaking, which would
+    be a stale answer with nothing to mark it as such."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "first line reads fine"),
+            user_text("s1", "u2", "2026-08-01T11:00:00.000Z", "second turn"),
+        ],
+    )
+    transcript = next(tmp_path.rglob("*.jsonl"))
+    parsed = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+    assert parsed[0][0].started_at is not None
+
+    real_open = Path.open
+
+    def undecodable_open(self, *args, **kwargs):
+        if self == transcript:
+            monkeypatch.undo()
+            with real_open(self, "ab") as handle:
+                handle.write(b"\xff\xfe not utf-8\n")
+            monkeypatch.setattr(Path, "open", undecodable_open)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", undecodable_open)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert sessions[0].started_at is None
+    assert sessions[0].last_activity_at is None
+    assert sessions[0].turns[0].occurred_at is None
+    assert any(str(transcript) in f.message for f in failures)
+
+
 def test_the_start_counts_records_that_produce_no_turn(tmp_path: Path) -> None:
     """The counterpart of last activity: a `system` boundary opening a session is
     when it started, even though no turn is built for it."""

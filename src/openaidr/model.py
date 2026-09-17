@@ -198,8 +198,11 @@ class Turn:
     #: This is the finest clock the model carries, and it is the record's, not
     #: the call's: every tool call issued in one record shares it, so within a
     #: turn only span order separates them. A tool call therefore carries no
-    #: absolute time of its own -- its start is this, and its end follows from
-    #: this and its `duration_ms` (ADR-0010).
+    #: absolute time of its own -- its start is this (ADR-0010). Its end
+    #: follows from this and its `duration_ms` only when that duration is the
+    #: transcript's own round trip; a duration the MCP connection log filled in
+    #: (ADR-0003) times the tool's own execution, not the issue-to-result span,
+    #: so adding it to this does not recover an absolute end.
     occurred_at: datetime | None = None
 
 
