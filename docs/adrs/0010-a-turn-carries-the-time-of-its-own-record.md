@@ -42,7 +42,10 @@ than assumed:
    from the *record's* timestamp — the same record that projects to the turn. A
    call's start and its turn's occurrence time are the same instant by
    construction, and a call's end follows from that instant and the duration
-   already published.
+   already published — when that duration is the transcript's own round trip.
+   A duration the MCP connection log fills in (ADR-0003) times only the tool's
+   own execution, not the issue-to-result span, so it does not recover an end
+   the same way.
 
 The join has one precondition: the record must carry both the identity the key
 is built from and a timestamp. Where either is missing — a record with no
@@ -55,8 +58,10 @@ required, and it is the same precondition `permission_mode` already depends on.
 A **turn** carries the timestamp of the record that produced it, joined on
 `(session, uuid, occurrence)`. A **session** carries, beside its start, the
 newest record observed for it — named for the last activity seen, never as an
-end. A **tool call** carries no absolute time: its start is its turn's, and its
-end follows from its turn's time and its duration.
+end. A **tool call** carries no absolute time: its start is its turn's, and —
+only where the duration is the transcript's own round trip, not one the MCP
+connection log filled in (ADR-0003) — its end follows from its turn's time and
+its duration.
 
 The call-id join is not entered. `_duration`, `_tool_calls` and the withheld and
 `pending` guards are untouched, and the durations this package publishes are
