@@ -92,8 +92,9 @@ collection time, never a neighbouring turn's, never the file's mtime.
   once per record. The end is only reachable through the bare-call-id join,
   which this package already refuses to trust for a withheld or reused id — so
   the field would be either wrong on exactly the calls the guard exists to
-  protect, or null on them, in which case the turn's time answers the question
-  anyway.
+  protect, or null on them, in which case the turn's time and duration answer
+  the question anyway — when that duration is the transcript's own round trip,
+  not one the MCP connection log filled in (ADR-0003).
 - **A turn end, computed from the newest tool result the turn's calls drew.**
   Plausible, and it was specified before being cut. It requires inverting the
   call-id map to attribute a result to the turn that issued it, which reopens
