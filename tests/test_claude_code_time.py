@@ -282,3 +282,34 @@ def test_parallel_calls_in_one_record_share_their_turns_time(tmp_path: Path) -> 
     turn = _sessions(tmp_path)[0].turns[0]
     assert len(turn.tool_calls) == 2
     assert turn.occurred_at == datetime(2026, 8, 1, 10, 0, tzinfo=UTC)
+
+
+def test_a_time_whose_offset_leaves_the_representable_range_is_absent_not_fatal(
+    tmp_path: Path,
+) -> None:
+    """`fromisoformat` accepts a boundary value whose offset then pushes it off
+    the end of `datetime`, and the conversion -- not the parse -- is what raises.
+
+    A transcript's timestamp is an arbitrary string from the file, so this is
+    reachable by any writer or corruption. Read as a stated value nothing can
+    turn into an instant, it is absent like any other unreadable time; read as
+    an escaping `OverflowError` it takes the whole kind down and every valid
+    session with it, which is the outcome this reader isolates everywhere else.
+    """
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            user_text("s1", "u1", "9999-12-31T23:59:59-23:59", "off the end"),
+            user_text("s1", "u2", "2026-08-01T10:00:00.000Z", "ordinary"),
+        ],
+    )
+    sessions, _failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    session = sessions[0]
+    assert [t.occurred_at for t in session.turns] == [
+        None,
+        datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
+    ]
+    assert session.started_at == datetime(2026, 8, 1, 10, 0, tzinfo=UTC)
+    assert session.last_activity_at == datetime(2026, 8, 1, 10, 0, tzinfo=UTC)

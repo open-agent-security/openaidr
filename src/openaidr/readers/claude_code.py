@@ -1693,16 +1693,24 @@ def _timestamp(value: object) -> datetime | None:
     An unparseable value is None, which is the *absence* of a time rather than
     an interpretation of one -- the line this package does not cross is
     inventing a value the transcript never stated.
+
+    The conversion is inside the guard, not after it, because the parse is not
+    the only step that rejects a value: a boundary instant `fromisoformat`
+    accepts can still have an offset that pushes it off the end of `datetime`,
+    and `astimezone` raises `OverflowError` -- not a `ValueError` -- when it
+    does. A record's timestamp is an arbitrary string from the file, so that is
+    reachable by any writer; left to escape it fails the whole kind and discards
+    every valid session, rather than leaving this one value absent.
     """
     if not isinstance(value, str) or not value:
         return None
     try:
         moment = datetime.fromisoformat(value)
-    except ValueError:
+        if moment.tzinfo is None:
+            return moment.replace(tzinfo=UTC)
+        return moment.astimezone(UTC)
+    except (OverflowError, ValueError):
         return None
-    if moment.tzinfo is None:
-        return moment.replace(tzinfo=UTC)
-    return moment.astimezone(UTC)
 
 
 def _decode_project_directory(name: str) -> str | None:
