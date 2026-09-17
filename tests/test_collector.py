@@ -63,6 +63,49 @@ def test_sessions_are_ordered_newest_first(tmp_path: Path) -> None:
     assert [s.session_id for s in result.sessions] == ["claude-code:s2", "claude-code:s1"]
 
 
+class _StaleButActiveReader:
+    """An older, long-running session with a later last-activity record than a
+    newer but idle one -- ordering by started_at alone would rank them the
+    other way round."""
+
+    agent_kind = "cursor"
+
+    def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
+        older_session_still_active = Session(
+            session_id="cursor:older-still-active",
+            agent_kind="cursor",
+            source="cursor",
+            started_at=datetime(2026, 8, 1, tzinfo=UTC),
+            last_activity_at=datetime(2026, 8, 10, tzinfo=UTC),
+            model=None,
+            working_directory=None,
+            machine=None,
+            user=None,
+            turns=(),
+        )
+        newer_session_idle_since_start = Session(
+            session_id="cursor:newer-idle",
+            agent_kind="cursor",
+            source="cursor",
+            started_at=datetime(2026, 8, 5, tzinfo=UTC),
+            last_activity_at=datetime(2026, 8, 5, tzinfo=UTC),
+            model=None,
+            working_directory=None,
+            machine=None,
+            user=None,
+            turns=(),
+        )
+        return [newer_session_idle_since_start, older_session_still_active], []
+
+
+def test_sessions_are_ordered_by_last_activity_not_started_at() -> None:
+    result = collect(parse_kind_filter(None), Window(since=None), [_StaleButActiveReader()])
+    assert [s.session_id for s in result.sessions] == [
+        "cursor:older-still-active",
+        "cursor:newer-idle",
+    ]
+
+
 def test_a_repeated_session_identity_is_reported_not_silently_replaced() -> None:
     """Cold start is a session map keyed by identity, per the spec's collection
     design — but a second result naming an identity already seen is a

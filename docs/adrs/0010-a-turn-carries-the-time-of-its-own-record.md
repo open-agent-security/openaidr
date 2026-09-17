@@ -103,12 +103,13 @@ collection time, never a neighbouring turn's, never the file's mtime.
 - **Interpolating an undated turn from its neighbours.** Rejected: absence is
   not falsehood. A neighbour's time is a guess with a true value's type, and the
   consumer cannot tell the two apart.
-- **Treating an offset-less timestamp as local time, or as UTC.** Rejected for
-  the same reason, and it is the more tempting of the two mistakes because it
-  produces a value that looks correct. A wall-clock reading with no zone can
-  land anywhere in a day-wide band; a consumer windowing on it would admit or
-  hide an event by a margin larger than most windows. Absent is the honest
-  answer, and it is one a consumer can see.
+- **Treating an offset-less timestamp as local time.** Rejected for the same
+  reason, and it is a tempting mistake because it produces a value that looks
+  correct. A wall-clock reading with no zone can land anywhere in a day-wide
+  band; a consumer windowing on it would admit or hide an event by a margin
+  larger than most windows. Absent is the honest answer, and it is one a
+  consumer can see. (Taking it as UTC instead is the dependency's own rule,
+  discussed below rather than rejected here.)
 - **Leaving normalisation to consumers.** Rejected: it makes every consumer
   reimplement it, and a naive value reaching one of them mixes with aware values
   in comparisons and folds — where the failure is a type error at best, and a
