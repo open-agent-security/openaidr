@@ -68,4 +68,4 @@ def collect(
 
 
 def _sort_key(session: Session) -> datetime:
-    return session.started_at or datetime.min.replace(tzinfo=UTC)
+    return session.last_activity_at or session.started_at or datetime.min.replace(tzinfo=UTC)
