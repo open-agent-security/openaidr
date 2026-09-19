@@ -164,13 +164,12 @@ Not yet built, in the order they matter:
   measured in [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage)
   rather than assumed — including why Cursor cannot be added dependency-only
   without breaking span identity.
-- **Incremental collection.** Every run today is one cold pass: the whole
-  window re-walked and re-parsed from scratch, held in memory. That is
-  affordable once and not on every change. Because sessions are append-only, a
-  steady-state path can instead re-read only the files whose modification time
-  moved, replacing each session with its longer self — and span identity is
-  derived the way it is precisely so that every span already emitted survives
-  that re-read rather than shifting under a consumer.
+
+For long-lived consumers, `IncrementalCollector` accepts an agent kind and one
+changed transcript path. It cold-reads that file once, then projects only newly
+appended, newline-terminated records while returning its current full session.
+The cursor is in memory only; process restart deliberately falls back to a cold
+read. See [ADR-0011](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0011-keep-append-cursors-in-memory.md).
 
 Why this reader walks the tree and calls `adr-sensor`'s parser per file, rather
 than going through upstream's own whole-tree walk, is recorded in

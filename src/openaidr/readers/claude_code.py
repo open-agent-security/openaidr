@@ -80,6 +80,218 @@ _DENIAL_KINDS = {
 }
 
 
+@dataclass
+class _ProjectedSession:
+    """The dependency projection retained across appends for one raw session."""
+
+    session_id: str
+    project_path: str | None
+    timestamp: datetime | None = None
+    model: str | None = None
+    messages: list[ChatMessage] = field(default_factory=list)
+    pending_by_id: dict[str, tuple[str, str, str | None, str]] = field(default_factory=dict)
+    pending_groups: dict[tuple[str, str, str | None, str], list[tuple[ChatMessage, deque[int]]]] = (
+        field(default_factory=dict)
+    )
+
+    def apply(self, parser: ClaudeParser, record: dict[str, object]) -> None:
+        timestamp = _timestamp(record.get("timestamp"))
+        if timestamp is not None and (self.timestamp is None or timestamp < self.timestamp):
+            self.timestamp = timestamp
+
+        message = record.get("message")
+        if record.get("type") == "assistant" and isinstance(message, dict):
+            model = message.get("model")
+            if isinstance(model, str):
+                self.model = model
+
+        extracted = parser._extract_message_data(record)  # type: ignore[attr-defined]
+        if not extracted:
+            return
+        message_type = extracted["type"]
+        sequence_id = extracted.get("uuid")
+        if not isinstance(sequence_id, str):
+            sequence_id = f"msg_{len(self.messages)}"
+
+        if message_type == "user":
+            results = extracted.get("tool_results", [])
+            if results:
+                for result in results:
+                    call_id = result.get("tool_use_id")
+                    body = result.get("result")
+                    if not isinstance(call_id, str):
+                        continue
+                    key = self.pending_by_id.get(call_id)
+                    if key is None:
+                        continue
+                    groups = self.pending_groups.get(key, [])
+                    for projected, indexes in groups:
+                        if not indexes:
+                            continue
+                        index = indexes.popleft()
+                        old = projected.tools[index]
+                        updated = ToolUsage(
+                            tool_name=old.tool_name,
+                            tool_type=old.tool_type,
+                            server_name=old.server_name,
+                            arguments=old.arguments,
+                            result=body,
+                            status="success" if body else "unknown",
+                            error=old.error,
+                        )
+                        tools = list(projected.tools)
+                        tools[index] = updated
+                        object.__setattr__(projected, "tools", tools)
+                    remaining = [(message, indexes) for message, indexes in groups if indexes]
+                    if remaining:
+                        self.pending_groups[key] = remaining
+                    else:
+                        self.pending_groups.pop(key, None)
+                return
+            content = extracted.get("content", "")
+            if isinstance(content, str) and content:
+                self.messages.append(
+                    ChatMessage(role="user", content=content, tools=[], sequence_id=sequence_id)
+                )
+            return
+
+        if message_type != "assistant":
+            return
+        content = extracted.get("content", "")
+        text = content if isinstance(content, str) else ""
+        tools: list[ToolUsage] = []
+        tool_ids: list[str | None] = []
+        for raw_tool in extracted.get("tools", []):
+            if not isinstance(raw_tool, dict):
+                continue
+            name = raw_tool.get("name", "unknown")
+            arguments = raw_tool.get("input", {})
+            tool = ToolUsage(
+                tool_name=name if isinstance(name, str) else "unknown",
+                tool_type="tool_use",
+                arguments=arguments if isinstance(arguments, dict) else {},
+                result=None,
+            )
+            tools.append(tool)
+            raw_id = raw_tool.get("id")
+            tool_ids.append(raw_id if isinstance(raw_id, str) else None)
+        if not text and not tools:
+            return
+        projected = ChatMessage(
+            role="assistant",
+            content=text or "[Assistant used tools]",
+            tools=tools,
+            sequence_id=sequence_id,
+        )
+        self.messages.append(projected)
+        indexes_by_key: dict[tuple[str, str, str | None, str], deque[int]] = {}
+        for index, (tool, call_id) in enumerate(zip(tools, tool_ids, strict=True)):
+            if call_id is None:
+                continue
+            key = (tool.tool_name, tool.tool_type, tool.server_name, _freeze(tool.arguments))
+            self.pending_by_id[call_id] = key
+            indexes_by_key.setdefault(key, deque()).append(index)
+        for key, indexes in indexes_by_key.items():
+            self.pending_groups.setdefault(key, []).append((projected, indexes))
+
+    def event(self, path: Path) -> AgentEvent:
+        return AgentEvent(
+            timestamp=self.timestamp or datetime.now(UTC),
+            source=SOURCE,
+            session_id=f"{SOURCE}_{self.session_id}",
+            project_path=self.project_path,
+            model=self.model,
+            raw_log_path=str(path),
+            chat_history=list(self.messages),
+        )
+
+
+class _IncrementalProjection:
+    """Project complete appended JSONL records and retain the dependency state."""
+
+    def __init__(self, parser: ClaudeParser) -> None:
+        self._parser = parser
+        self._identity: tuple[int, int] | None = None
+        self._offset = 0
+        self._partial = b""
+        self._sessions: dict[str, _ProjectedSession] = {}
+
+    @property
+    def committed_offset(self) -> int:
+        return self._offset - len(self._partial)
+
+    def read(self, path: Path) -> tuple[list[AgentEvent], str | None]:
+        try:
+            metadata = path.stat()
+            identity = (metadata.st_dev, metadata.st_ino)
+            if self._identity != identity or metadata.st_size < self._offset:
+                self._reset(identity)
+            with path.open("rb") as handle:
+                handle.seek(self._offset)
+                appended = handle.read()
+                next_offset = handle.tell()
+        except OSError as error:
+            return [], f"{path}: {error}"
+
+        combined = self._partial + appended
+        boundary = combined.rfind(b"\n")
+        if boundary < 0:
+            self._partial = combined
+            self._offset = next_offset
+            return self._events(path), None
+        complete = combined[: boundary + 1]
+        partial = combined[boundary + 1 :]
+        try:
+            text = complete.decode("utf-8")
+        except UnicodeDecodeError as error:
+            self._reset(identity)
+            return [], f"{path}: {error}"
+
+        records: list[dict[str, object]] = []
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                records.append(record)
+        try:
+            for record in records:
+                self._apply(record)
+        except Exception as error:  # noqa: BLE001 - one file must not fail its kind
+            self._reset(identity)
+            return [], f"{path}: {error}"
+        self._partial = partial
+        self._offset = next_offset
+        return self._events(path), None
+
+    def _apply(self, record: dict[str, object]) -> None:
+        raw_id = record.get("sessionId")
+        if not isinstance(raw_id, str) or not raw_id:
+            return
+        projected = self._sessions.get(raw_id)
+        if projected is None:
+            cwd = record.get("cwd")
+            projected = _ProjectedSession(
+                session_id=raw_id,
+                project_path=cwd if isinstance(cwd, str) else None,
+            )
+            self._sessions[raw_id] = projected
+        projected.apply(self._parser, record)
+
+    def _events(self, path: Path) -> list[AgentEvent]:
+        events = [session.event(path) for session in self._sessions.values()]
+        return [event for event in events if event.has_meaningful_content()]
+
+    def _reset(self, identity: tuple[int, int]) -> None:
+        self._identity = identity
+        self._offset = 0
+        self._partial = b""
+        self._sessions = {}
+
+
 class ClaudeCodeReader:
     """Reads Claude Code sessions, one file at a time, through `adr-sensor`."""
 
@@ -110,6 +322,7 @@ class ClaudeCodeReader:
         #: since the last pass rather than the first pass's snapshot forever.
         self._injected_mcp_logs = mcp_logs
         self._mcp_logs: MCPLogIndex | None = mcp_logs
+        self._incremental: dict[Path, _IncrementalProjection] = {}
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         try:
@@ -286,6 +499,40 @@ class ClaudeCodeReader:
         # Extended after the sessions are built, not before: `_read` is what
         # discovers a failed recovery read, and it is only reached from
         # `_session`.
+        failures.extend(self._transcript_failures)
+        return sessions, failures
+
+    def collect_file(self, path: Path) -> tuple[list[Session], list[ReaderFailure]]:
+        """Read one growing transcript, projecting only complete appended records."""
+        projection = self._incremental.setdefault(path, _IncrementalProjection(self._parser))
+        events, failure = projection.read(path)
+        if failure is not None:
+            return [], [ReaderFailure(agent_kind=self.agent_kind, message=failure)]
+
+        self._transcripts = {}
+        self._transcript_failures = []
+        transcript, transcript_failure = _recorded(path, limit=projection.committed_offset)
+        self._transcripts[path] = transcript
+        if transcript_failure is not None:
+            self._transcript_failures.append(
+                ReaderFailure(agent_kind=self.agent_kind, message=transcript_failure)
+            )
+        self._mcp_logs = (
+            self._injected_mcp_logs if self._injected_mcp_logs is not None else read_mcp_logs()
+        )
+        jsonl_paths, walk_failures = _discover_transcripts(self._root)
+        failures = [
+            ReaderFailure(agent_kind=self.agent_kind, message=f"{error.filename}: {error}")
+            for error in walk_failures
+        ]
+        unparsed = [candidate for candidate in jsonl_paths if candidate != path]
+        is_subagent = path.parent.name == _SUBAGENT_DIR
+        parsed = [(path, is_subagent, events)]
+        ambiguous_ids = _ambiguous_transcript_ids(parsed, unparsed)
+        sessions = [
+            self._session(event, path, is_subagent, ambiguous_ids, bool(walk_failures))
+            for event in events
+        ]
         failures.extend(self._transcript_failures)
         return sessions, failures
 
@@ -1275,7 +1522,7 @@ class _Transcript:
     last_record: dict[str, datetime] = field(default_factory=dict)
 
 
-def _recorded(path: Path) -> tuple[_Transcript, str | None]:
+def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str | None]:
     """Read one transcript once, for everything upstream drops, and say whether
     the read itself failed.
 
@@ -1336,9 +1583,15 @@ def _recorded(path: Path) -> tuple[_Transcript, str | None]:
     uuid_occurrences: dict[tuple[str, str], int] = {}
 
     try:
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
+        with path.open("rb") as handle:
+            while True:
+                remaining = None if limit is None else limit - handle.tell()
+                if remaining is not None and remaining <= 0:
+                    break
+                raw_line = handle.readline() if remaining is None else handle.readline(remaining)
+                if not raw_line:
+                    break
+                line = raw_line.decode("utf-8").strip()
                 if not line:
                     continue
                 try:

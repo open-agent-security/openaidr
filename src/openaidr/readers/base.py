@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 from openaidr.model import Session
@@ -42,6 +43,14 @@ class Reader(Protocol):
     agent_kind: str
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]: ...
+
+
+class IncrementalReader(Protocol):
+    """A reader that retains in-memory state for one growing session file."""
+
+    agent_kind: str
+
+    def collect_file(self, path: Path) -> tuple[list[Session], list[ReaderFailure]]: ...
 
 
 def collect_from(
