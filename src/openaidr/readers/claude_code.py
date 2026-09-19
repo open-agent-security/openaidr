@@ -522,9 +522,16 @@ class ClaudeCodeReader:
         )
         jsonl_paths, walk_failures = _discover_transcripts(self._root)
         failures = [
+            # Mirrors `collect()`'s treatment of these paths: the log itself
+            # could still be read, only these files inside it could not, and
+            # each is one file, not a failed kind (ADR-0003's argument).
+            ReaderFailure(agent_kind=self.agent_kind, message=f"{unreadable}: could not be read")
+            for unreadable in self._mcp_logs.unreadable
+        ]
+        failures.extend(
             ReaderFailure(agent_kind=self.agent_kind, message=f"{error.filename}: {error}")
             for error in walk_failures
-        ]
+        )
         unparsed = [candidate for candidate in jsonl_paths if not _same_file(candidate, path)]
         is_subagent = path.parent.name == _SUBAGENT_DIR
         parsed = [(path, is_subagent, events)]

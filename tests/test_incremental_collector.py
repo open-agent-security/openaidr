@@ -191,6 +191,24 @@ def test_a_differently_spelled_path_is_not_a_second_claimant(tmp_path: Path) -> 
     assert sessions[0].mcp_log_state == "no_log_root"
 
 
+def test_collect_file_reports_an_unreadable_mcp_log(tmp_path: Path) -> None:
+    path = write_session(
+        tmp_path,
+        "-work-project",
+        [user_text("s1", "u1", "2026-09-18T10:00:00Z", "investigate")],
+    )
+    reader = ClaudeCodeReader(
+        root=tmp_path,
+        mcp_logs=MCPLogIndex(by_session={}, root_found=True, unreadable=("bad.jsonl",)),
+    )
+
+    sessions, failures = reader.collect_file(path)
+
+    assert len(sessions) == 1
+    assert len(failures) == 1
+    assert "bad.jsonl" in failures[0].message
+
+
 def test_an_unknown_agent_kind_is_a_reported_failure(tmp_path: Path) -> None:
     path = tmp_path / "session.jsonl"
     path.write_text("", encoding="utf-8")
