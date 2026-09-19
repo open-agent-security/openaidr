@@ -14,7 +14,13 @@ from pathlib import Path
 
 from openaidr.kinds import KindSelection
 from openaidr.model import Session
-from openaidr.readers.base import Reader, ReaderFailure, Window, collect_from
+from openaidr.readers.base import (
+    IncrementalReader,
+    Reader,
+    ReaderFailure,
+    Window,
+    collect_from,
+)
 from openaidr.readers.claude_code import ClaudeCodeReader
 
 
@@ -29,6 +35,40 @@ class Collection:
 def default_readers(root: Path | None = None) -> list[Reader]:
     """The readers this package ships. One kind today."""
     return [ClaudeCodeReader(root=root)]
+
+
+def default_incremental_readers(root: Path | None = None) -> list[IncrementalReader]:
+    """The stateful readers this package ships. One kind today."""
+    return [ClaudeCodeReader(root=root)]
+
+
+class IncrementalCollector:
+    """Keep per-reader cursors in memory and return one growing file as sessions."""
+
+    def __init__(
+        self,
+        root: Path | None = None,
+        readers: Sequence[IncrementalReader] | None = None,
+    ) -> None:
+        available = readers if readers is not None else default_incremental_readers(root)
+        self._readers = {reader.agent_kind: reader for reader in available}
+
+    def collect(self, agent_kind: str, path: Path) -> Collection:
+        reader = self._readers.get(agent_kind)
+        if reader is None:
+            return Collection(
+                failures=[
+                    ReaderFailure(
+                        agent_kind=agent_kind,
+                        message=f"no incremental reader for agent kind {agent_kind!r}",
+                    )
+                ]
+            )
+        try:
+            sessions, failures = reader.collect_file(path)
+        except Exception as error:  # noqa: BLE001 - isolation is the contract
+            return Collection(failures=[ReaderFailure(agent_kind=agent_kind, message=str(error))])
+        return _collection(sessions, failures)
 
 
 def collect(
@@ -51,6 +91,10 @@ def collect(
         if selection.includes(r.agent_kind)
     ]
     collected, failures = collect_from(chosen, window)
+    return _collection(collected, failures)
+
+
+def _collection(collected: Sequence[Session], failures: Sequence[ReaderFailure]) -> Collection:
     by_identity: dict[str, Session] = {}
     collisions: list[ReaderFailure] = []
     for session in collected:
