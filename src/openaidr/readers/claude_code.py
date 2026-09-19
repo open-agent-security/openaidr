@@ -525,7 +525,7 @@ class ClaudeCodeReader:
             ReaderFailure(agent_kind=self.agent_kind, message=f"{error.filename}: {error}")
             for error in walk_failures
         ]
-        unparsed = [candidate for candidate in jsonl_paths if candidate != path]
+        unparsed = [candidate for candidate in jsonl_paths if not _same_file(candidate, path)]
         is_subagent = path.parent.name == _SUBAGENT_DIR
         parsed = [(path, is_subagent, events)]
         ambiguous_ids = _ambiguous_transcript_ids(parsed, unparsed)
@@ -2033,6 +2033,27 @@ def _project_directory_candidates(current: Path, parts: list[str]) -> tuple[set[
         matches |= found
         complete = complete and subtree_complete
     return matches, complete
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether two paths name the same file, however differently each is spelled.
+
+    `collect_file`'s own `path` argument and `_discover_transcripts`'s walk
+    output can disagree on relative-versus-absolute form for the identical
+    file -- the caller and the walk have no shared convention to guarantee
+    otherwise. A bare `!=` would then read one file as two claimants of its
+    raw session id (ADR-0008) and manufacture a collision that does not
+    exist, withholding MCP enrichment over nothing. `samefile` compares by
+    device and inode, so it agrees regardless of spelling; a stat failure on
+    either side (a candidate gone since the walk) falls back to "not this
+    one" rather than raising out of an ambiguity check.
+    """
+    if a == b:
+        return True
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
 
 
 def _within_window(path: Path, window: Window) -> bool:

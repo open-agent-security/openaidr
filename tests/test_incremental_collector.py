@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -173,6 +174,21 @@ def test_incremental_matches_cold_for_identical_calls_in_one_turn(tmp_path: Path
     )
 
     assert incremental.sessions == cold.sessions
+
+
+def test_a_differently_spelled_path_is_not_a_second_claimant(tmp_path: Path) -> None:
+    path = write_session(
+        tmp_path,
+        "-work-project",
+        [user_text("s1", "u1", "2026-09-18T10:00:00Z", "investigate")],
+    )
+    reader = _reader(tmp_path)
+    relative = Path(os.path.relpath(path, Path.cwd()))
+
+    sessions, failures = reader.collect_file(relative)
+
+    assert failures == []
+    assert sessions[0].mcp_log_state == "no_log_root"
 
 
 def test_an_unknown_agent_kind_is_a_reported_failure(tmp_path: Path) -> None:
