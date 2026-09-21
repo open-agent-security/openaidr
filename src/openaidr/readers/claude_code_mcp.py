@@ -31,6 +31,7 @@ import platform
 import re
 import stat
 from collections import Counter, defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -353,6 +354,77 @@ def _walk_log_dirs(root: Path) -> tuple[list[tuple[Path, list[str]]], list[OSErr
 
 def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
     """Read every MCP connection log this machine has, keyed by session."""
+    return _read_mcp_logs(roots, lambda path: path.read_text(encoding="utf-8").splitlines())
+
+
+class _IncrementalMCPFile:
+    """Retain complete lines and read only bytes appended to one MCP log."""
+
+    def __init__(self) -> None:
+        self._identity: tuple[int, int] | None = None
+        self._offset = 0
+        self._partial = b""
+        self._lines: list[str] = []
+
+    def read(self, path: Path) -> list[str]:
+        metadata = path.stat()
+        identity = (metadata.st_dev, metadata.st_ino)
+        if self._identity != identity or metadata.st_size < self._offset:
+            self._reset(identity)
+        with path.open("rb") as handle:
+            handle.seek(self._offset)
+            appended = handle.read()
+            next_offset = handle.tell()
+
+        combined = self._partial + appended
+        boundary = combined.rfind(b"\n")
+        if boundary < 0:
+            self._partial = combined
+            self._offset = next_offset
+            return self._lines
+        complete = combined[: boundary + 1]
+        partial = combined[boundary + 1 :]
+        try:
+            text = complete.decode("utf-8")
+        except UnicodeDecodeError:
+            self._reset(identity)
+            raise
+        self._lines.extend(text.splitlines())
+        self._partial = partial
+        self._offset = next_offset
+        return self._lines
+
+    def _reset(self, identity: tuple[int, int]) -> None:
+        self._identity = identity
+        self._offset = 0
+        self._partial = b""
+        self._lines = []
+
+
+class _IncrementalMCPLogReader:
+    """Read complete appended records while retaining one cursor per log file."""
+
+    def __init__(self, roots: tuple[Path, ...] | None = None) -> None:
+        self._roots = roots
+        self._files: dict[Path, _IncrementalMCPFile] = {}
+        self._seen: set[Path] = set()
+
+    def read(self) -> MCPLogIndex:
+        self._seen = set()
+        index = _read_mcp_logs(self._roots, self._read_file)
+        for path in self._files.keys() - self._seen:
+            del self._files[path]
+        return index
+
+    def _read_file(self, path: Path) -> list[str]:
+        self._seen.add(path)
+        return self._files.setdefault(path, _IncrementalMCPFile()).read(path)
+
+
+def _read_mcp_logs(
+    roots: tuple[Path, ...] | None,
+    read_lines: Callable[[Path], list[str]],
+) -> MCPLogIndex:
     candidates = cache_roots() if roots is None else roots
     present: list[Path] = []
     unreadable: list[str] = []
@@ -451,7 +523,7 @@ def read_mcp_logs(roots: tuple[Path, ...] | None = None) -> MCPLogIndex:
             for name in names:
                 path = directory / name
                 try:
-                    lines = path.read_text(encoding="utf-8").splitlines()
+                    lines = read_lines(path)
                 except (OSError, UnicodeDecodeError):
                     unreadable.append(str(path))
                     incomplete_project_servers.add((project, server))

@@ -55,7 +55,12 @@ from openaidr.model import (
     span_id,
 )
 from openaidr.readers.base import ReaderFailure, Window
-from openaidr.readers.claude_code_mcp import MCPCallOutcome, MCPLogIndex, read_mcp_logs
+from openaidr.readers.claude_code_mcp import (
+    MCPCallOutcome,
+    MCPLogIndex,
+    _IncrementalMCPLogReader,
+    read_mcp_logs,
+)
 from openaidr.toolnames import split_tool_name
 
 #: Where Claude Code keeps session transcripts, one directory per project root.
@@ -323,6 +328,7 @@ class ClaudeCodeReader:
         self._injected_mcp_logs = mcp_logs
         self._mcp_logs: MCPLogIndex | None = mcp_logs
         self._incremental: dict[Path, _IncrementalProjection] = {}
+        self._incremental_mcp_logs = _IncrementalMCPLogReader()
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         try:
@@ -518,7 +524,9 @@ class ClaudeCodeReader:
                 ReaderFailure(agent_kind=self.agent_kind, message=transcript_failure)
             )
         self._mcp_logs = (
-            self._injected_mcp_logs if self._injected_mcp_logs is not None else read_mcp_logs()
+            self._injected_mcp_logs
+            if self._injected_mcp_logs is not None
+            else self._incremental_mcp_logs.read()
         )
         jsonl_paths, walk_failures = _discover_transcripts(self._root)
         failures = [
