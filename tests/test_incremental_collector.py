@@ -10,6 +10,7 @@ from openaidr.kinds import parse_kind_filter
 from openaidr.readers.base import Window
 from openaidr.readers.claude_code import ClaudeCodeReader
 from openaidr.readers.claude_code_mcp import MCPLogIndex
+from tests.fixtures import mcp_logs as log
 from tests.fixtures.claude_jsonl import (
     assistant_tool_use,
     tool_result,
@@ -33,6 +34,16 @@ def _reader(root: Path) -> ClaudeCodeReader:
 
 def _incremental(root: Path) -> IncrementalCollector:
     return IncrementalCollector(readers=[_reader(root)])
+
+
+def _mcp_calls(collection):
+    return [
+        call
+        for session in collection.sessions
+        for turn in session.turns
+        for call in turn.tool_calls
+        if call.mcp_server
+    ]
 
 
 def test_only_appended_records_are_projected_after_the_cold_read(tmp_path: Path) -> None:
@@ -63,6 +74,118 @@ def test_only_appended_records_are_projected_after_the_cold_read(tmp_path: Path)
     call = second.sessions[0].turns[1].tool_calls[0]
     assert (call.status, call.result) == ("unknown", "file contents")
     assert unchanged.sessions == second.sessions
+
+
+def test_an_appended_mcp_log_outcome_updates_an_unchanged_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    path = write_session(
+        root,
+        "-work-project",
+        [
+            user_text("s1", "u1", "2026-09-18T10:00:00Z", "search"),
+            assistant_tool_use(
+                "s1",
+                "u2",
+                "2026-09-18T10:00:01Z",
+                "toolu_1",
+                "mcp__books__search",
+            ),
+            tool_result("s1", "u3", "2026-09-18T10:00:02Z", "toolu_1", "done"),
+        ],
+    )
+    log_path = log.write_server_log(
+        cache,
+        "books",
+        [log.connected("s1"), log.calling("s1", "search")],
+    )
+    monkeypatch.setenv("CLAUDE_CLI_CACHE_DIR", str(cache))
+    incremental = IncrementalCollector(readers=[ClaudeCodeReader(root=root)])
+
+    before = incremental.collect("claude-code", path)
+    _append(log_path, log.completed("s1", "search"))
+    original_read_text = Path.read_text
+
+    def reject_whole_log_reread(candidate: Path, *args, **kwargs):
+        if candidate == log_path:
+            raise AssertionError("incremental collection reread the whole MCP log")
+        return original_read_text(candidate, *args, **kwargs)
+
+    with patch.object(Path, "read_text", reject_whole_log_reread):
+        after = incremental.collect("claude-code", path)
+    cold = collect(
+        parse_kind_filter(["claude-code"]),
+        Window(since=None),
+        readers=[ClaudeCodeReader(root=root)],
+    )
+
+    assert before.failures == []
+    assert after.failures == []
+    assert _mcp_calls(before)[0].status == "unknown"
+    assert _mcp_calls(after)[0].status == "ok"
+    assert after == cold
+
+
+def test_a_partial_mcp_log_record_is_held_until_its_newline_arrives(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    path = write_session(
+        root,
+        "-work-project",
+        [
+            assistant_tool_use(
+                "s1",
+                "u1",
+                "2026-09-18T10:00:01Z",
+                "toolu_1",
+                "mcp__books__search",
+            ),
+            tool_result("s1", "u2", "2026-09-18T10:00:02Z", "toolu_1", "done"),
+        ],
+    )
+    log_path = log.write_server_log(cache, "books", [log.calling("s1", "search")])
+    monkeypatch.setenv("CLAUDE_CLI_CACHE_DIR", str(cache))
+    incremental = IncrementalCollector(readers=[ClaudeCodeReader(root=root)])
+    record = json.dumps(log.completed("s1", "search"))
+
+    assert _mcp_calls(incremental.collect("claude-code", path))[0].status == "unknown"
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(record)
+    assert _mcp_calls(incremental.collect("claude-code", path))[0].status == "unknown"
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+    assert _mcp_calls(incremental.collect("claude-code", path))[0].status == "ok"
+
+
+def test_a_truncated_mcp_log_restarts_from_a_cold_state(tmp_path: Path, monkeypatch) -> None:
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    path = write_session(
+        root,
+        "-work-project",
+        [
+            assistant_tool_use(
+                "s1",
+                "u1",
+                "2026-09-18T10:00:01Z",
+                "toolu_1",
+                "mcp__books__search",
+            ),
+            tool_result("s1", "u2", "2026-09-18T10:00:02Z", "toolu_1", "done"),
+        ],
+    )
+    log_path = log.write_server_log(
+        cache,
+        "books",
+        [log.calling("s1", "search"), log.failed("s1", "search", ms=1200)],
+    )
+    monkeypatch.setenv("CLAUDE_CLI_CACHE_DIR", str(cache))
+    incremental = IncrementalCollector(readers=[ClaudeCodeReader(root=root)])
+
+    assert _mcp_calls(incremental.collect("claude-code", path))[0].status == "error"
+    log_path.write_text(json.dumps(log.completed("s1", "search")) + "\n", encoding="utf-8")
+    assert _mcp_calls(incremental.collect("claude-code", path))[0].status == "ok"
 
 
 def test_a_partial_last_record_is_held_until_its_newline_arrives(tmp_path: Path) -> None:
