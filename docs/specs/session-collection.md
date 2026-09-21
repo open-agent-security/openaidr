@@ -382,23 +382,23 @@ the same per-kind rules as tool naming.
 |---|---|
 | **In process, never through a file** | A serialize-and-reparse round trip adds latency to the path that most needs speed, and would write transcript content to disk that nothing else in this design does |
 | **Cold start: one full pass** | Held as a session map keyed by session identity |
-| **Steady state: changed files only** | Watch modification times; sessions are append-only, so a re-read replaces a session with its longer self and emitted spans keep identity |
-| **Skip unchanged work** | A per-session content hash avoids re-projecting a file that was touched but not changed |
+| **Steady state: one named file** | A long-lived `IncrementalCollector` retains an in-memory byte cursor and projection for each path a consumer reports as changed |
+| **Commit at newline boundaries** | A trailing partial JSON record is held until its terminating newline; truncation or inode replacement resets that file to a cold read |
 
 A full two-week pass is affordable once. Repeating it on every change is not — a
 tool that keeps a laptop warm gets uninstalled regardless of what it finds.
 
-**Narrowed parse.** Whether the upstream package exposes a per-file or
-per-root parse determines how efficient the steady-state path is. If it does, the
-incremental path uses it; if not, OpenAIDR owns the tail loop for watched agent kinds and
-calls upstream for cold start and the rest. Both satisfy the same contract, so
-the choice reaches no other component. Upstreaming a narrow entry point is a
-third option.
+**Narrowed parse.** The pinned upstream package exposes a private per-record
+projector but no resumable public parse. OpenAIDR therefore owns the JSONL tail
+loop for Claude Code and uses that projector only for complete appended records.
+It retains the projected state and returns the current full session, while the
+ordinary collector remains the cold recovery path. ADR-0011 records the
+boundary and its compatibility cost.
 
 ### One contract, per agent kind
 
-Given a kind and a window, return sessions; given a kind and a watermark, return
-what changed.
+Given a kind and a window, return sessions; given a kind and a changed transcript
+path, advance that file's in-memory cursor and return its current sessions.
 
 **The window is applied to a session file's modification time**, not to the
 timestamps inside it. That holds for every kind read today, all of which keep one
@@ -478,7 +478,7 @@ changes the shape of the collection rather than being a detail.
 | The session model and span identity | The published contract | Consumers depend on these; they are this package's public API, not internal types |
 | One runtime dependency | Additive | `adr-sensor`, confined behind the adapter, so the rest of the codebase is unaware of it |
 | The source-vocabulary mapping | New, small | A mapping table plus per-kind naming rules, colocated with collection |
-| A watched, in-memory session cache | New | Cold pass then changed-file re-reads; no persistence, nothing on disk |
+| An in-memory append cursor | New | Cold first read then appended complete records for named changed files; no persistence, nothing on disk |
 
 **This package's only runtime dependency is `adr-sensor`.** It does not import
 `openaca`, and it must never import or mention anything proprietary. It produces
