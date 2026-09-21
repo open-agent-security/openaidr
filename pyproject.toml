@@ -1,6 +1,6 @@
 [project]
 name = "openaidr"
-version = "0.2.0"
+version = "0.3.0"
 description = "Session collection for AI coding agents — reads what agents write to disk and normalises it into one session model."
 readme = "README.md"
 requires-python = ">=3.11"
