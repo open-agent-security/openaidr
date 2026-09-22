@@ -1914,7 +1914,7 @@ def _recover_session_scoped(
     # than `setdefault`, which is what `last-prompt` wants and this does not.
     if kind == "custom-title":
         title = record.get("customTitle")
-        if isinstance(title, str) and title:
+        if isinstance(title, str):
             titles[session_id] = title
         return
 
