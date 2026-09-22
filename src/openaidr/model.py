@@ -327,21 +327,6 @@ class Session:
     #: turn does not, so it is the only durable baseline for judging whether
     #: later work was asked for.
     initial_prompt: str | None = None
-    #: The client's own name for this session, where it recorded one.
-    #:
-    #: The only label a session carries that was *chosen* to identify it --
-    #: written by the person or by the agent, and what the client itself shows
-    #: wherever it lists sessions. `initial_prompt` is the fallback and is
-    #: often a poor one: on a measured 76-session corpus the orchestrator
-    #: opened with the word "hello" and its 75 sub-agents all opened with the
-    #: same harness template, so the prompt distinguished nothing in either
-    #: direction. One of those sessions had a title.
-    #:
-    #: `None` where the client named none, which is most sub-agents -- their
-    #: transcripts carry no such record at all. Never defaulted to a
-    #: substitute, so a consumer can tell an unnamed session from one named
-    #: the empty string. `LOCAL_ONLY`, on the same terms as `initial_prompt`.
-    title: str | None = None
     #: Material that reached the model outside the turn structure. See
     #: `ContextItem` — this is the injection surface a turns-and-results reader
     #: cannot see.
@@ -384,6 +369,25 @@ class Session:
     #: last `Turn.occurred_at` -- which is what makes it the recency signal for
     #: a session, where the newest turn alone would understate it.
     last_activity_at: datetime | None = None
+    #: The client's own name for this session, where it recorded one.
+    #:
+    #: The only label a session carries that was *chosen* to identify it --
+    #: written by the person or by the agent, and what the client itself shows
+    #: wherever it lists sessions. `initial_prompt` is the fallback and is
+    #: often a poor one: on a measured 76-session corpus the orchestrator
+    #: opened with the word "hello" and its 75 sub-agents all opened with the
+    #: same harness template, so the prompt distinguished nothing in either
+    #: direction. One of those sessions had a title.
+    #:
+    #: `None` where the client named none, which is most sub-agents -- their
+    #: transcripts carry no such record at all. Never defaulted to a
+    #: substitute, so a consumer can tell an unnamed session from one named
+    #: the empty string. `LOCAL_ONLY`, on the same terms as `initial_prompt`.
+    #:
+    #: Appended after every pre-existing field rather than beside
+    #: `initial_prompt`, so a consumer constructing a `Session` positionally
+    #: does not have this field silently shift its later arguments.
+    title: str | None = None
 
     @property
     def turn_count(self) -> int:

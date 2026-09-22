@@ -275,6 +275,16 @@ def test_a_session_the_client_never_named_carries_no_title(tmp_path: Path) -> No
     assert session.title is None
 
 
+def test_a_title_renamed_to_empty_is_carried_as_empty_not_absent(tmp_path: Path) -> None:
+    """A `custom-title` record was written -- the client was told a name -- even
+    where that name is the empty string. Dropping it here would make a
+    deliberate rename-to-empty indistinguishable from a session the client
+    never named at all."""
+    write_session(tmp_path, "proj", [*_base(), custom_title("s1", "")])
+    (session,) = _read(tmp_path)
+    assert session.title == ""
+
+
 def test_the_branch_the_session_ran_on_is_carried(tmp_path: Path) -> None:
     write_session(tmp_path, "proj", _base())
     (session,) = _read(tmp_path)
