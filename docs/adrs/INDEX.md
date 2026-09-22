@@ -21,6 +21,8 @@ against the rules in effect at the time.
 
 ## Active
 
+- [0013](0013-defer-native-windows-support.md) — **Defer native Windows support.** Target macOS and Linux hosts; Windows-only runtime compatibility is deferred without changing existing reader coverage. Read before adding platform fallbacks or treating Windows parity as a release requirement.
+
 - [0001](0001-session-turn-and-subagent-identity.md) — **Session, turn and span identity for file-backed transcripts.** A turn is one non-relay message record; a subagent file is its own path-namespaced session; a repeated provider call id demotes only the later occurrence and withholds outcomes for both. Read before changing how any identity is derived, or before assuming a provider call id is unique.
 - [0002](0002-structural-duplicate-outcome-withholding.md) — **Withhold outcomes for structurally duplicate calls, not just duplicate ids.** The Claude Code parser can attach one call's result to another structurally-identical call regardless of provider id; this adapter cannot tell that mismatch apart from two calls that genuinely returned the same thing, so both are withheld alike. Read before changing `_compromised_results` or its test coverage.
 - [0003](0003-mcp-connection-log-enrichment.md) — **Read Claude Code's MCP connection logs; withhold outcomes the ordinal join cannot place.** The transcript states no outcome for 129 of 130 MCP calls and never records the transport; the per-server cache logs carry both, joined by position within a tool's sequence and guarded by a count agreement. Read before changing `claude_code_mcp`, the guard, or anything that treats an absent transport as local.
