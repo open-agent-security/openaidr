@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Skip the gates on chore/setup PRs that don't have Python sources yet.
       # Without this, `uv sync --frozen` fails on a clean repo because there's
