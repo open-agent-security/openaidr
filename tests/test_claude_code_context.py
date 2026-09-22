@@ -261,9 +261,9 @@ def test_the_clients_own_name_for_a_session_is_carried(tmp_path: Path) -> None:
     75 sub-agents all opened with the same harness template, so the prompt told
     two sessions apart in neither direction. One of those sessions had a title.
     """
-    write_session(tmp_path, "proj", [*_base(), custom_title("s1", "Benny OSS")])
+    write_session(tmp_path, "proj", [*_base(), custom_title("s1", "Parser rewrite")])
     (session,) = _read(tmp_path)
-    assert session.title == "Benny OSS"
+    assert session.title == "Parser rewrite"
 
 
 def test_a_session_the_client_never_named_carries_no_title(tmp_path: Path) -> None:
