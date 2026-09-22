@@ -80,7 +80,7 @@ jobs:
       # Without this, @claude's pushes skip the gate entirely and PR-breaking
       # lint/format/type/test errors land on the PR before anyone notices.
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           # Match pyproject.toml `requires-python` and ci.yml. `python-version`
           # here installs that interpreter AND sets UV_PYTHON, so every
