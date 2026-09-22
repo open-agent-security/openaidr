@@ -255,6 +255,7 @@ declaration — naming and representation are implementation choices.
 | Last activity | The newest record observed for this session. **Not an end**, and not the newest turn either: boundary and tool-result records carry timestamps without producing turns, so this is routinely later than the last turn. Absent where no record carried a time | |
 | Turn count | | |
 | Model | As the agent reports it, where it does | |
+| Client's own name | The label chosen to identify the session, set by the person or written by the agent, and what the client shows wherever it lists sessions. Absent where the client never named one, which is most sub-agents; a session renamed to nothing reads back as empty, not as unnamed | local-only |
 | Working directory | | local-only |
 | Machine and user | | local-only |
 | Turns | Ordered | |
