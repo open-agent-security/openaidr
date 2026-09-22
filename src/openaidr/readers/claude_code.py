@@ -704,6 +704,7 @@ class ClaudeCodeReader:
             entrypoint=transcript.entrypoints.get(raw_id),
             git_branch=transcript.branches.get(raw_id),
             initial_prompt=transcript.initial_prompts.get(raw_id),
+            title=transcript.titles.get(raw_id),
             context_items=tuple(
                 ContextItem(
                     # The same shape a call's span has, so a finding cites one
@@ -1489,6 +1490,9 @@ class _Transcript:
     #: session id -> the request that started it, recorded apart from the turns
     #: and therefore surviving compaction, which the first user turn does not.
     initial_prompts: dict[str, str] = field(default_factory=dict)
+    #: session id -> the client's own name for it, where it recorded one. The
+    #: only label chosen to identify a session; see `Session.title`.
+    titles: dict[str, str] = field(default_factory=dict)
     #: (session id, record uuid, occurrence) -> the directory *that record* ran
     #: in. Distinct from `cwds`, which is the session's first: a session can
     #: `cd`, and a relative path in a tool argument means nothing without the
@@ -1565,6 +1569,7 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
     entrypoints: dict[str, str] = {}
     branches: dict[str, str] = {}
     initial_prompts: dict[str, str] = {}
+    titles: dict[str, str] = {}
     cwd_at: dict[tuple[str, str, int], str] = {}
     attribution: dict[tuple[str, str, int], tuple[str | None, str | None]] = {}
     context: dict[str, list[tuple[str, str | None, str]]] = {}
@@ -1629,7 +1634,13 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
                         if isinstance(value, str) and value:
                             store.setdefault(session_id, value)
                     _recover_session_scoped(
-                        record, session_id, initial_prompts, context, compactions, refusals
+                        record,
+                        session_id,
+                        initial_prompts,
+                        titles,
+                        context,
+                        compactions,
+                        refusals,
                     )
 
                 declared = record.get("permissionMode")
@@ -1755,6 +1766,7 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
         entrypoints=entrypoints,
         branches=branches,
         initial_prompts=initial_prompts,
+        titles=titles,
         cwd_at=cwd_at,
         attribution=attribution,
         context=context,
@@ -1786,7 +1798,8 @@ def _projects_to_message(record: dict[str, object]) -> bool:
 
     Four ways a record is dropped before it gets there, all of them ordinary in
     a real transcript: it is not a `user` or `assistant` record at all
-    (`system`, `attachment`, `summary`, `queue-operation`, `last-prompt`); it
+    (`system`, `attachment`, `summary`, `queue-operation`, `last-prompt`,
+    `custom-title`); it
     carries no `message`; it is a `user` record whose content is a tool result,
     which upstream folds into the call that issued it instead of emitting a
     turn for; or it is left with neither text nor a tool call once projected.
@@ -1876,6 +1889,7 @@ def _recover_session_scoped(
     record: dict[str, object],
     session_id: str,
     initial_prompts: dict[str, str],
+    titles: dict[str, str],
     context: dict[str, list[tuple[str, str | None, str]]],
     compactions: dict[str, list[tuple[str, int | None, int | None]]],
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]],
@@ -1893,6 +1907,15 @@ def _recover_session_scoped(
         prompt = record.get("lastPrompt")
         if isinstance(prompt, str) and prompt:
             initial_prompts.setdefault(session_id, prompt)
+        return
+
+    # The client rewrites this record every time the name changes, so the file
+    # holds one per rename and the last is the current one -- assigned rather
+    # than `setdefault`, which is what `last-prompt` wants and this does not.
+    if kind == "custom-title":
+        title = record.get("customTitle")
+        if isinstance(title, str) and title:
+            titles[session_id] = title
         return
 
     if kind == "attachment":
