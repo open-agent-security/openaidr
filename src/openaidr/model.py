@@ -43,6 +43,11 @@ LOCAL_ONLY = frozenset(
         # turn's text, and an initiating prompt is a person's own words.
         "context_items",
         "initial_prompt",
+        # The client's own name for a session. Written by a person or by the
+        # agent, and free text either way -- it can name a customer, a ticket
+        # or a host as readily as a feature. Local surfaces show it because it
+        # is the best label a session has; nothing a finding carries may.
+        "title",
         # An MCP server's own words about why a connection failed. Free text the
         # server author chose, and it can carry a URL, a header fragment or a
         # path. `failure_category` is the part a consumer acts on and the part
@@ -322,6 +327,21 @@ class Session:
     #: turn does not, so it is the only durable baseline for judging whether
     #: later work was asked for.
     initial_prompt: str | None = None
+    #: The client's own name for this session, where it recorded one.
+    #:
+    #: The only label a session carries that was *chosen* to identify it --
+    #: written by the person or by the agent, and what the client itself shows
+    #: wherever it lists sessions. `initial_prompt` is the fallback and is
+    #: often a poor one: on a measured 76-session corpus the orchestrator
+    #: opened with the word "hello" and its 75 sub-agents all opened with the
+    #: same harness template, so the prompt distinguished nothing in either
+    #: direction. One of those sessions had a title.
+    #:
+    #: `None` where the client named none, which is most sub-agents -- their
+    #: transcripts carry no such record at all. Never defaulted to a
+    #: substitute, so a consumer can tell an unnamed session from one named
+    #: the empty string. `LOCAL_ONLY`, on the same terms as `initial_prompt`.
+    title: str | None = None
     #: Material that reached the model outside the turn structure. See
     #: `ContextItem` — this is the injection surface a turns-and-results reader
     #: cannot see.

@@ -138,3 +138,8 @@ def system_event(session_id: str, uuid: str, timestamp: str, subtype: str, **ext
 def last_prompt(session_id: str, prompt: str) -> dict:
     """The initiating request, recorded apart from the turns."""
     return {"type": "last-prompt", "sessionId": session_id, "lastPrompt": prompt}
+
+
+def custom_title(session_id: str, title: str) -> dict:
+    """The name the client shows for a session, set by the user or by the agent."""
+    return {"type": "custom-title", "sessionId": session_id, "customTitle": title}

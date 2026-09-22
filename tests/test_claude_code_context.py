@@ -22,6 +22,7 @@ from openaidr.readers.claude_code import ClaudeCodeReader
 from tests.fixtures.claude_jsonl import (
     assistant_tool_use,
     attachment,
+    custom_title,
     last_prompt,
     system_event,
     tool_result,
@@ -248,6 +249,30 @@ def test_the_initiating_prompt_is_carried_because_it_survives_compaction(tmp_pat
     write_session(tmp_path, "proj", [*_base(), last_prompt("s1", "please refactor the parser")])
     (session,) = _read(tmp_path)
     assert session.initial_prompt == "please refactor the parser"
+
+
+def test_the_clients_own_name_for_a_session_is_carried(tmp_path: Path) -> None:
+    """The client records a name for a session -- set by the person or written
+    by the agent -- and shows it wherever it lists sessions.
+
+    It is the only label a session has that was *chosen* to identify it. The
+    initiating prompt is the fallback and is frequently a poor one: measured on
+    a 76-session corpus, the orchestrator opened with the word "hello" and its
+    75 sub-agents all opened with the same harness template, so the prompt told
+    two sessions apart in neither direction. One of those sessions had a title.
+    """
+    write_session(tmp_path, "proj", [*_base(), custom_title("s1", "Benny OSS")])
+    (session,) = _read(tmp_path)
+    assert session.title == "Benny OSS"
+
+
+def test_a_session_the_client_never_named_carries_no_title(tmp_path: Path) -> None:
+    """Absent, not empty, and never invented: a sub-agent transcript holds no
+    title record at all, and a consumer has to be able to tell that from a
+    session deliberately named the empty string."""
+    write_session(tmp_path, "proj", _base())
+    (session,) = _read(tmp_path)
+    assert session.title is None
 
 
 def test_the_branch_the_session_ran_on_is_carried(tmp_path: Path) -> None:
