@@ -365,6 +365,13 @@ class _IncrementalMCPFile:
         self._offset = 0
         self._partial = b""
         self._lines: list[str] = []
+        #: True once `path.open()` has succeeded at the current `_offset`.
+        #: A reset (fresh file, or one whose size fell below its cursor)
+        #: clears it, so a file that has never been opened successfully --
+        #: including one whose size happens to equal a just-reset offset of
+        #: zero -- cannot take the no-reopen fast path below on an `OSError`
+        #: that never gets the chance to update `_offset` in the first place.
+        self._opened = False
         #: Changes whenever `_lines` does -- a reset or an appended complete
         #: line -- and never otherwise, so an equal generation means the lines
         #: the index was built from are the lines this file still holds.
@@ -375,14 +382,16 @@ class _IncrementalMCPFile:
         identity = (metadata.st_dev, metadata.st_ino)
         if self._identity != identity or metadata.st_size < self._offset:
             self._reset(identity)
-        elif metadata.st_size == self._offset:
-            # Nothing was appended since the last read, and a cache holds
-            # thousands of these files, so skip the open as well as the read.
+        elif self._opened and metadata.st_size == self._offset:
+            # Nothing was appended since the last successful read, and a
+            # cache holds thousands of these files, so skip the open as well
+            # as the read.
             return self._lines
         with path.open("rb") as handle:
             handle.seek(self._offset)
             appended = handle.read()
             next_offset = handle.tell()
+        self._opened = True
 
         combined = self._partial + appended
         boundary = combined.rfind(b"\n")
@@ -410,6 +419,7 @@ class _IncrementalMCPFile:
         self._offset = 0
         self._partial = b""
         self._lines = []
+        self._opened = False
         self.generation += 1
 
 
