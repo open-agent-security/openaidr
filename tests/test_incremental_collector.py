@@ -457,6 +457,30 @@ def test_an_mcp_log_that_has_not_grown_is_not_reopened(tmp_path: Path) -> None:
     assert second is first
 
 
+def test_a_persistently_unreadable_zero_byte_log_stays_unreadable(tmp_path: Path) -> None:
+    from openaidr.readers.claude_code_mcp import _IncrementalMCPLogReader
+
+    cache = tmp_path / "cache"
+    books = log.write_server_log(cache, "books", [])
+    books.write_bytes(b"")
+    reader = _IncrementalMCPLogReader(roots=(cache,))
+    original_open = Path.open
+
+    def deny(candidate: Path, *args, **kwargs):
+        if candidate == books:
+            raise PermissionError("denied")
+        return original_open(candidate, *args, **kwargs)
+
+    with patch.object(Path, "open", deny):
+        first = reader.read()
+        second = reader.read()
+
+    assert str(books) in first.unreadable
+    assert ("-work-project", "books") in first.incomplete_project_servers
+    assert str(books) in second.unreadable
+    assert ("-work-project", "books") in second.incomplete_project_servers
+
+
 def test_an_undecodable_mcp_log_is_reported_without_rebuilding_each_pass(
     tmp_path: Path, monkeypatch
 ) -> None:
