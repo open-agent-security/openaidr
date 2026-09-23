@@ -361,17 +361,17 @@ def test_an_incremental_reader_failure_is_reported_not_raised(tmp_path: Path) ->
 
 
 def _folds(monkeypatch) -> list[tuple[str, str]]:
-    """Record the `(project, server)` of every log file the index build parses."""
+    """Record the `(project, server)` of every batch of log lines folded."""
     from openaidr.readers import claude_code_mcp
 
     folded: list[tuple[str, str]] = []
-    original = claude_code_mcp._read_file
+    original = claude_code_mcp._LineFolder.fold
 
-    def counting(lines, server, project, by_session):
+    def counting(self, lines, server, project, by_session):
         folded.append((project, server))
-        return original(lines, server, project, by_session)
+        return original(self, lines, server, project, by_session)
 
-    monkeypatch.setattr(claude_code_mcp, "_read_file", counting)
+    monkeypatch.setattr(claude_code_mcp._LineFolder, "fold", counting)
     return folded
 
 

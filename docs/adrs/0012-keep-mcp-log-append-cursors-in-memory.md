@@ -1,10 +1,10 @@
 ---
 id: 0012
 title: Keep MCP log append cursors in memory
-status: accepted
+status: superseded
 date: 2026-09-21
 supersedes: null
-superseded-by: null
+superseded-by: 0013
 ---
 
 ## Context
