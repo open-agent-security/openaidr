@@ -32,7 +32,7 @@ import re
 import stat
 from collections import Counter, defaultdict, deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 
@@ -376,6 +376,9 @@ class _IncrementalMCPFile:
         #: line -- and never otherwise, so an equal generation means the lines
         #: the index was built from are the lines this file still holds.
         self.generation = 0
+        #: Changes on every reset only. Within one epoch `_lines` is only ever
+        #: extended, so lines already folded stay a prefix of the lines held.
+        self.epoch = 0
 
     def read(self, path: Path) -> list[str]:
         metadata = path.stat()
@@ -421,28 +424,35 @@ class _IncrementalMCPFile:
         self._lines = []
         self._opened = False
         self.generation += 1
+        self.epoch += 1
 
 
 class _IncrementalMCPLogReader:
-    """Read complete appended records while retaining one cursor per log file.
+    """Read and fold only what was appended to each MCP log (ADR-0013).
 
-    The index is rebuilt from every retained line (ADR-0012), which costs time
-    proportional to all the connection logs on the machine. When a pass finds
-    the same files, the same discovery failures and no new complete line in any
-    file, that rebuild would reproduce the previous index exactly, so the
-    previous one is returned instead. Consumers copy what they consume from an
-    index rather than mutate it, which is what makes handing it out twice safe.
+    Every key a log record can touch in `SessionMCPLogs` belongs to one server,
+    so the logs of one `(project, server)` pair fold independently of every
+    other pair. Each pair keeps an unsealed fold. When lines were only appended
+    to the pair's last file, just those lines are folded into it; any other
+    change refolds that pair from its retained lines. The index handed out is
+    assembled from sealed copies, so folding later lines never changes an index
+    a consumer already holds, and a session whose pairs did not change keeps its
+    previous sealed copy.
     """
 
     def __init__(self, roots: tuple[Path, ...] | None = None) -> None:
         self._roots = roots
         self._files: dict[Path, _IncrementalMCPFile] = {}
+        self._pairs: dict[tuple[str, str], _PairFold] = {}
+        self._sealed: dict[tuple[str, str], SessionMCPLogs] = {}
         self._last: tuple[object, MCPLogIndex] | None = None
 
     def read(self) -> MCPLogIndex:
         discovered = _discover_mcp_logs(self._roots)
         if isinstance(discovered, MCPLogIndex):
             self._files.clear()
+            self._pairs.clear()
+            self._sealed.clear()
             self._last = None
             return discovered
         results: dict[Path, list[str] | OSError | UnicodeDecodeError] = {}
@@ -457,24 +467,140 @@ class _IncrementalMCPLogReader:
         # A failed read is keyed as a failure, not by generation: a file that
         # cannot be decoded resets on every attempt, and each attempt produces
         # the same index.
-        signature = (
-            discovered,
-            tuple(
-                (path, None if isinstance(result, Exception) else self._files[path].generation)
-                for path, result in results.items()
-            ),
-        )
+        versions = {
+            path: None if isinstance(result, Exception) else self._files[path].generation
+            for path, result in results.items()
+        }
+        signature = (discovered, tuple(versions.items()))
         if self._last is not None and self._last[0] == signature:
             return self._last[1]
-        index = _fold_mcp_logs(discovered, lambda path: _result(results[path]))
+
+        groups: dict[tuple[str, str], list[Path]] = {}
+        for path, server, project in discovered.files:
+            groups.setdefault((project, server), []).append(path)
+        pairs: dict[tuple[str, str], _PairFold] = {}
+        affected: set[tuple[str, str]] = set()
+        for key, paths in groups.items():
+            pairs[key] = self._fold_pair(key, paths, results, versions, affected)
+        for key in self._pairs.keys() - pairs.keys():
+            affected.update(self._pairs[key].by_session)
+        self._pairs = pairs
+
+        parts: dict[tuple[str, str], list[SessionMCPLogs]] = defaultdict(list)
+        for pair in pairs.values():
+            for session, logs in pair.by_session.items():
+                if session in affected:
+                    parts[session].append(logs)
+        for session in affected:
+            if session in parts:
+                self._sealed[session] = _sealed_copy(parts[session])
+            else:
+                self._sealed.pop(session, None)
+
+        unreadable = list(discovered.unreadable)
+        unreadable.extend(str(path) for path, _s, _p in discovered.files if versions[path] is None)
+        index = MCPLogIndex(
+            by_session=dict(self._sealed),
+            root_found=True,
+            discovery_incomplete=discovered.discovery_incomplete,
+            unreadable=tuple(sorted(unreadable)),
+            incomplete_project_servers=frozenset(
+                key for key, pair in pairs.items() if pair.incomplete
+            ),
+        )
         self._last = (signature, index)
         return index
 
+    def _fold_pair(
+        self,
+        key: tuple[str, str],
+        paths: list[Path],
+        results: dict[Path, list[str] | OSError | UnicodeDecodeError],
+        versions: dict[Path, int | None],
+        affected: set[tuple[str, str]],
+    ) -> _PairFold:
+        project, server = key
+        signature = tuple((path, versions[path]) for path in paths)
+        previous = self._pairs.get(key)
+        if previous is not None and previous.signature == signature:
+            return previous
+        last = paths[-1]
+        lines = results[last]
+        if (
+            previous is not None
+            and previous.folder is not None
+            and previous.last == (last, self._files[last].epoch)
+            and previous.signature[:-1] == signature[:-1]
+            and isinstance(lines, list)
+            and len(lines) >= previous.folder.folded
+        ):
+            previous.folder.fold(
+                lines[previous.folder.folded :], server, project, previous.by_session
+            )
+            previous.folder.folded = len(lines)
+            affected.update(previous.folder.touched)
+            previous.signature = signature
+            return previous
 
-def _result(result: list[str] | OSError | UnicodeDecodeError) -> list[str]:
-    if isinstance(result, Exception):
-        raise result
-    return result
+        if previous is not None:
+            affected.update(previous.by_session)
+        pair = _PairFold(signature=signature)
+        for position, path in enumerate(paths):
+            result = results[path]
+            pair.folder = None
+            if isinstance(result, Exception):
+                pair.prefix_incomplete = True
+                continue
+            folder = _LineFolder()
+            folder.fold(result, server, project, pair.by_session)
+            folder.folded = len(result)
+            if position < len(paths) - 1 and folder.torn:
+                pair.prefix_incomplete = True
+            pair.folder = folder
+        if pair.folder is not None:
+            pair.last = (last, self._files[last].epoch)
+        affected.update(pair.by_session)
+        return pair
+
+
+@dataclass
+class _PairFold:
+    """The unsealed fold of one `(project, server)` pair's log files."""
+
+    #: `(path, generation or None)` for every file, in fold order.
+    signature: tuple[tuple[Path, int | None], ...]
+    by_session: dict[tuple[str, str], SessionMCPLogs] = field(
+        default_factory=lambda: defaultdict(SessionMCPLogs)
+    )
+    #: An unreadable file, or a torn record in a file before the last one.
+    prefix_incomplete: bool = False
+    #: The last file's path and epoch, when it was readable and folded.
+    last: tuple[Path, int] | None = None
+    #: The last file's folder, which later appended lines continue.
+    folder: _LineFolder | None = None
+
+    @property
+    def incomplete(self) -> bool:
+        return self.prefix_incomplete or (self.folder is not None and self.folder.torn)
+
+
+def _sealed_copy(parts: list[SessionMCPLogs]) -> SessionMCPLogs:
+    """One session's logs from every pair that wrote them, sealed.
+
+    Copies everything a later fold could mutate. The pairs hold disjoint keys,
+    each being one server's, so merging is a union.
+    """
+    merged = SessionMCPLogs()
+    for part in parts:
+        for server, connection in part.connections.items():
+            merged.connections[server] = replace(connection)
+        for key, queue in part.outcomes.items():
+            merged.outcomes[key] = deque(queue)
+        merged.waiting.update(part.waiting)
+        merged.in_flight.update(part.in_flight)
+        merged.unordered.update(part.unordered)
+    merged.seal()
+    return merged
 
 
 def _read_mcp_logs(
@@ -653,25 +779,55 @@ def _read_file(
     have a hole in it -- and rather than withhold a same-named server in an
     unrelated project that never shared the incomplete file (ADR-0006).
     """
-    torn = False
-    last = max((number for number, line in enumerate(lines) if line.strip()), default=-1)
-    for number, line in enumerate(lines):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            record = json.loads(line)
-        except ValueError:
-            torn = torn or number != last
-            continue
-        if not isinstance(record, dict):
-            continue
-        session_id = record.get("sessionId")
-        message = record.get("debug")
-        if not isinstance(session_id, str) or not isinstance(message, str):
-            continue
-        _apply(message, server, by_session[(project, session_id)])
-    return torn
+    folder = _LineFolder()
+    folder.fold(lines, server, project, by_session)
+    return folder.torn
+
+
+class _LineFolder:
+    """Fold one log file's lines in order, a batch at a time.
+
+    Whether an undecodable line is the file's last record -- ordinary, see
+    `_read_file` -- is only known once the next record arrives, so that
+    judgement is held open across batches rather than made per batch.
+    """
+
+    def __init__(self) -> None:
+        self.torn = False
+        #: Lines of the file folded so far; kept by the caller.
+        self.folded = 0
+        #: `(project, session)` keys the latest `fold` call wrote to.
+        self.touched: set[tuple[str, str]] = set()
+        self._undecodable_last = False
+
+    def fold(
+        self,
+        lines: list[str],
+        server: str,
+        project: str,
+        by_session: dict[tuple[str, str], SessionMCPLogs],
+    ) -> None:
+        self.touched = set()
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if self._undecodable_last:
+                self.torn = True
+                self._undecodable_last = False
+            try:
+                record = json.loads(line)
+            except ValueError:
+                self._undecodable_last = True
+                continue
+            if not isinstance(record, dict):
+                continue
+            session_id = record.get("sessionId")
+            message = record.get("debug")
+            if not isinstance(session_id, str) or not isinstance(message, str):
+                continue
+            self.touched.add((project, session_id))
+            _apply(message, server, by_session[(project, session_id)])
 
 
 def _apply(message: str, server: str, logs: SessionMCPLogs) -> None:
