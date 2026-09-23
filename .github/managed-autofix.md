@@ -12,7 +12,7 @@ per-head Codex review marker.
 | --- | --- |
 | Routine | [trig_01MRTLyMyQoHMp4Nvv83E6ie](https://claude.ai/code/routines/trig_01MRTLyMyQoHMp4Nvv83E6ie), Anthropic-hosted Default environment (`env_01F2vbHGYXjLs9PV3hzvbvCX`), claude-sonnet-5, sole source this repository, no connectors |
 | Triggers | GitHub `pull_request.opened` and `pull_request.ready_for_review` (ids `3dbbaabf-df96-44b8-8957-c8cba9512b7a` opened, `d1d5925b-bf5d-4c04-8489-8054c251cb75` ready_for_review, created 2026-09-23T06:40Z); a draft PR enrolls when marked ready. Automatic enrollment: not yet observed; verify on the first qualifying PR by reading its run log for the github-trigger-context block and a successful subscribe_pr_activity |
-| Prompt source | SHA-256 of the fenced block below: `8efaa409609dbb0b4b5c961c9efad17ede7920238ea3a2a9950d938e3817d759`; saved on the routine at creation, 2026-09-23T06:39:28Z, read back byte-identical |
+| Prompt source | SHA-256 of the fenced block below: `9459f54e51a1eb62ec1d4d15de105450ae78a047024f47d46b10fbe8e32fffc3`; saved on the routine 2026-09-23 (marker renamed for this repository's no-proprietary-references rule), read back byte-identical |
 | Codex review | Codex has reviewed PRs in this repository; confirm all-PRs/every-push in the Codex console. The prompt's explicit request is the fallback |
 | Legacy Actions loop | `claude.yml` and `autofix.yml` disabled 2026-09-22 (files remain); routine-based fixing replaces them |
 
@@ -60,7 +60,7 @@ At enrollment and after every push, ensure the current head has one Codex
 review queued, running, or completed. Accept an existing request marker only
 when its real author is this session's GitHub identity or a trusted maintainer.
 If neither a review nor a trusted marker exists, post one `@codex review`
-request with <!-- stacktrace-codex-review:FULL_HEAD_SHA -->. Do not duplicate a
+request with <!-- managed-codex-review:FULL_HEAD_SHA -->. Do not duplicate a
 trusted request for the same SHA or use a bot @-mention in other prose.
 
 Use GitHub activity and this session's history to avoid handling the same
