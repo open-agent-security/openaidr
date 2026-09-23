@@ -358,3 +358,122 @@ def test_an_incremental_reader_failure_is_reported_not_raised(tmp_path: Path) ->
     assert collection.sessions == []
     assert len(collection.failures) == 1
     assert "changed while reading" in collection.failures[0].message
+
+
+def _folds(monkeypatch) -> list[tuple[str, str]]:
+    """Record the `(project, server)` of every log file the index build parses."""
+    from openaidr.readers import claude_code_mcp
+
+    folded: list[tuple[str, str]] = []
+    original = claude_code_mcp._read_file
+
+    def counting(lines, server, project, by_session):
+        folded.append((project, server))
+        return original(lines, server, project, by_session)
+
+    monkeypatch.setattr(claude_code_mcp, "_read_file", counting)
+    return folded
+
+
+def test_an_unchanged_mcp_cache_reuses_the_previous_index(tmp_path: Path, monkeypatch) -> None:
+    from openaidr.readers.claude_code_mcp import _IncrementalMCPLogReader
+
+    cache = tmp_path / "cache"
+    log.write_server_log(cache, "books", [log.calling("s1", "search")])
+    log.write_server_log(cache, "files", [log.connected("s1")])
+    reader = _IncrementalMCPLogReader(roots=(cache,))
+    folded = _folds(monkeypatch)
+
+    first = reader.read()
+    parsed_first = len(folded)
+    second = reader.read()
+
+    assert parsed_first == 2
+    assert second is first
+    assert len(folded) == parsed_first
+
+
+def test_an_mcp_cache_change_rebuilds_the_index(tmp_path: Path, monkeypatch) -> None:
+    from openaidr.readers.claude_code_mcp import _IncrementalMCPLogReader
+
+    cache = tmp_path / "cache"
+    books = log.write_server_log(cache, "books", [log.calling("s1", "search")])
+    reader = _IncrementalMCPLogReader(roots=(cache,))
+    first = reader.read()
+
+    _append(books, log.completed("s1", "search"))
+    appended = reader.read()
+    files = log.write_server_log(cache, "files", [log.connected("s1")])
+    added = reader.read()
+    files.unlink()
+    removed = reader.read()
+
+    assert appended is not first
+    assert [
+        o.ok for o in appended.by_session[("-work-project", "s1")].outcomes[("books", "search")]
+    ] == [True]
+    assert added is not appended
+    assert "files" in added.by_session[("-work-project", "s1")].connections
+    assert removed is not added
+    assert "files" not in removed.by_session[("-work-project", "s1")].connections
+
+
+def test_a_partial_mcp_record_alone_does_not_rebuild_the_index(tmp_path: Path) -> None:
+    from openaidr.readers.claude_code_mcp import _IncrementalMCPLogReader
+
+    cache = tmp_path / "cache"
+    books = log.write_server_log(cache, "books", [log.calling("s1", "search")])
+    reader = _IncrementalMCPLogReader(roots=(cache,))
+    first = reader.read()
+
+    with books.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(log.completed("s1", "search")))
+    partial = reader.read()
+    with books.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+    complete = reader.read()
+
+    assert partial is first
+    assert complete is not first
+
+
+def test_an_mcp_log_that_has_not_grown_is_not_reopened(tmp_path: Path) -> None:
+    from openaidr.readers.claude_code_mcp import _IncrementalMCPLogReader
+
+    cache = tmp_path / "cache"
+    books = log.write_server_log(cache, "books", [log.calling("s1", "search")])
+    reader = _IncrementalMCPLogReader(roots=(cache,))
+    first = reader.read()
+    original_open = Path.open
+
+    def reject_reopen(candidate: Path, *args, **kwargs):
+        if candidate == books:
+            raise AssertionError("an MCP log with no new bytes was reopened")
+        return original_open(candidate, *args, **kwargs)
+
+    with patch.object(Path, "open", reject_reopen):
+        second = reader.read()
+
+    assert second is first
+
+
+def test_an_undecodable_mcp_log_is_reported_without_rebuilding_each_pass(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from openaidr.readers.claude_code_mcp import _IncrementalMCPLogReader
+
+    cache = tmp_path / "cache"
+    log.write_server_log(cache, "books", [log.calling("s1", "search")])
+    broken = log.write_server_log(cache, "files", [log.connected("s1")])
+    broken.write_bytes(b"\xff\xfe not utf-8\n")
+    reader = _IncrementalMCPLogReader(roots=(cache,))
+    folded = _folds(monkeypatch)
+
+    first = reader.read()
+    parsed_first = len(folded)
+    second = reader.read()
+
+    assert str(broken) in first.unreadable
+    assert ("-work-project", "files") in first.incomplete_project_servers
+    assert second is first
+    assert len(folded) == parsed_first

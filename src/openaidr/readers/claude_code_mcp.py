@@ -365,12 +365,20 @@ class _IncrementalMCPFile:
         self._offset = 0
         self._partial = b""
         self._lines: list[str] = []
+        #: Changes whenever `_lines` does -- a reset or an appended complete
+        #: line -- and never otherwise, so an equal generation means the lines
+        #: the index was built from are the lines this file still holds.
+        self.generation = 0
 
     def read(self, path: Path) -> list[str]:
         metadata = path.stat()
         identity = (metadata.st_dev, metadata.st_ino)
         if self._identity != identity or metadata.st_size < self._offset:
             self._reset(identity)
+        elif metadata.st_size == self._offset:
+            # Nothing was appended since the last read, and a cache holds
+            # thousands of these files, so skip the open as well as the read.
+            return self._lines
         with path.open("rb") as handle:
             handle.seek(self._offset)
             appended = handle.read()
@@ -389,7 +397,10 @@ class _IncrementalMCPFile:
         except UnicodeDecodeError:
             self._reset(identity)
             raise
-        self._lines.extend(text.splitlines())
+        added = text.splitlines()
+        if added:
+            self._lines.extend(added)
+            self.generation += 1
         self._partial = partial
         self._offset = next_offset
         return self._lines
@@ -399,32 +410,87 @@ class _IncrementalMCPFile:
         self._offset = 0
         self._partial = b""
         self._lines = []
+        self.generation += 1
 
 
 class _IncrementalMCPLogReader:
-    """Read complete appended records while retaining one cursor per log file."""
+    """Read complete appended records while retaining one cursor per log file.
+
+    The index is rebuilt from every retained line (ADR-0012), which costs time
+    proportional to all the connection logs on the machine. When a pass finds
+    the same files, the same discovery failures and no new complete line in any
+    file, that rebuild would reproduce the previous index exactly, so the
+    previous one is returned instead. Consumers copy what they consume from an
+    index rather than mutate it, which is what makes handing it out twice safe.
+    """
 
     def __init__(self, roots: tuple[Path, ...] | None = None) -> None:
         self._roots = roots
         self._files: dict[Path, _IncrementalMCPFile] = {}
-        self._seen: set[Path] = set()
+        self._last: tuple[object, MCPLogIndex] | None = None
 
     def read(self) -> MCPLogIndex:
-        self._seen = set()
-        index = _read_mcp_logs(self._roots, self._read_file)
-        for path in self._files.keys() - self._seen:
+        discovered = _discover_mcp_logs(self._roots)
+        if isinstance(discovered, MCPLogIndex):
+            self._files.clear()
+            self._last = None
+            return discovered
+        results: dict[Path, list[str] | OSError | UnicodeDecodeError] = {}
+        for path, _server, _project in discovered.files:
+            state = self._files.setdefault(path, _IncrementalMCPFile())
+            try:
+                results[path] = state.read(path)
+            except (OSError, UnicodeDecodeError) as error:
+                results[path] = error
+        for path in self._files.keys() - results.keys():
             del self._files[path]
+        # A failed read is keyed as a failure, not by generation: a file that
+        # cannot be decoded resets on every attempt, and each attempt produces
+        # the same index.
+        signature = (
+            discovered,
+            tuple(
+                (path, None if isinstance(result, Exception) else self._files[path].generation)
+                for path, result in results.items()
+            ),
+        )
+        if self._last is not None and self._last[0] == signature:
+            return self._last[1]
+        index = _fold_mcp_logs(discovered, lambda path: _result(results[path]))
+        self._last = (signature, index)
         return index
 
-    def _read_file(self, path: Path) -> list[str]:
-        self._seen.add(path)
-        return self._files.setdefault(path, _IncrementalMCPFile()).read(path)
+
+def _result(result: list[str] | OSError | UnicodeDecodeError) -> list[str]:
+    if isinstance(result, Exception):
+        raise result
+    return result
 
 
 def _read_mcp_logs(
     roots: tuple[Path, ...] | None,
     read_lines: Callable[[Path], list[str]],
 ) -> MCPLogIndex:
+    discovered = _discover_mcp_logs(roots)
+    if isinstance(discovered, MCPLogIndex):
+        return discovered
+    return _fold_mcp_logs(discovered, read_lines)
+
+
+@dataclass(frozen=True)
+class _DiscoveredLogs:
+    """Every MCP log file one pass found, in the order the index folds them."""
+
+    #: `(path, server, cache project directory)`, roots in candidate order and
+    #: each root's directories and file names sorted.
+    files: tuple[tuple[Path, str, str], ...]
+    #: Candidate roots and directories that could not be statted or scanned.
+    unreadable: tuple[str, ...]
+    discovery_incomplete: bool
+
+
+def _discover_mcp_logs(roots: tuple[Path, ...] | None) -> MCPLogIndex | _DiscoveredLogs:
+    """The log files to fold, or the finished index when no cache root exists."""
     candidates = cache_roots() if roots is None else roots
     present: list[Path] = []
     unreadable: list[str] = []
@@ -499,8 +565,7 @@ def _read_mcp_logs(
             unreadable=tuple(sorted(unreadable)),
         )
 
-    by_session: dict[tuple[str, str], SessionMCPLogs] = defaultdict(SessionMCPLogs)
-    incomplete_project_servers: set[tuple[str, str]] = set()
+    files: list[tuple[Path, str, str]] = []
     # A root whose type could not be determined (see `root_probe_incomplete`
     # above) might have been a directory holding a second claimant for a
     # session id or project this pass resolved from the *other*, readable
@@ -520,16 +585,31 @@ def _read_mcp_logs(
         for directory, names in log_dirs:
             server = directory.name[len(_LOG_DIR_PREFIX) :]
             project = directory.parent.name
-            for name in names:
-                path = directory / name
-                try:
-                    lines = read_lines(path)
-                except (OSError, UnicodeDecodeError):
-                    unreadable.append(str(path))
-                    incomplete_project_servers.add((project, server))
-                    continue
-                if _read_file(lines, server, project, by_session):
-                    incomplete_project_servers.add((project, server))
+            files.extend((directory / name, server, project) for name in names)
+    return _DiscoveredLogs(
+        files=tuple(files),
+        unreadable=tuple(unreadable),
+        discovery_incomplete=discovery_incomplete,
+    )
+
+
+def _fold_mcp_logs(
+    discovered: _DiscoveredLogs,
+    read_lines: Callable[[Path], list[str]],
+) -> MCPLogIndex:
+    """Build the index from the lines of every discovered log file."""
+    by_session: dict[tuple[str, str], SessionMCPLogs] = defaultdict(SessionMCPLogs)
+    incomplete_project_servers: set[tuple[str, str]] = set()
+    unreadable = list(discovered.unreadable)
+    for path, server, project in discovered.files:
+        try:
+            lines = read_lines(path)
+        except (OSError, UnicodeDecodeError):
+            unreadable.append(str(path))
+            incomplete_project_servers.add((project, server))
+            continue
+        if _read_file(lines, server, project, by_session):
+            incomplete_project_servers.add((project, server))
     # Every log has been read, so an unresolved wait is final rather than
     # merely not-yet-answered.
     for logs in by_session.values():
@@ -537,7 +617,7 @@ def _read_mcp_logs(
     return MCPLogIndex(
         by_session=dict(by_session),
         root_found=True,
-        discovery_incomplete=discovery_incomplete,
+        discovery_incomplete=discovered.discovery_incomplete,
         unreadable=tuple(sorted(unreadable)),
         incomplete_project_servers=frozenset(incomplete_project_servers),
     )
