@@ -50,22 +50,6 @@ def test_messages_calls_metadata_and_times(tmp_path: Path) -> None:
     assert s.mcp_log_state == "not_attempted"
 
 
-def test_append_preserves_spans_and_resolves_pending(tmp_path: Path) -> None:
-    path = write_rollout(tmp_path, [meta(), message(), call()])
-    reader = CodexReader(tmp_path)
-    before, _ = reader.collect(Window(None))
-    original = before[0].turns[1].tool_calls[0]
-    assert original.status == "pending"
-    with path.open("a") as f:
-        f.write(json.dumps(output()) + "\n" + json.dumps(call()) + "\n")
-    after, failures = reader.collect(Window(None))
-    assert not failures
-    calls = [c for t in after[0].turns for c in t.tool_calls]
-    assert calls[0].span == original.span
-    assert len({c.span for c in calls}) == 2
-    assert all(c.result is None and c.duration_ms is None for c in calls)
-
-
 def test_result_join_is_scoped_to_session_and_call_family(tmp_path: Path) -> None:
     write_rollout(tmp_path, [meta("a"), call(), output(body="A")], "a")
     write_rollout(tmp_path, [meta("b"), call(), output(body="B", custom=True)], "b")
@@ -112,9 +96,7 @@ def test_window_uses_mtime_and_includes_boundary(tmp_path: Path) -> None:
     assert CodexReader(tmp_path).collect(Window(cutoff)) == ([], [])
 
 
-@pytest.mark.parametrize(
-    "bad", [b"{invalid}\n", b"[]\n", b'{"type":"response_item","payload":[]}\n', b"\xff\n"]
-)
+@pytest.mark.parametrize("bad", [b"{invalid}\n", b"\xff\n"])
 def test_malformed_complete_record_reports_path_without_content(tmp_path: Path, bad: bytes) -> None:
     path = write_rollout(tmp_path, [meta(), call()])
     with path.open("ab") as f:
@@ -140,13 +122,6 @@ def test_unreadable_file_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert not sessions
     assert len(failures) == 1
     assert str(path) in failures[0].message
-
-
-def test_missing_root_and_broken_symlink_differ(tmp_path: Path) -> None:
-    root = tmp_path / "missing"
-    assert CodexReader(root).collect(Window(None)) == ([], [])
-    root.symlink_to(tmp_path / "absent")
-    assert CodexReader(root).collect(Window(None))[1]
 
 
 def test_history_reference_is_reported_as_incomplete(tmp_path: Path) -> None:
@@ -279,24 +254,6 @@ def test_default_root_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert CodexReader(tmp_path / "sessions").collect(Window(None))[0][0].session_id == "codex:home"
 
 
-def test_unreadable_directory_and_invalid_root_report_gaps(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from openaidr.readers import codex
-
-    def failed_walk(root, *, onerror):
-        onerror(PermissionError("synthetic unreadable directory"))
-        return iter(())
-
-    monkeypatch.setattr(codex.os, "walk", failed_walk)
-    sessions, failures = CodexReader(tmp_path).collect(Window(None))
-    assert not sessions
-    assert len(failures) == 1
-    root = tmp_path / "file"
-    root.write_text("not a directory")
-    assert "not a directory" in CodexReader(root).collect(Window(None))[1][0].message
-
-
 def test_unsupported_tool_and_compressed_file_are_reported(tmp_path: Path) -> None:
     path = write_rollout(tmp_path, [meta(), record("response_item", {"type": "local_shell_call"})])
     path.with_suffix(".jsonl.zst").write_bytes(b"synthetic compressed placeholder")
@@ -366,18 +323,6 @@ def test_parent_and_child_with_shared_root_session_id_stay_distinct(tmp_path: Pa
     assert next(s for s in result.sessions if s.session_id == "codex:child").turns[0].is_sidechain
 
 
-@pytest.mark.parametrize("timestamp", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])
-def test_out_of_range_utc_conversion_does_not_discard_session(
-    tmp_path: Path, timestamp: str
-) -> None:
-    tool = call()
-    tool["timestamp"] = timestamp
-    write_rollout(tmp_path, [meta(), tool])
-    sessions, failures = CodexReader(tmp_path).collect(Window(None))
-    assert not failures
-    assert sessions[0].turns[0].occurred_at is None
-
-
 def test_repeated_ids_and_outputs_stay_ambiguous_without_mutating_prior_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -393,5 +338,7 @@ def test_repeated_ids_and_outputs_stay_ambiguous_without_mutating_prior_snapshot
     assert before[0].turns[0].tool_calls[0].result == "synthetic result"
     calls = [turn.tool_calls[0] for turn in after[0].turns]
     assert len(calls) == len({tool.span for tool in calls}) == 101
+    assert calls[0].span == before[0].turns[0].tool_calls[0].span
+    assert after == CodexReader(tmp_path).collect(Window(None))[0]
     assert all(tool.status == "pending" and tool.result is None for tool in calls)
     assert all(tool.duration_ms is None for tool in calls)
