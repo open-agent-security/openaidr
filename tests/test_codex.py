@@ -185,7 +185,18 @@ def test_cli_codex_collection_withholds_private_content(tmp_path: Path, mode: st
     payload = tool["payload"]
     assert isinstance(payload, dict)
     payload["arguments"] = json.dumps({"query": secret})
-    write_rollout(tmp_path, [meta(), message(secret), tool, output(body=secret)])
+    write_rollout(
+        tmp_path,
+        [
+            meta(base_instructions={"text": secret}),
+            message(secret),
+            record("event_msg", {"type": "user_message", "message": secret}),
+            message(secret, "developer"),
+            tool,
+            output(body=secret),
+            record("compacted", {"message": secret}),
+        ],
+    )
     args = ["--format", "json"] if mode == "json" else ["--detail"]
     result = subprocess.run(
         [

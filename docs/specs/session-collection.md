@@ -38,14 +38,18 @@ Claude Code adapts the pinned dependency. Codex uses an owned rollout reader
 because the pinned Codex parser drops custom calls and labels every output
 successful. Function/custom calls, full bodies, per-record times, unambiguous
 round-trip durations and separate subagent sessions are supported. Returned
-Codex calls are `unknown`; unresolved or ambiguous ones are `pending`.
+Codex calls are `unknown` without a structured outcome; recorded command, patch
+and MCP completions supply `ok`, `error`, or `rejected`. Ambiguous joins remain
+`pending`. Initial prompts, permission modes, injected context and compaction
+summaries use the same model fields as Claude. Native tool/web search and
+event-only nested executions are also collected.
 
 Codex discovers `rollout-*.jsonl` under `OPENAIDR_CODEX_ROOT`, or under
 `$CODEX_HOME/sessions` (default `~/.codex/sessions`). Physical record line numbers
 supply append-stable turn keys. Inherited subagent history is excluded using its
 recorded ordinal boundary. External history references, compressed files and
 unsupported response call/output families are reported as gaps. No MCP
-connection-log enrichment is attempted. See [ADR-0014](../adrs/0014-read-codex-rollouts-directly.md)
+connection-log enrichment is attempted. See [ADR-0015](../adrs/0015-codex-durable-enrichment.md)
 for exact projection and withholding rules.
 
 ### Historical dependency-only measurement

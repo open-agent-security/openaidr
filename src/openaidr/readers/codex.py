@@ -2,7 +2,7 @@
 
 A response record is a turn; output records resolve earlier calls, never add
 turns. Physical line numbers survive appended records and skipped event types.
-See ADR-0014 for identity, outcome and coverage boundaries.
+See ADR-0015 for identity, outcome and coverage boundaries.
 """
 
 from __future__ import annotations
@@ -15,14 +15,14 @@ from datetime import datetime
 from pathlib import Path
 
 from openaidr.kinds import map_source
-from openaidr.model import Session, ToolCall, Turn, span_id
+from openaidr.model import Compaction, ContextItem, Session, ToolCall, Turn, span_id
 from openaidr.readers.base import ReaderFailure, Window
 from openaidr.readers.common import directory_present, discover_files
 from openaidr.readers.common import timestamp as _time
 from openaidr.toolnames import split_tool_name
 
-_CALLS = {"function_call", "custom_tool_call"}
-_OUTPUTS = {"function_call_output", "custom_tool_call_output"}
+_CALLS = {"function_call", "custom_tool_call", "tool_search_call"}
+_OUTPUTS = {"function_call_output", "custom_tool_call_output", "tool_search_output"}
 
 
 def _text(value: object) -> str | None:
@@ -57,6 +57,11 @@ class _Projection:
     model: str | None = None
     cwd: str | None = None
     warnings: set[str] = field(default_factory=set)
+    context: list[ContextItem] = field(default_factory=list)
+    compactions: list[Compaction] = field(default_factory=list)
+    permission_mode: str | None = None
+    initial_prompt: str | None = None
+    event_calls: dict[str, int] = field(default_factory=dict)
 
     def project(self, record: dict[str, object], line: int) -> None:
         kind = record.get("type")
@@ -68,6 +73,9 @@ class _Projection:
                 raise ValueError("first record must contain session_meta.id")
             self.meta = payload
             self.cwd = _text(payload.get("cwd"))
+            instructions = payload.get("base_instructions")
+            if isinstance(instructions, dict):
+                self._context("base_instructions", _text(instructions.get("text")), line)
             self.started_at = _time(payload.get("timestamp"))
             if payload.get("history_base") is not None:
                 self.warnings.add("history_base prefix is not read; session history is incomplete")
@@ -99,20 +107,53 @@ class _Projection:
         if kind == "turn_context":
             self.model = _text(payload.get("model")) or self.model
             self.cwd = _text(payload.get("cwd")) or self.cwd
+            approval = payload.get("approval_policy")
+            sandbox = payload.get("sandbox_policy")
+            modes = [approval] if isinstance(approval, str) else []
+            if isinstance(sandbox, dict) and isinstance(sandbox.get("type"), str):
+                modes.append(sandbox["type"])
+            self.permission_mode = "; ".join(modes) or None
+        elif kind == "compacted":
+            self._context("compaction", _text(payload.get("message")), line)
+            self.compactions.append(Compaction("unknown", None, None))
+        elif kind == "event_msg":
+            self._event(payload, line, timestamp)
         elif kind == "response_item":
             self._response(payload, line, timestamp)
-        # event_msg duplicates response items and does not add turns. Compacted
-        # replacement_history is model context, not newly executed tool calls.
+        # Compaction replacement_history is context, never fresh executions.
 
     def _response(self, payload: dict[str, object], line: int, timestamp: datetime | None) -> None:
         item = payload.get("type")
         if not isinstance(item, str):
             raise TypeError("response item has no type")
+        if item == "web_search_call":
+            self._event(
+                {
+                    "type": "item_completed",
+                    "item": {
+                        **payload,
+                        "type": "WebSearch",
+                        "arguments": payload.get("action", {}),
+                    },
+                },
+                line,
+                timestamp,
+            )
+            return
         if item in _OUTPUTS:
             cid = _text(payload.get("call_id"))
+            if item == "tool_search_output":
+                if cid is None:
+                    return
+                payload = {**payload, "output": payload.get("tools", [])}
             if not cid or "output" not in payload:
                 raise ValueError("tool output requires call_id and output")
-            key = (item.removesuffix("_output"), cid)
+            key = (
+                "tool_search_call"
+                if item == "tool_search_output"
+                else item.removesuffix("_output"),
+                cid,
+            )
             duplicate = key in self.outputs
             self.outputs.add(key)
             position = self.calls.get(key)
@@ -126,6 +167,11 @@ class _Projection:
                     elapsed = int((timestamp - turn.occurred_at).total_seconds() * 1000)
                     duration = elapsed if elapsed >= 0 else None
                 result = _body(payload["output"])
+                status = "unknown" if call.status == "pending" else call.status
+                if item == "tool_search_output":
+                    status = {"completed": "ok", "failed": "error"}.get(
+                        str(payload.get("status")), "unknown"
+                    )
                 self.turns[position] = replace(
                     turn,
                     tool_calls=(
@@ -133,13 +179,14 @@ class _Projection:
                             call,
                             result=result,
                             result_size=len(result),
-                            status="unknown",
+                            status=status,
                             duration_ms=duration,
                         ),
                     ),
                 )
             else:
                 self._withhold(position)
+                self.calls[key] = None
             return
         if item not in _CALLS and item != "message":
             if item.endswith(("_call", "_output")):
@@ -155,11 +202,14 @@ class _Projection:
         tool_calls: tuple[ToolCall, ...] = ()
         if item == "message":
             role = _text(payload.get("role")) or "unknown"
+            if role in {"developer", "system"}:
+                self._context(role, _message_text(payload.get("content")), line)
+                return
             if role not in {"user", "assistant"}:
                 return
             text = _message_text(payload.get("content"))
         else:
-            name = _text(payload.get("name"))
+            name = "tool_search" if item == "tool_search_call" else _text(payload.get("name"))
             if not name:
                 raise ValueError("tool call has no name")
             namespace = _text(payload.get("namespace"))
@@ -217,15 +267,134 @@ class _Projection:
                 is_sidechain=sidechain,
                 tool_calls=tool_calls,
                 occurred_at=timestamp,
+                permission_mode=self.permission_mode,
             )
+        )
+
+    def _context(self, source: str, text: str | None, line: int) -> None:
+        if text:
+            assert self.meta is not None
+            self.context.append(
+                ContextItem(
+                    span_id(f"codex:{self.meta['id']}", f"line_{line}", 0), source, None, text
+                )
+            )
+
+    def _event(self, payload: dict[str, object], line: int, timestamp: datetime | None) -> None:
+        kind = payload.get("type")
+        if kind == "user_message":
+            if self.initial_prompt is None:
+                self.initial_prompt = _text(payload.get("message"))
+            return
+        if kind == "item_completed":
+            assert self.meta is not None
+            if payload.get("thread_id", self.meta["id"]) != self.meta["id"]:
+                return
+            item = payload.get("item")
+            if not isinstance(item, dict):
+                return
+            if item.get("type") == "UserMessage" and self.initial_prompt is None:
+                self.initial_prompt = _message_text(item.get("content"))
+                return
+        elif kind == "patch_apply_end":
+            item = {**payload, "type": "FileChange", "id": payload.get("call_id")}
+        elif kind == "mcp_tool_call_end":
+            result = payload.get("result")
+            invocation = payload.get("invocation")
+            if not isinstance(result, dict) or not isinstance(invocation, dict):
+                return
+            item = {
+                **invocation,
+                "type": "McpToolCall",
+                "id": payload.get("call_id"),
+                "status": "failed" if "Err" in result else "completed",
+                "result": result.get("Ok"),
+                "error": result.get("Err"),
+            }
+        else:
+            return
+        names = {
+            "CommandExecution": "CommandExecution",
+            "FileChange": "FileChange",
+            "McpToolCall": "McpToolCall",
+            "WebSearch": "web_search",
+        }
+        name = names.get(str(item.get("type")))
+        cid = _text(item.get("id"))
+        if name is None:
+            return
+        matches = (
+            [self.calls[(family, cid)] for family in _CALLS if (family, cid) in self.calls]
+            if cid
+            else []
+        )
+        if len(matches) > 1 or (matches and matches[0] is None):
+            return
+        position = matches[0] if matches else (self.event_calls.get(cid) if cid else None)
+        if position is None:
+            arguments = item.get("arguments", {})
+            if item.get("type") == "CommandExecution":
+                arguments = {"command": item.get("command", [])}
+            elif item.get("type") == "FileChange":
+                arguments = {"changes": item.get("changes", {})}
+            self._response(
+                {"type": "function_call", "name": name, "arguments": arguments}, line, timestamp
+            )
+            position = len(self.turns) - 1
+            if cid:
+                self.event_calls[cid] = position
+        turn = self.turns[position]
+        call = turn.tool_calls[0]
+        status = {"completed": "ok", "failed": "error", "declined": "rejected"}.get(
+            str(item.get("status")), "unknown"
+        )
+        result = item.get("result")
+        exit_code = item.get("exit_code")
+        if (isinstance(result, dict) and result.get("isError") is True) or (
+            isinstance(exit_code, int) and exit_code != 0
+        ):
+            status = "error"
+        error = item.get("error")
+        if isinstance(error, dict):
+            error = error.get("message")
+        body = call.result
+        if body is None:
+            raw = (
+                result if result is not None else item.get("aggregated_output", item.get("stdout"))
+            )
+            body = _body(raw) if raw is not None else None
+        self.turns[position] = replace(
+            turn,
+            tool_calls=(
+                replace(
+                    call,
+                    provider_call_id=cid,
+                    status=status,
+                    result=body,
+                    result_size=len(body) if body is not None else None,
+                    error_text=(_text(error) or _text(item.get("stderr")))
+                    if status == "error"
+                    else None,
+                    denial_kind="declined" if status == "rejected" else None,
+                    working_directory=_text(item.get("cwd")) or call.working_directory,
+                    attributed_plugin=_text(item.get("plugin_id")) or _text(item.get("pluginId")),
+                    mcp_server=_text(item.get("server")) or call.mcp_server,
+                    tool_name=_text(item.get("tool")) or call.tool_name,
+                ),
+            ),
         )
 
     def _withhold(self, position: int) -> None:
         turn = self.turns[position]
-        if turn.tool_calls[0].status == "pending":
-            return
         call = replace(
-            turn.tool_calls[0], status="pending", result=None, result_size=None, duration_ms=None
+            turn.tool_calls[0],
+            status="pending",
+            result=None,
+            result_size=None,
+            duration_ms=None,
+            error_text=None,
+            denial_kind=None,
+            attributed_plugin=None,
         )
         self.turns[position] = replace(turn, tool_calls=(call,))
 
@@ -248,6 +417,9 @@ class _Projection:
             machine=None,
             user=None,
             turns=tuple(self.turns),
+            initial_prompt=self.initial_prompt,
+            context_items=tuple(self.context),
+            compactions=tuple(self.compactions),
             agent_version=_text(self.meta.get("cli_version")),
             entrypoint=entrypoint,
             git_branch=_text(git.get("branch")) if isinstance(git, dict) else None,

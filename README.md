@@ -147,20 +147,25 @@ The default root is `$CODEX_HOME/sessions` (or `~/.codex/sessions`). Set
 `OPENAIDR_CODEX_ROOT` to read another sessions directory, including an archived
 sessions directory. Both `collect` and `IncrementalCollector` support `codex`.
 
-The reader preserves function/custom tool calls, arguments and result bodies,
-session metadata, per-record UTC times, and unambiguous round-trip durations.
-Subagent sessions remain separate, and recorded inherited-history boundaries
-exclude copied parent activity. Returned calls are `unknown`, not `ok`: Codex's
-serialized output omits its internal success flag. Missing or ambiguous results
-remain `pending`. Prompt, argument and result content stay off both CLI surfaces;
-the JSON activity view retains the working directory, as for Claude Code.
+The reader preserves function/custom calls, native tool/web search, full local
+bodies, UTC times, round-trip durations, and separate subagent sessions. Recorded
+inherited-history boundaries exclude copied parent activity. Structured command,
+patch, and MCP completion records supply `ok`, `error`, or `rejected`; plain
+outputs without an outcome remain `unknown`. Ambiguous joins remain `pending`.
+Nested executions with their own IDs remain separate calls.
+
+Like the Claude adapter, Codex uses the shared fields for initial prompt,
+permission mode, injected context, compactions, call working directory, plugin
+attribution, and MCP server/tool identity when recorded. Prompt, context,
+argument and result bodies stay off both CLI surfaces; the JSON activity view
+retains the working directory, as for Claude Code.
 
 Compressed rollouts, external `history_base` prefixes, and unsupported response
-tool-call families are reported as coverage gaps. Reasoning, event-message
-mirrors, injected context, compaction replacement history and agent-to-agent
-messages are not projected. New callable namespaces are preserved whole; only
-legacy flat `mcp__server__tool` names are split. There is no Codex MCP connection
-log enrichment. See [ADR-0014](docs/adrs/0014-read-codex-rollouts-directly.md).
+tool families are reported as coverage gaps. Compaction replacement history is
+not replayed. There is no Codex MCP connection-log enrichment, provider-refusal
+recovery, session-title lookup, or skill attribution. Compaction trigger/token
+counts are unavailable. Namespaced aliases are resolved only by explicit MCP
+completion metadata. See [ADR-0015](docs/adrs/0015-codex-durable-enrichment.md).
 
 ## Design
 
