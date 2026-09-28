@@ -376,3 +376,22 @@ def test_out_of_range_utc_conversion_does_not_discard_session(
     sessions, failures = CodexReader(tmp_path).collect(Window(None))
     assert not failures
     assert sessions[0].turns[0].occurred_at is None
+
+
+def test_repeated_ids_and_outputs_stay_ambiguous_without_mutating_prior_snapshot(
+    tmp_path: Path,
+) -> None:
+    path = write_rollout(tmp_path, [meta(), call(), output()])
+    reader = CodexReader(tmp_path)
+    before, _ = reader.collect_file(path)
+    with path.open("a") as stream:
+        for _ in range(100):
+            stream.write(json.dumps(call()) + "\n")
+            stream.write(json.dumps(output()) + "\n")
+    after, failures = reader.collect_file(path)
+    assert not failures
+    assert before[0].turns[0].tool_calls[0].result == "synthetic result"
+    calls = [turn.tool_calls[0] for turn in after[0].turns]
+    assert len(calls) == len({tool.span for tool in calls}) == 101
+    assert all(tool.status == "pending" and tool.result is None for tool in calls)
+    assert all(tool.duration_ms is None for tool in calls)

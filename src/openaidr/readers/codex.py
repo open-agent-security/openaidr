@@ -49,8 +49,9 @@ def _message_text(value: object) -> str:
 class _Projection:
     meta: dict[str, object] | None = None
     turns: list[Turn] = field(default_factory=list)
-    calls: dict[tuple[str, str], list[int]] = field(default_factory=dict)
-    outputs: dict[tuple[str, str], int] = field(default_factory=dict)
+    # None marks a reused id: all its calls stay pending, with no result join.
+    calls: dict[tuple[str, str], int | None] = field(default_factory=dict)
+    outputs: set[tuple[str, str]] = field(default_factory=set)
     started_at: datetime | None = None
     last_activity_at: datetime | None = None
     model: str | None = None
@@ -112,10 +113,12 @@ class _Projection:
             if not cid or "output" not in payload:
                 raise ValueError("tool output requires call_id and output")
             key = (item.removesuffix("_output"), cid)
-            self.outputs[key] = self.outputs.get(key, 0) + 1
-            positions = self.calls.get(key, [])
-            if len(positions) == 1 and self.outputs[key] == 1:
-                position = positions[0]
+            duplicate = key in self.outputs
+            self.outputs.add(key)
+            position = self.calls.get(key)
+            if position is None:
+                return
+            if not duplicate:
                 turn = self.turns[position]
                 call = turn.tool_calls[0]
                 duration = None
@@ -136,7 +139,7 @@ class _Projection:
                     ),
                 )
             else:
-                self._withhold(positions)
+                self._withhold(position)
             return
         if item not in _CALLS and item != "message":
             if item.endswith(("_call", "_output")):
@@ -192,10 +195,13 @@ class _Projection:
             )
             if cid:
                 call_key = (item, cid)
-                positions = self.calls.setdefault(call_key, [])
-                if positions:
-                    self._withhold(positions)
-                positions.append(len(self.turns))
+                if call_key in self.calls:
+                    previous = self.calls[call_key]
+                    if previous is not None:
+                        self._withhold(previous)
+                    self.calls[call_key] = None
+                else:
+                    self.calls[call_key] = len(self.turns)
         source = self.meta.get("source")
         sidechain = (
             (isinstance(source, dict) and "subagent" in source)
@@ -214,21 +220,14 @@ class _Projection:
             )
         )
 
-    def _withhold(self, positions: list[int]) -> None:
-        for position in positions:
-            turn = self.turns[position]
-            self.turns[position] = replace(
-                turn,
-                tool_calls=(
-                    replace(
-                        turn.tool_calls[0],
-                        status="pending",
-                        result=None,
-                        result_size=None,
-                        duration_ms=None,
-                    ),
-                ),
-            )
+    def _withhold(self, position: int) -> None:
+        turn = self.turns[position]
+        if turn.tool_calls[0].status == "pending":
+            return
+        call = replace(
+            turn.tool_calls[0], status="pending", result=None, result_size=None, duration_ms=None
+        )
+        self.turns[position] = replace(turn, tool_calls=(call,))
 
     def session(self) -> Session | None:
         if self.meta is None:
