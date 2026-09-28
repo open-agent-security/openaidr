@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-from pathlib import Path
 
 from . import __version__
 from .collector import collect, default_readers
@@ -52,11 +50,10 @@ def _sessions(args: argparse.Namespace) -> int:
         print(f"openaidr: {error}", file=sys.stderr)
         return 2
 
-    root = os.environ.get("OPENAIDR_CLAUDE_ROOT")
     collection = collect(
         parse_kind_filter(args.agent_kind),
         Window(since=since),
-        default_readers(root=Path(root) if root else None),
+        default_readers(),
     )
     output = (
         render_json(collection) if args.format == "json" else render_text(collection, args.detail)

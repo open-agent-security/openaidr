@@ -227,7 +227,11 @@ def test_cli_codex_collection_withholds_private_content(tmp_path: Path, mode: st
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, "OPENAIDR_CODEX_ROOT": str(tmp_path)},
+        env={
+            **os.environ,
+            "OPENAIDR_CODEX_ROOT": str(tmp_path),
+            "OPENAIDR_CLAUDE_ROOT": str(tmp_path / "claude"),
+        },
     )
     assert result.returncode == 0, result.stderr
     assert secret not in result.stdout + result.stderr

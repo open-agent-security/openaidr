@@ -303,7 +303,11 @@ class ClaudeCodeReader:
     agent_kind = "claude-code"
 
     def __init__(self, root: Path | None = None, mcp_logs: MCPLogIndex | None = None) -> None:
-        self._root = root if root is not None else DEFAULT_ROOT
+        self._root = (
+            root
+            if root is not None
+            else Path(os.environ.get("OPENAIDR_CLAUDE_ROOT", str(DEFAULT_ROOT)))
+        )
         self._parser = ClaudeParser()
         #: transcript path -> everything that file records and upstream drops.
         #: One read per file per `collect()` pass, however many sessions or
