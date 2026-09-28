@@ -364,3 +364,15 @@ def test_parent_and_child_with_shared_root_session_id_stay_distinct(tmp_path: Pa
     assert {s.session_id for s in result.sessions} == {"codex:parent", "codex:child"}
     assert {s.turns[0].tool_calls[0].result for s in result.sessions} == {"parent", "child"}
     assert next(s for s in result.sessions if s.session_id == "codex:child").turns[0].is_sidechain
+
+
+@pytest.mark.parametrize("timestamp", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])
+def test_out_of_range_utc_conversion_does_not_discard_session(
+    tmp_path: Path, timestamp: str
+) -> None:
+    tool = call()
+    tool["timestamp"] = timestamp
+    write_rollout(tmp_path, [meta(), tool])
+    sessions, failures = CodexReader(tmp_path).collect(Window(None))
+    assert not failures
+    assert sessions[0].turns[0].occurred_at is None

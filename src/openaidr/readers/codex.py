@@ -11,12 +11,14 @@ import json
 import os
 import stat
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from openaidr.kinds import map_source
 from openaidr.model import Session, ToolCall, Turn, span_id
 from openaidr.readers.base import ReaderFailure, Window
+from openaidr.readers.common import directory_present, discover_files
+from openaidr.readers.common import timestamp as _time
 from openaidr.toolnames import split_tool_name
 
 _CALLS = {"function_call", "custom_tool_call"}
@@ -25,16 +27,6 @@ _OUTPUTS = {"function_call_output", "custom_tool_call_output"}
 
 def _text(value: object) -> str | None:
     return value if isinstance(value, str) else None
-
-
-def _time(value: object) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def _body(value: object) -> str:
@@ -325,47 +317,32 @@ class CodexReader:
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         try:
-            mode = self._root.stat().st_mode
-        except FileNotFoundError:
-            try:
-                self._root.lstat()
-            except FileNotFoundError:
+            if not directory_present(self._root):
                 return [], []
-            except OSError as error:
-                return [], [self._failure(self._root, str(error))]
-            return [], [self._failure(self._root, "broken symlink")]
         except OSError as error:
             return [], [self._failure(self._root, str(error))]
-        if not stat.S_ISDIR(mode):
-            return [], [self._failure(self._root, "not a directory")]
         sessions: list[Session] = []
-        failures: list[ReaderFailure] = []
-        walk_errors: list[OSError] = []
-        for directory, dirs, files in os.walk(self._root, onerror=walk_errors.append):
-            dirs.sort()
-            for filename in sorted(files):
-                if not filename.startswith("rollout-"):
+        paths, walk_errors = discover_files(
+            self._root, prefix="rollout-", suffixes=(".jsonl", ".jsonl.zst")
+        )
+        failures = [self._failure(self._root, str(error)) for error in walk_errors]
+        for path in paths:
+            if path.name.endswith(".jsonl.zst"):
+                failures.append(self._failure(path, "compressed rollout is not read"))
+                continue
+            try:
+                info = path.stat()
+                if not stat.S_ISREG(info.st_mode):
+                    failures.append(self._failure(path, "not a regular file"))
                     continue
-                path = Path(directory) / filename
-                if filename.endswith(".jsonl.zst"):
-                    failures.append(self._failure(path, "compressed rollout is not read"))
+                if window.since and info.st_mtime < window.since.timestamp():
                     continue
-                if not filename.endswith(".jsonl"):
-                    continue
-                try:
-                    info = path.stat()
-                    if not stat.S_ISREG(info.st_mode):
-                        failures.append(self._failure(path, "not a regular file"))
-                        continue
-                    if window.since and info.st_mtime < window.since.timestamp():
-                        continue
-                except OSError as error:
-                    failures.append(self._failure(path, str(error)))
-                    continue
-                found, errors = self._read(path, _Cursor())
-                sessions.extend(found)
-                failures.extend(errors)
-        failures.extend(self._failure(self._root, str(error)) for error in walk_errors)
+            except OSError as error:
+                failures.append(self._failure(path, str(error)))
+                continue
+            found, errors = self._read(path, _Cursor())
+            sessions.extend(found)
+            failures.extend(errors)
         return sessions, failures
 
     def collect_file(self, path: Path) -> tuple[list[Session], list[ReaderFailure]]:

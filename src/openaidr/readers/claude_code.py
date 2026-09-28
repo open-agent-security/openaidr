@@ -61,6 +61,9 @@ from openaidr.readers.claude_code_mcp import (
     _IncrementalMCPLogReader,
     read_mcp_logs,
 )
+from openaidr.readers.common import directory_present
+from openaidr.readers.common import discover_files as _discover_transcripts
+from openaidr.readers.common import timestamp as _timestamp
 from openaidr.toolnames import split_tool_name
 
 #: Where Claude Code keeps session transcripts, one directory per project root.
@@ -336,48 +339,10 @@ class ClaudeCodeReader:
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         try:
-            root_is_dir = stat.S_ISDIR(self._root.stat().st_mode)
-        except FileNotFoundError:
-            # `stat()` follows symlinks, so this also fires for a dangling
-            # symlink at `self._root` -- indistinguishable from true absence
-            # unless `lstat()` is asked whether anything is there at all.
-            try:
-                self._root.lstat()
-            except FileNotFoundError:
-                # No configured or default root is the ordinary state for a
-                # machine that has never run Claude Code -- not a failure.
+            if not directory_present(self._root):
                 return [], []
-            except OSError as error:
-                return [], [
-                    ReaderFailure(agent_kind=self.agent_kind, message=f"{self._root}: {error}")
-                ]
-            # `lstat()` succeeded where `stat()` did not: a symlink exists at
-            # `self._root` but its target does not -- a broken
-            # `OPENAIDR_CLAUDE_ROOT` or a stray dangling link at the default
-            # path, not the ordinary absence the inner `FileNotFoundError`
-            # above handles.
-            return [], [
-                ReaderFailure(agent_kind=self.agent_kind, message=f"{self._root}: broken symlink")
-            ]
         except OSError as error:
-            # The root exists but could not be statted -- a permission or
-            # transient filesystem failure, unlike the ordinary absence
-            # above. `Path.is_dir()` cannot be used to tell them apart: before
-            # Python 3.14 it propagates some `OSError`s and swallows others,
-            # and from 3.14 it swallows every `OSError` and reports `False`,
-            # indistinguishable from a root that was never configured.
             return [], [ReaderFailure(agent_kind=self.agent_kind, message=f"{self._root}: {error}")]
-        if not root_is_dir:
-            # The root exists but is not a directory -- a misconfigured
-            # `OPENAIDR_CLAUDE_ROOT` or a stray file at the default path, not
-            # the ordinary absence the `FileNotFoundError` branch above
-            # handles. Reporting it as a plain empty collection would make it
-            # indistinguishable from "Claude Code has never run here", which
-            # is exactly the falsehood-as-absence AGENTS.md's conventions
-            # rule out.
-            return [], [
-                ReaderFailure(agent_kind=self.agent_kind, message=f"{self._root}: not a directory")
-            ]
         # Scoped to this pass, not this reader's lifetime: a session file is
         # append-only, so a reader kept alive across repeated `collect()` calls
         # (the steady-state design in docs/specs/session-collection.md) must see
@@ -1978,44 +1943,6 @@ def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _timestamp(value: object) -> datetime | None:
-    """A record's timestamp as an instant in UTC, or None where it stated none.
-
-    **One rule, and it is the dependency's** (ADR-0010). `adr-sensor` resolves
-    the session start by converting an offset-bearing value to UTC and taking a
-    value with no offset as UTC; this does the same, so the two time fields on
-    the model cannot resolve a zone differently. A model where the session start
-    guesses and a turn's time refuses to is one a consumer has to memorise.
-
-    Converting to UTC rather than passing the offset through is lossless -- the
-    same instant, one canonical spelling -- and it is what lets times from
-    machines in different zones be compared, sorted and folded at all. `Z` needs
-    no rewriting here: `fromisoformat` accepts it on every Python this package
-    supports.
-
-    An unparseable value is None, which is the *absence* of a time rather than
-    an interpretation of one -- the line this package does not cross is
-    inventing a value the transcript never stated.
-
-    The conversion is inside the guard, not after it, because the parse is not
-    the only step that rejects a value: a boundary instant `fromisoformat`
-    accepts can still have an offset that pushes it off the end of `datetime`,
-    and `astimezone` raises `OverflowError` -- not a `ValueError` -- when it
-    does. A record's timestamp is an arbitrary string from the file, so that is
-    reachable by any writer; left to escape it fails the whole kind and discards
-    every valid session, rather than leaving this one value absent.
-    """
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        moment = datetime.fromisoformat(value)
-        if moment.tzinfo is None:
-            return moment.replace(tzinfo=UTC)
-        return moment.astimezone(UTC)
-    except (OverflowError, ValueError):
-        return None
-
-
 def _decode_project_directory(name: str) -> str | None:
     """`-Users-me-Projects-thing` -> `/Users/me/Projects/thing`, if it uniquely exists.
 
@@ -2103,28 +2030,3 @@ def _within_window(path: Path, window: Window) -> bool:
         return True
     modified = datetime.fromtimestamp(path.stat().st_mtime, tz=window.since.tzinfo)
     return modified >= window.since
-
-
-def _discover_transcripts(root: Path) -> tuple[list[Path], list[OSError]]:
-    """Every `*.jsonl` path under `root`, and every subtree scan `glob()`
-    would have silently dropped.
-
-    `Path.glob()`/`Path.rglob()` suppress every `OSError` raised while
-    scanning the filesystem as of Python 3.13 -- including a `PermissionError`
-    on a directory this process cannot list -- so a subdirectory this process
-    cannot enter vanishes from `**/*.jsonl` with no trace: not a failure, not
-    even a path the per-file `stat()` guards below get a chance to report on.
-    Nothing downstream can recover a file glob never yielded a path for in the
-    first place -- unlike a listed path that later fails to stat or parse,
-    there is no filename here for `_ambiguous_transcript_ids` to fall back to
-    either (ADR-0008's fallback presumes a name was seen).
-
-    `os.walk`'s `onerror` is the one stdlib primitive still willing to name a
-    directory it could not scan rather than swallowing it the way `glob()`
-    now does; each error's `filename` attribute is the directory that failed.
-    """
-    files: list[Path] = []
-    failures: list[OSError] = []
-    for dirpath, _dirnames, filenames in os.walk(root, onerror=failures.append):
-        files.extend(Path(dirpath) / name for name in filenames if name.endswith(".jsonl"))
-    return sorted(files), failures
