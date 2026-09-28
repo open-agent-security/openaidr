@@ -10,18 +10,15 @@ Session collection for AI coding agents.
 OpenAIDR reads the session state AI coding agents already write to disk and
 normalises it into one session model with stable span identity.
 
-> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). One
-> agent kind reads today (`claude-code`). Start with
+> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Two
+> agent kinds read today (`claude-code` and `codex`). Start with
 > [Install and run](#install-and-run), then
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
 
-**Today it reads one kind: Claude Code.** Codex and Cursor are the intended next
-kinds and are not read yet — a session from either is absent from the output
-entirely, not collected and marked. The parsing dependency supports more formats
-than this package instantiates, which is a distinction worth holding onto; what
-each additional kind would cost is measured in
-[Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage).
+**Today it reads Claude Code and Codex.** Cursor is not read yet. Codex support
+covers function and custom tool calls in rollout JSONL, including incremental
+reads of growing files. See [Codex coverage](#codex-coverage) for the boundaries.
 
 It answers **what an agent did**, never what that means. No scoring, no identity
 resolution, no findings, no upload path. Interpreting a session is a consumer's
@@ -30,8 +27,9 @@ job; OpenAIDR takes no position on what a consumer concludes.
 ## What OpenAIDR reads, and what it emits
 
 OpenAIDR reads files the agent already wrote — Claude Code's JSONL transcripts
-and its per-server MCP connection logs — opened **read-only**. No process hooks,
-no proxy, no injected agent, no listener, and nothing is written back.
+and its per-server MCP connection logs, plus Codex rollout JSONL — opened
+**read-only**. No process hooks, no proxy, no injected agent, no listener, and
+nothing is written back.
 
 **There is no upload path at all.** OpenAIDR reads, normalises and returns a
 model. It opens no network connection and ships nothing anywhere. What a
@@ -74,7 +72,7 @@ boundary is your call to state.
 
 ## What OpenAIDR adds on top of `adr-sensor`
 
-Session parsing itself comes from [Uber's ADR project](https://github.com/uber/ADR)
+Claude Code session parsing comes from [Uber's ADR project](https://github.com/uber/ADR)
 (`adr-sensor`, Apache-2.0) — it owns the on-disk formats, and it is OpenAIDR's
 only runtime dependency. It is confined behind an adapter: upstream types
 convert at the reader boundary and never appear elsewhere. Any one agent kind
@@ -138,6 +136,32 @@ claude-code:96a1d0d4-d106-4cd1-9031-1e174593f8d0  [claude-code]  2026-08-29T05:1
 one kind, and `--since` bounds the window. Nothing is resolved to a component
 and nothing is judged: what a consumer concludes is the consumer's concern.
 
+## Codex coverage
+
+```bash
+openaidr sessions --agent-kind codex --since 2d --detail
+openaidr sessions --agent-kind codex --format json
+```
+
+The default root is `$CODEX_HOME/sessions` (or `~/.codex/sessions`). Set
+`OPENAIDR_CODEX_ROOT` to read another sessions directory, including an archived
+sessions directory. Both `collect` and `IncrementalCollector` support `codex`.
+
+The reader preserves function/custom tool calls, arguments and result bodies,
+session metadata, per-record UTC times, and unambiguous round-trip durations.
+Subagent sessions remain separate, and recorded inherited-history boundaries
+exclude copied parent activity. Returned calls are `unknown`, not `ok`: Codex's
+serialized output omits its internal success flag. Missing or ambiguous results
+remain `pending`. Prompt, argument and result content stay off both CLI surfaces;
+the JSON activity view retains the working directory, as for Claude Code.
+
+Compressed rollouts, external `history_base` prefixes, and unsupported response
+tool-call families are reported as coverage gaps. Reasoning, event-message
+mirrors, injected context, compaction replacement history and agent-to-agent
+messages are not projected. New callable namespaces are preserved whole; only
+legacy flat `mcp__server__tool` names are split. There is no Codex MCP connection
+log enrichment. See [ADR-0014](docs/adrs/0014-read-codex-rollouts-directly.md).
+
 ## Design
 
 [`docs/specs/session-collection.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md)
@@ -149,8 +173,8 @@ and a doc index in
 
 ## Status
 
-**Beta.** Session collection works for `claude-code`: sessions, turns, tool
-calls, and span identity, read by an OpenAIDR-owned reader that calls
+**Beta.** Session collection works for `claude-code` and `codex`. Claude Code
+provides sessions, turns, tool calls, and span identity through a reader that calls
 `adr-sensor`'s Claude Code parser one file at a time and normalises everything
 upstream's shared event schema cannot express. The model has six outcome
 statuses; this reader emits five of them (`unknown`, `rejected`, `pending`,
@@ -160,7 +184,7 @@ neither source records it.
 
 Not yet built, in the order they matter:
 
-- **Two further agent kinds, Codex and Cursor.** What each would cost is
+- **Cursor.** What it would cost is
   measured in [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage)
   rather than assumed — including why Cursor cannot be added dependency-only
   without breaking span identity.

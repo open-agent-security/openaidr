@@ -280,7 +280,7 @@ def test_mcp_coverage_names_not_attempted_rather_than_leaving_it_unexplained() -
     )
     output = render_text(Collection(sessions=[session], failures=[]))
     assert "0 of 1 sessions with MCP calls enriched" in output
-    assert "1 not attempted: a subagent transcript" in output
+    assert "1 not attempted: no MCP connection-log reader applies" in output
 
 
 def test_a_connection_that_failed_before_any_call_is_still_reported() -> None:

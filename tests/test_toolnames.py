@@ -28,3 +28,18 @@ def test_unknown_kind_never_guesses_a_server() -> None:
 @pytest.mark.parametrize("raw", ["mcp__", "mcp__github", "mcp____x"])
 def test_malformed_claude_names_are_left_whole(raw: str) -> None:
     assert split_tool_name("claude-code", raw) == (None, raw)
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("mcp__my_server__do_thing", ("my_server", "do_thing")),
+        ("exec_command", (None, "exec_command")),
+        ("functions.exec_command", (None, "functions.exec_command")),
+        ("mcp__github", (None, "mcp__github")),
+        ("mcp____tool", (None, "mcp____tool")),
+        ("mcp__github.lookup", (None, "mcp__github.lookup")),
+    ],
+)
+def test_codex_only_splits_legacy_flattened_mcp_names(raw, expected) -> None:
+    assert split_tool_name("codex", raw) == expected
