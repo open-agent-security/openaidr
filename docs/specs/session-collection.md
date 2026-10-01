@@ -18,7 +18,7 @@ kind](#one-contract-per-agent-kind)).
 
 | | `adr-sensor` supplies | OpenAIDR adds |
 |---|---|---|
-| **Agent formats** | Seven kinds parsed, of which this package instantiates **one** ([Agent kind coverage](#agent-kind-coverage)) | Nothing — this is why the dependency exists |
+| **Agent formats** | Seven kinds parsed, of which this package adapts **one** (Codex has an owned reader) ([Agent kind coverage](#agent-kind-coverage)) | An owned Codex reader where the dependency loses evidence |
 | **Discovery** | A whole-tree pass keyed on the `sessionId` field | Which files exist, and which session each one *is* — the per-file call that keeps a subagent distinct from its parent |
 | **Span identity** | No identifier on a tool call | Derived from session, turn key and the call's index within that turn |
 | **Status** | `success` / `unknown`, per parser | `pending` from a missing result, `rejected` inferred from the refusal wording that survives in the result body |
@@ -31,32 +31,32 @@ and results before OpenAIDR sees them.
 
 ## Agent kind coverage
 
-**One kind today: `claude-code`.** `default_readers()` returns exactly one
-reader, and `AGENT_KIND_BY_SOURCE` holds exactly one row. Every other agent kind
-is **not read at all** — not read shallowly, not read and marked. A Codex or
-Cursor session sitting on the same machine is absent from this package's output
-entirely.
+**Two kinds today: `claude-code` and `codex`.** Both are registered in the cold
+and incremental collectors and in `AGENT_KIND_BY_SOURCE`. Cursor remains unread.
 
-**"The dependency parses it" is not "OpenAIDR reads it",** and the gap between
-those two statements is the most likely thing to be misread about this package.
-`adr-sensor` ships parsers for seven kinds; this package instantiates one of
-them. Reading a kind takes two more things that are ours: a reader implementing
-the collection contract, and a row mapping the agent's own on-disk source name to
-an agent kind. Neither exists for any kind but Claude Code.
+Claude Code adapts the pinned dependency. Codex uses an owned rollout reader
+because the pinned Codex parser drops custom calls and labels every output
+successful. Function/custom calls, full bodies, per-record times, unambiguous
+round-trip durations and separate subagent sessions are supported. Returned
+Codex calls are `unknown` without a structured outcome; recorded command, patch
+and MCP completions supply `ok`, `error`, or `rejected`. Ambiguous joins remain
+`pending`. Initial prompts, permission modes, injected context and compaction
+summaries use the same model fields as Claude. Native tool/web search and
+event-only nested executions are also collected.
 
-Nor is an unread kind the same as a *kind-anonymous* one. Kind-anonymous
-(see [Source vocabulary](#source-vocabulary)) describes a session this package
-**collected** and could not place. A kind with no reader produces no session to
-place, so it never reaches that path and never appears in a coverage count. The
-absence is total and silent, which is why it is declared here.
+Codex discovers `rollout-*.jsonl` under `OPENAIDR_CODEX_ROOT`, or under
+`$CODEX_HOME/sessions` (default `~/.codex/sessions`). Physical record line numbers
+supply append-stable turn keys. Inherited subagent history is excluded using its
+recorded ordinal boundary. External history references, compressed files and
+unsupported response call/output families are reported as gaps. No MCP
+connection-log enrichment is attempted. See [ADR-0015](../adrs/0015-codex-durable-enrichment.md)
+for exact projection and withholding rules.
 
-### Codex and Cursor are the intended next kinds
+### Historical dependency-only measurement
 
-Both are still to do. What follows is not a plan but the measurement that should
-inform one, taken from one active development machine so the cost is known before
-the work is scheduled rather than discovered during it. Both would arrive
-**dependency-only** — the recoveries the Claude Code reader performs are per-kind
-and none of them would carry over.
+The following measurement predates Codex support and describes the pinned
+parsers alone, not the owned Codex reader above. It remains the baseline for
+future dependency changes and the still-unimplemented Cursor reader.
 
 | | Measured |
 |---|---|
@@ -488,7 +488,7 @@ position on what a consumer concludes.
 
 ## Non-goals
 
-- Parsing agent formats directly, for kinds the dependency covers
+- Parsing agent formats directly where the dependency meets the fidelity contract
 - Any interpretation: no scoring, no identity resolution, no findings
 - Retaining session content beyond the current view
 - Any upload path — OpenAIDR returns a model and ships nothing anywhere

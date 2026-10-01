@@ -22,6 +22,7 @@ from openaidr.readers.base import (
     collect_from,
 )
 from openaidr.readers.claude_code import ClaudeCodeReader
+from openaidr.readers.codex import CodexReader
 
 
 @dataclass(frozen=True)
@@ -33,13 +34,13 @@ class Collection:
 
 
 def default_readers(root: Path | None = None) -> list[Reader]:
-    """The readers this package ships. One kind today."""
-    return [ClaudeCodeReader(root=root)]
+    """The cold readers this package ships."""
+    return [ClaudeCodeReader(root=root), CodexReader(root=root)]
 
 
 def default_incremental_readers(root: Path | None = None) -> list[IncrementalReader]:
-    """The stateful readers this package ships. One kind today."""
-    return [ClaudeCodeReader(root=root)]
+    """The stateful readers this package ships."""
+    return [ClaudeCodeReader(root=root), CodexReader(root=root)]
 
 
 class IncrementalCollector:

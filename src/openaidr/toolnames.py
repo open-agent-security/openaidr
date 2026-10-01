@@ -20,6 +20,13 @@ def split_tool_name(agent_kind: str | None, raw: str) -> tuple[str | None, str]:
     """
     if agent_kind == "claude-code":
         return _split_claude_code(raw)
+    # Codex's legacy flattened MCP names use this exact delimiter. New
+    # callable namespaces may be sanitized/hashed aliases, not server ids;
+    # preserve those whole rather than guessing a configured server.
+    if agent_kind == "codex" and "." not in raw and raw.startswith("mcp__"):
+        server, separator, tool = raw[5:].partition("__")
+        if separator and server and tool:
+            return server, tool
     return None, raw
 
 

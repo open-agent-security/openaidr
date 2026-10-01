@@ -7,10 +7,9 @@ normalises it into one session model with stable span identity. It answers *what
 an agent did*, never what that means: no scoring, no identity resolution, no
 findings, and no upload path.
 
-**It reads one agent kind today: `claude-code`.** Codex and Cursor are the
-intended next kinds and are not read yet — a session from either is absent from
-the output entirely, not collected and marked. `adr-sensor` parses seven kinds;
-this package instantiates one of them. Do not describe the others as supported.
+**It reads two agent kinds today: `claude-code` and `codex`.** Claude Code uses
+an adapter around `adr-sensor`; Codex uses an owned rollout reader (ADR-0014).
+Cursor is not read yet. Do not describe it as supported.
 
 Apache-2.0, and deliberately plumbing rather than judgement. Every new agent
 format is coverage a contributor can add without touching anything that

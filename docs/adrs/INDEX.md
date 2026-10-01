@@ -21,6 +21,8 @@ against the rules in effect at the time.
 
 ## Active
 
+- [0014](0014-read-codex-rollouts-directly.md) — **Read Codex rollouts directly.** Record-level append identity, function/custom calls, conservative outcomes, subagent history boundaries and explicit coverage gaps. Read before changing Codex projection or result matching.
+
 - [0013](0013-defer-native-windows-support.md) — **Defer native Windows support.** Target macOS and Linux hosts; Windows-only runtime compatibility is deferred without changing existing reader coverage. Read before adding platform fallbacks or treating Windows parity as a release requirement.
 
 - [0001](0001-session-turn-and-subagent-identity.md) — **Session, turn and span identity for file-backed transcripts.** A turn is one non-relay message record; a subagent file is its own path-namespaced session; a repeated provider call id demotes only the later occurrence and withholds outcomes for both. Read before changing how any identity is derived, or before assuming a provider call id is unique.

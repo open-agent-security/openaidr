@@ -36,7 +36,9 @@ by `--no-verify`, fix the gate instead — the hook exists so CI is never the
 first place a contributor learns something is broken.
 
 To run the CLI against transcripts somewhere other than the default root, set
-`OPENAIDR_CLAUDE_ROOT`. That is also how the end-to-end tests drive it.
+`OPENAIDR_CLAUDE_ROOT` or `OPENAIDR_CODEX_ROOT`. The latter names the Codex
+sessions directory itself; otherwise Codex uses `$CODEX_HOME/sessions` or
+`~/.codex/sessions`. These overrides also drive the end-to-end tests.
 
 ### A note on the committed agent hooks
 

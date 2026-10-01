@@ -21,3 +21,7 @@ def test_explicit_filter_excludes_other_kinds_and_the_unmapped() -> None:
     assert selection.includes("claude-code")
     assert not selection.includes("cursor")
     assert not selection.includes(None)
+
+
+def test_codex_source_maps_to_its_reader_kind() -> None:
+    assert map_source("codex") == "codex"
