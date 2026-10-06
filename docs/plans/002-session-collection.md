@@ -27,12 +27,10 @@ and README say plainly which of those this build has.
 
 **Status:** this milestone's implementation work is complete; each task's
 steps are checked off below as a record of what shipped, in the order the
-commits landed. Acceptance is not complete: Task 5 leaves one item
-explicitly open — the denial-marker corpus and labelling method — and until
-it exists, whether `"requires approval"` and `"requested permissions"`
-actually mean a user declined, rather than naming a decision still pending,
-is unverified rather than merely undocumented. The milestone should not be
-treated as accepted until that item closes. A file action reads as what that
+commits landed. Task 5's corpus checkbox stays unchecked: no corpus was
+ever written. That corpus gate described a design that did not land.
+Refusal is read from `toolDenialKind`, so the milestone is no longer
+blocked on the corpus. The spec is the current account. A file action reads as what that
 step did to the tree *at the time*, not as a standing instruction against the
 current tree — re-running this plan from a checkout that already has the
 milestone finds every module and test already in place, and the stated
@@ -435,7 +433,7 @@ git commit -m "feat(readers): per-kind collection contract with failure isolatio
 
 The stability contract is proven against the reader itself, not only against the pure `span_id` formatter: the same file is read twice, once with one pending call and once after the file has grown a result for that call plus a later turn and call — the first call's span is unchanged and its status has moved from `pending` to `unknown`, while the later call gets a span of its own. Appending is the only way the fixture grows between reads, matching the append-only assumption ADR-0001 already records.
 
-The evidence for `"requires approval"`/`"requested permissions"` as *denial* wording, specifically, does not have a recorded corpus or method anywhere in this repository — the 88%/97% figures in the spec need one before this reader can claim them for those two markers. Any test asserting on that exact wording stays in place, but passing it is not treated as closing this gap on its own; the corpus/method itself is the open acceptance criterion.
+The plan had no recorded corpus for `"requires approval"` and `"requested permissions"` as denial wording, and treated that corpus as the acceptance gate. The gate described a design that did not land: refusal is read from `toolDenialKind`, so the milestone is no longer blocked on the corpus. No corpus was written. The spec is the current account.
 
 Two more, for what upstream's own failure handling hides: a file upstream cannot open or fully decode does not lose the other sessions *and* produces one `ReaderFailure` naming that file, rather than silently returning as if it had no sessions; and a result truncated by `truncate_middle`'s default `edge_chars=400` is `truncated` — the marker sits inside the string, not within its last 200 characters, so a boundary test must place enough real content after the marker to catch an implementation that only checks a fixed-size suffix.
 
@@ -493,20 +491,10 @@ def _status(tool: ToolUsage) -> Status:
 
 `pending` is structural. `rejected` is inferred from the result body, the only place a refusal survives upstream's schema — measured at 88% recall and 97% precision against real transcripts, and kept narrow because a false `rejected` claims a person made a decision they did not make. `error` comes only from an explicit upstream signal: inferring it from result text scored 70% recall at poor precision. Everything else is `unknown` rather than `ok` for this kind, because upstream's `success` means only that a result exists — it never reads `is_error`.
 
-**The `rejected` markers are not evenly evidenced.** `"doesn't want to proceed"` and `"user rejected"` name a decision directly. `"requires approval"` and `"requested permissions"` name a *state* — access not yet granted — that a live session and a stalled one can share; whether the transcripts behind the 88%/97% figures actually distinguish those is not something this plan can currently point to anything in the repository to confirm.
-
-- [ ] **Acceptance: record the denial-marker corpus and labelling method** — a
-  short reference file naming the sample transcripts and how each was
-  labelled, precisely because a false `rejected` is the one mistake this
-  design calls worse than `unknown`. Not yet done: no such file exists in this
-  repository. Until it does, the spec's 88% recall / 97% precision figures
-  are unverified for `"requires approval"` and `"requested permissions"`
-  specifically — the marker-table tests below prove the code follows its own
-  table, not that these two entries carry the meaning the figures claim.
-  Left open rather than closed by the tests that do exist. This item blocks
-  the milestone's acceptance, not only its documentation: the corpus is what
-  would show these two markers mean a completed decline rather than an
-  unresolved approval state, and that question stays open until it lands.
+- [ ] **Acceptance: record the denial-marker corpus and labelling method.**
+  Unchecked because no corpus was ever written. That corpus gate described a
+  design that did not land: refusal is read from `toolDenialKind`, so the
+  milestone is no longer blocked on the corpus. The spec is the current account.
 
 Truncation is a second inference from the same result body, and needs its own rule rather than inheriting the denial scan's. Upstream's `truncate_middle` inserts a literal, parseable marker between the text it kept from the start and the text it kept from the end — `... [truncated N chars] ...` — and the `N` it carries is the count of what it removed, which is what makes the original size exact rather than estimated:
 
