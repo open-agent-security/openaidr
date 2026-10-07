@@ -93,8 +93,19 @@ def _subagents_directory(path: Path, root: Path) -> Path | None:
     fail to match a `path` that really is under it. A path that is not under
     `root` once resolved has no "below `root`" to search, so it is never
     treated as a subagent rather than guessed from its unrelated ancestry.
+
+    `_discover_transcripts` calls this while filtering every `*.jsonl` path
+    it walks, before the per-file `stat()` below gets a chance to isolate a
+    broken one, so a resolution failure here must not raise: a symlink loop
+    makes `resolve()` raise `RuntimeError` even without `strict=True`, and
+    one such file anywhere under `root` would otherwise abort discovery for
+    every session. Leaving the path unresolved for the bound below, as a
+    main-session file, lets `stat()` catch and isolate it by its own name.
     """
-    path, root = path.resolve(), root.resolve()
+    try:
+        path, root = path.resolve(), root.resolve()
+    except (RuntimeError, OSError):
+        return None
     try:
         depth = len(path.relative_to(root).parts) - 1
     except ValueError:

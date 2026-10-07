@@ -240,6 +240,33 @@ def test_an_unresolved_dotdot_cannot_make_relative_to_lexically_succeed(
     assert [s.session_id for s in sessions] == ["claude-code:s1"]
 
 
+def test_a_symlink_loop_transcript_does_not_abort_discovery_for_other_sessions(
+    tmp_path: Path,
+) -> None:
+    """`_discover_transcripts` calls `_subagents_directory` (through
+    `_is_transcript`) while filtering every `*.jsonl` path it walks, before the
+    per-file `stat()` loop below gets a chance to isolate a broken one.
+    `Path.resolve()` raises `RuntimeError` on a symlink loop even without
+    `strict=True`; letting that escape would abort the whole walk and drop
+    every other session discovered in the same pass, not just the broken one."""
+    root = tmp_path / "projects"
+    write_session(
+        root,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    loop = root / "-p" / "loop.jsonl"
+    loop.symlink_to(loop)
+
+    sessions, failures = ClaudeCodeReader(root=root).collect(Window(since=None))
+
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+    assert any("loop.jsonl" in f.message for f in failures)
+
+
 def test_a_workflow_agents_project_root_is_the_parent_of_its_session(tmp_path: Path) -> None:
     project = tmp_path / "work" / "my-project"
     project.mkdir(parents=True)
