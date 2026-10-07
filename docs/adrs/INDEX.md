@@ -19,6 +19,11 @@ frontmatter to `status: superseded` + `superseded-by: NNNN`. Never
 edit an accepted ADR's body in place — old PRs need to be readable
 against the rules in effect at the time.
 
+## Proposed
+
+- [0014](0014-record-usage-once-per-provider-response.md) — **Record usage once per provider response, from its last record.** Claude Code writes one response as several records that each repeat its usage, and the earlier ones are streaming snapshots that undercount output. A response is keyed by `message.id` within its session, every field comes from its last committed record, it is final only when that record has a stop reason (most sub-agent responses never get one, so their output is a lower bound), a turn links to it by id, and a parent's delegation summary is never usage. Read before reading token usage from any record, deduplicating it, filling in a non-final count, or attaching it to a turn.
+- [0015](0015-report-tokens-as-recorded-never-price-them.md) — **Report tokens as recorded; never price them.** No price table and no cost of this package's own; the attributes that set a price are carried, the client's own `cost-state` totals are not read (they add 0.54% of tokens, carry no time and follow the work), and a count the record does not state is `None`, never zero. Read before adding anything monetary to the model.
+
 ## Active
 
 - [0013](0013-defer-native-windows-support.md) — **Defer native Windows support.** Target macOS and Linux hosts; Windows-only runtime compatibility is deferred without changing existing reader coverage. Read before adding platform fallbacks or treating Windows parity as a release requirement.

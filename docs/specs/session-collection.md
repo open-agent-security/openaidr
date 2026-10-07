@@ -116,7 +116,7 @@ discards is stated rather than implied.
 | `error` | Only where a parser sets it; the Claude one does not | **Taken only from an explicit upstream status.** Inferring it from result text scored 70% recall at poor precision, and a false `error` maligns a tool that worked |
 | `interrupted` | No | **Not emitted.** The `Status` type carries it for kinds that can supply it |
 | Span identity | No call id — but `sequence_id` carries the record's own key | **Derived** from session, turn key and index within the turn |
-| Sidechain marker | No | **Derived from the file's path**: a transcript under a `subagents` directory is a subagent's, and every turn in it is marked |
+| Sidechain marker | No | **Derived from the file's path**: a transcript under a `subagents` directory is a subagent's, and every turn in it is marked. *Proposed*: an `agent-<id>.jsonl` at any depth below it, which takes in a workflow's agents under `subagents/workflows/<run>/`; see [Token usage](token-usage.md#sub-agents-and-workflow-agents) |
 | Session end | No — only the earliest timestamp | **Not modelled.** Session start is carried, and beside it the newest record observed — which is the latest activity seen, not an end. A session still being written has a newest record either way |
 
 **Discovery is ours, because identity is.** Upstream's whole-tree parse keys each
@@ -256,6 +256,7 @@ declaration — naming and representation are implementation choices.
 | Turn count | | |
 | Model | As the agent reports it, where it does | |
 | Client's own name | The label chosen to identify the session, set by the person or written by the agent, and what the client shows wherever it lists sessions. Absent where the client never named one, which is most sub-agents; a session renamed to nothing reads back as empty, not as unnamed | local-only |
+| Generated title | *Proposed.* The name the client generated for the session (`ai-title`), carried beside the one above rather than folded into it. Absent where none was generated, which includes every sub-agent. See [Token usage](token-usage.md) | local-only |
 | Working directory | | local-only |
 | Machine and user | | local-only |
 | Turns | Ordered | |
@@ -269,6 +270,7 @@ declaration — naming and representation are implementation choices.
 | Role | Who produced it | |
 | Text | | local-only |
 | Sidechain marker | Belongs to a subagent, not the main thread | |
+| Response identity | The provider response this record belongs to; several turns share one when the client wrote it as several records. *Proposed*: see [Token usage](token-usage.md) | |
 | Tool calls | Ordered | |
 
 **Tool call** — one invocation and its outcome.
@@ -285,6 +287,8 @@ declaration — naming and representation are implementation choices.
 | Outcome | The abridged result and error text | local-only |
 | Result size | The size of what the agent produced, not of the abridged copy held here | |
 | Truncation marker | Upstream elided part of the result. The marker it leaves carries the count removed, which is what makes the original size exact rather than estimated | |
+
+A session additionally carries its **model responses** (*proposed*) — one per request the agent made to its provider, with the token counts the transcript recorded and the attributes that set their price, never a price itself. See [Token usage](token-usage.md), ADR-0014 and ADR-0015.
 
 A session additionally carries its **MCP connections** — one record per server per session: transport, endpoint, the name and version the server advertised on the handshake, whether it came up, and a failure category if it did not. Connection-scoped, not call-scoped: these are properties of the connection, and repeating them on every call would say otherwise. The server's own words about a failure are **local-only**; the category is not. Beside them, `mcp_log_state` records whether the log was readable at all.
 
