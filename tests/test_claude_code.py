@@ -215,6 +215,31 @@ def test_a_path_genuinely_outside_root_is_never_guessed_as_a_subagent(
     assert [s.session_id for s in sessions] == ["claude-code:s1"]
 
 
+def test_an_unresolved_dotdot_cannot_make_relative_to_lexically_succeed(
+    tmp_path: Path,
+) -> None:
+    """`relative_to` is purely lexical: a `path` spelled as `root / ".." /
+    "subagents" / ...` lexically starts with `root`'s own parts, so it raises
+    no `ValueError` at all even though the file is not really under `root` --
+    it sits beside it, under an unrelated `subagents` directory. Resolving
+    only in the `except` branch never runs; both must be resolved up front."""
+    root = tmp_path / "root"
+    root.mkdir()
+    write_session(
+        tmp_path / "subagents" / "elsewhere",
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    lexically_rooted_path = root / ".." / "subagents" / "elsewhere" / "-p" / "s1.jsonl"
+    reader = ClaudeCodeReader(root=root)
+    sessions, failures = reader.collect_file(lexically_rooted_path)
+    assert failures == []
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+
+
 def test_a_workflow_agents_project_root_is_the_parent_of_its_session(tmp_path: Path) -> None:
     project = tmp_path / "work" / "my-project"
     project.mkdir(parents=True)
