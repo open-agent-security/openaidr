@@ -388,12 +388,16 @@ def _session_document(session: Session) -> dict[str, object]:
             {k: v for k, v in asdict(connection).items() if k != "failure_detail"}
             for connection in session.mcp_connections
         ],
+        # Counts, ids, model names and tiers carry no conversation material.
+        # `generated_title` is LOCAL_ONLY, like `title`, and stays out.
+        "responses": [asdict(response) for response in session.responses],
         "turns": [
             {
                 "position": turn.position,
                 "role": turn.role,
                 "occurred_at": turn.occurred_at,
                 "is_sidechain": turn.is_sidechain,
+                "response_id": turn.response_id,
                 "tool_calls": [
                     {
                         "span": call.span,

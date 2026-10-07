@@ -394,3 +394,37 @@ def test_a_state_with_no_sessions_in_it_prints_no_line() -> None:
     output = render_text(Collection(sessions=[session], failures=[]))
     assert "1 of 1 sessions with MCP calls enriched" in output
     assert not any(line.strip() == "" and line for line in output.splitlines())
+
+
+def test_14_json_carries_usage_and_withholds_the_generated_title() -> None:
+    import json
+    from dataclasses import replace
+
+    from openaidr.model import ModelResponse, TokenUsage
+
+    base = _session()
+    usage = TokenUsage(input_tokens=3, output_tokens=120)
+    response = ModelResponse(
+        response_id="msg_1",
+        request_id="req_1",
+        model="claude-opus-5",
+        occurred_at=_START,
+        final=True,
+        is_sidechain=False,
+        usage=usage,
+    )
+    session = replace(
+        base,
+        turns=(replace(base.turns[0], response_id="msg_1"),),
+        responses=(response,),
+        generated_title="Fix the parser",
+    )
+    document = json.loads(render_json(Collection(sessions=[session], failures=[])))
+    session_doc = document["sessions"][0]
+    assert session_doc["turns"][0]["response_id"] == "msg_1"
+    assert session_doc["responses"][0]["response_id"] == "msg_1"
+    assert session_doc["responses"][0]["final"] is True
+    assert session_doc["responses"][0]["usage"]["output_tokens"] == 120
+    assert "client_reported_cost" not in session_doc
+    assert "generated_title" not in session_doc
+    assert "Fix the parser" not in json.dumps(document)

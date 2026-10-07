@@ -108,6 +108,27 @@ def write_subagent_session(
     return path
 
 
+def write_workflow_agent_session(
+    root: Path,
+    project: str,
+    parent_session_id: str,
+    run: str,
+    agent_id: str,
+    records: list[dict],
+) -> Path:
+    """Write a workflow agent's transcript one level below a plain subagent's.
+
+    `<root>/<project>/<parentSessionId>/subagents/workflows/<run>/agent-<id>.jsonl`
+    is where Claude Code writes the agents a workflow runs. Their records carry
+    the parent's `sessionId`, as a plain subagent's do.
+    """
+    directory = root / project / parent_session_id / "subagents" / "workflows" / run
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"agent-{agent_id}.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+    return path
+
+
 def attachment(session_id: str, uuid: str, timestamp: str, body: dict, **extra: Any) -> dict:
     """An attachment record: material injected outside the turn structure."""
     return {
@@ -143,3 +164,59 @@ def last_prompt(session_id: str, prompt: str) -> dict:
 def custom_title(session_id: str, title: str) -> dict:
     """The name the client shows for a session, set by the user or by the agent."""
     return {"type": "custom-title", "sessionId": session_id, "customTitle": title}
+
+
+def ai_title(session_id: str, title: str) -> dict:
+    """The name the client generates for a session."""
+    return {"type": "ai-title", "sessionId": session_id, "aiTitle": title}
+
+
+def assistant_response(
+    session_id: str,
+    uuid: str,
+    timestamp: str,
+    message_id: str,
+    usage: dict,
+    *,
+    stop_reason: str | None = None,
+    content: list | None = None,
+    model: str = "claude-opus-5",
+    request_id: str | None = "req_1",
+    **extra: Any,
+) -> dict:
+    """One record of a provider response: Claude Code writes one per content
+    block, each repeating `message.id` and carrying a `usage` object. Only the
+    last carries a `stop_reason`."""
+    record: dict[str, Any] = {
+        "type": "assistant",
+        "sessionId": session_id,
+        "uuid": uuid,
+        "timestamp": timestamp,
+        "isSidechain": False,
+        "cwd": "/work/project",
+        "message": {
+            "id": message_id,
+            "role": "assistant",
+            "model": model,
+            "content": content if content is not None else [{"type": "text", "text": "ok"}],
+            "stop_reason": stop_reason,
+            "usage": usage,
+        },
+        **extra,
+    }
+    if request_id is not None:
+        record["requestId"] = request_id
+    return record
+
+
+def cost_state(
+    session_id: str, total_usd: float, model_usage: dict, *, unknown_model: bool = False
+) -> dict:
+    """The client's own running totals for a session. It carries no timestamp."""
+    return {
+        "type": "cost-state",
+        "sessionId": session_id,
+        "totalCostUSD": total_usd,
+        "hasUnknownModelCost": unknown_model,
+        "modelUsage": model_usage,
+    }

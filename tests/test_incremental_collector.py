@@ -12,6 +12,7 @@ from openaidr.readers.claude_code import ClaudeCodeReader
 from openaidr.readers.claude_code_mcp import MCPLogIndex
 from tests.fixtures import mcp_logs as log
 from tests.fixtures.claude_jsonl import (
+    assistant_response,
     assistant_tool_use,
     tool_result,
     user_text,
@@ -501,3 +502,50 @@ def test_an_undecodable_mcp_log_is_reported_without_rebuilding_each_pass(
     assert ("-work-project", "files") in first.incomplete_project_servers
     assert second is first
     assert len(folded) == parsed_first
+
+
+def test_13_a_response_is_revised_as_its_final_record_arrives(tmp_path: Path) -> None:
+    """Response identity is the update key: a read reports the newest committed
+    record of each response, so a later read revises it, never appends it. A
+    partial trailing record contributes nothing until its newline."""
+    path = write_session(
+        tmp_path,
+        "-work-project",
+        [
+            user_text("s1", "u1", "2026-10-06T10:00:00Z", "go"),
+            assistant_response("s1", "a1", "2026-10-06T10:00:01Z", "msg_1", {"output_tokens": 5}),
+        ],
+    )
+    incremental = _incremental(tmp_path)
+
+    def responses():
+        collection = incremental.collect("claude-code", path)
+        return [
+            (r.response_id, r.final, r.usage.output_tokens)
+            for r in collection.sessions[0].responses
+        ]
+
+    assert responses() == [("msg_1", False, 5)]
+    final = json.dumps(
+        assistant_response(
+            "s1",
+            "a2",
+            "2026-10-06T10:00:02Z",
+            "msg_1",
+            {"output_tokens": 80},
+            stop_reason="end_turn",
+        )
+    )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(final[:40])
+    assert responses() == [("msg_1", False, 5)]
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(final[40:] + "\n")
+    assert responses() == [("msg_1", True, 80)]
+
+    cold = collect(
+        parse_kind_filter(["claude-code"]),
+        Window(since=None),
+        readers=[_reader(tmp_path)],
+    )
+    assert incremental.collect("claude-code", path).sessions == cold.sessions
