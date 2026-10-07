@@ -48,6 +48,9 @@ LOCAL_ONLY = frozenset(
         # or a host as readily as a feature. Local surfaces show it because it
         # is the best label a session has; nothing a finding carries may.
         "title",
+        # The name the client generated for a session, on the same terms: it is
+        # written from the conversation and can name anything it did.
+        "generated_title",
         # An MCP server's own words about why a connection failed. Free text the
         # server author chose, and it can carry a URL, a header fragment or a
         # path. `failure_category` is the part a consumer acts on and the part
@@ -162,6 +165,10 @@ class Compaction:
     pre_tokens: int | None
     #: Tokens dropped cumulatively. Measured, one real session dropped 968,516.
     dropped_tokens: int | None
+    #: When the boundary record was written, as an instant in UTC; None where it
+    #: carried no timestamp. What lets consumption be placed before or after the
+    #: point the context was reset (ADR-0010: a record's own time, or none).
+    occurred_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +185,63 @@ class ProviderRefusal:
     category: str | None
     original_model: str | None
     fallback_model: str | None
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    """Tokens by price-relevant bucket, as one record stated them.
+
+    **Disjoint and provider-neutral.** `input_tokens` is uncached input only, so
+    input, cache reads and cache writes never overlap; reasoning is the part of
+    output spent thinking. Each kind's reader converts to these buckets, so a
+    consumer can sum and price any kind the same way.
+
+    Every count is `None` where the record does not state it. Zero means the
+    record said zero.
+    """
+
+    input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    #: The cache-write split by lifetime, which is priced differently.
+    cache_creation_5m_input_tokens: int | None = None
+    cache_creation_1h_input_tokens: int | None = None
+    output_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    #: Server-side tool requests, billed per request rather than per token.
+    web_search_requests: int | None = None
+    web_fetch_requests: int | None = None
+
+
+@dataclass(frozen=True)
+class ModelResponse:
+    """One request a session made to its provider, and what it consumed.
+
+    Recorded once per provider response id, from the response's last record
+    (ADR-0014). Never priced here (ADR-0015).
+    """
+
+    #: The provider's own id for the response. Unique within its session
+    #: (ADR-0004), and the key a consumer replaces by as a file grows.
+    response_id: str
+    request_id: str | None
+    #: Per response, since a session can change model partway through.
+    model: str | None
+    #: When the record whose usage is reported was written (ADR-0010).
+    occurred_at: datetime | None
+    #: Whether that record is the provider's final statement of the response.
+    #: Every count but output is exact either way; **output on a response that
+    #: is not final is a lower bound** -- the final record has not been written
+    #: yet, or never was, which is most subagent responses.
+    final: bool
+    #: On the same rule as a turn's: every response in a subagent's own
+    #: transcript is sidechain (ADR-0001).
+    is_sidechain: bool
+    usage: TokenUsage
+    #: As recorded. Each can change the price of the same tokens.
+    service_tier: str | None = None
+    speed: str | None = None
+    inference_region: str | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +273,12 @@ class Turn:
     #: (ADR-0003) times the tool's own execution, not the issue-to-result span,
     #: so adding it to this does not recover an absolute end.
     occurred_at: datetime | None = None
+    #: The provider response the record that produced this turn belongs to, or
+    #: None for a user turn and any record without one. Several turns share
+    #: one response when the client wrote it as several records. The join for
+    #: attributing a response's consumption to the calls it issued; the
+    #: attribution itself is a consumer's.
+    response_id: str | None = None
 
 
 MCPLogState = Literal[
@@ -388,6 +458,13 @@ class Session:
     #: `initial_prompt`, so a consumer constructing a `Session` positionally
     #: does not have this field silently shift its later arguments.
     title: str | None = None
+    #: Every request this session made to its provider, ordered by each
+    #: response's first record in the file.
+    responses: tuple[ModelResponse, ...] = ()
+    #: The name the client generated for this session, beside `title`, which
+    #: carries only a name a person set. Two fields state only what was
+    #: recorded; which to show is the displayer's choice. `LOCAL_ONLY`.
+    generated_title: str | None = None
 
     @property
     def turn_count(self) -> int:

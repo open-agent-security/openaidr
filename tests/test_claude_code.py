@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 
+from openaidr.collector import collect
+from openaidr.kinds import parse_kind_filter
 from openaidr.readers.base import Window
 from openaidr.readers.claude_code import ClaudeCodeReader
 from tests.fixtures.claude_jsonl import (
@@ -21,6 +23,7 @@ from tests.fixtures.claude_jsonl import (
     user_text,
     write_session,
     write_subagent_session,
+    write_workflow_agent_session,
 )
 
 
@@ -78,6 +81,100 @@ def test_every_turn_in_a_subagent_transcript_is_marked_sidechain(tmp_path: Path)
     )
     session = _sessions(tmp_path)[0]
     assert all(turn.is_sidechain for turn in session.turns)
+
+
+def _parent_with_workflow_agent(root: Path) -> Path:
+    write_session(
+        root,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "parent"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    return write_workflow_agent_session(
+        root,
+        "-p",
+        "s1",
+        "wf_1",
+        "x",
+        [
+            user_text("s1", "w1", "2026-08-01T10:00:02.000Z", "workflow step", isSidechain=True),
+            assistant_tool_use("s1", "w2", "2026-08-01T10:00:03.000Z", "toolu_w", "Grep"),
+        ],
+    )
+
+
+def test_a_workflow_agent_is_a_subagent_of_its_session(tmp_path: Path) -> None:
+    """A workflow writes its agents one level deeper than a plain subagent, and
+    their records carry the parent's session id. Read as a main session, an
+    agent claimed the parent's identity, and a cold pass could keep the agent
+    and drop the parent (token-usage spec, "Sub-agents and workflow agents")."""
+    _parent_with_workflow_agent(tmp_path)
+    collection = collect(
+        parse_kind_filter(["claude-code"]),
+        Window(since=None),
+        readers=[ClaudeCodeReader(root=tmp_path)],
+    )
+    by_id = {s.session_id: s for s in collection.sessions}
+    assert sorted(by_id) == ["claude-code:s1", "claude-code:s1:agent-x"]
+    assert by_id["claude-code:s1"].turns[0].text == "parent"
+    assert all(t.is_sidechain for t in by_id["claude-code:s1:agent-x"].turns)
+    assert not any("duplicate session identity" in f.message for f in collection.failures)
+
+
+def test_collect_file_reads_a_workflow_agent_under_its_own_identity(tmp_path: Path) -> None:
+    """A consumer keyed by session identity would otherwise overwrite the parent
+    with the agent."""
+    agent = _parent_with_workflow_agent(tmp_path)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect_file(agent)
+    assert failures == []
+    assert [s.session_id for s in sessions] == ["claude-code:s1:agent-x"]
+    assert all(t.is_sidechain for t in sessions[0].turns)
+
+
+def test_a_workflow_journal_is_not_a_transcript(tmp_path: Path) -> None:
+    agent = _parent_with_workflow_agent(tmp_path)
+    (agent.parent / "journal.jsonl").write_text(
+        json.dumps({"type": "started", "agentId": "x", "label": "step"}) + "\n",
+        encoding="utf-8",
+    )
+    reader = ClaudeCodeReader(root=tmp_path)
+    sessions, failures = reader.collect(Window(since=None))
+    assert sorted(s.session_id for s in sessions) == ["claude-code:s1", "claude-code:s1:agent-x"]
+    assert failures == []
+    assert reader.collect_file(agent.parent / "journal.jsonl") == ([], [])
+
+
+def test_a_root_under_a_directory_named_subagents_still_reads_main_sessions(
+    tmp_path: Path,
+) -> None:
+    """The subagent rule looks only below the root. Searching every ancestor
+    would read each main transcript as a non-agent file under `subagents/` and
+    drop it."""
+    root = tmp_path / "subagents" / "projects"
+    write_session(
+        root,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    reader = ClaudeCodeReader(root=root)
+    assert [s.session_id for s in reader.collect(Window(since=None))[0]] == ["claude-code:s1"]
+    assert reader.collect_file(root / "-p" / "s1.jsonl")[0][0].session_id == "claude-code:s1"
+
+
+def test_a_workflow_agents_project_root_is_the_parent_of_its_session(tmp_path: Path) -> None:
+    project = tmp_path / "work" / "my-project"
+    project.mkdir(parents=True)
+    encoded = str(project).replace("/", "-")
+    record = user_text("s1", "w1", "2026-08-01T10:00:00.000Z", "workflow step")
+    del record["cwd"]
+    write_workflow_agent_session(tmp_path, encoded, "s1", "wf_1", "x", [record])
+    session = _sessions(tmp_path)[0]
+    assert session.working_directory == str(project)
 
 
 def test_a_repeated_sequence_id_does_not_collide(tmp_path: Path) -> None:
