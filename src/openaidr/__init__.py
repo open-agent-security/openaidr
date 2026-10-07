@@ -5,4 +5,4 @@ session model. Plumbing, not judgement: no scoring, no identity resolution, no
 findings, no upload path.
 """
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
