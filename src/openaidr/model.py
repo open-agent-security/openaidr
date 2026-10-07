@@ -191,10 +191,15 @@ class ProviderRefusal:
 class TokenUsage:
     """Tokens by price-relevant bucket, as one record stated them.
 
-    **Disjoint and provider-neutral.** `input_tokens` is uncached input only, so
-    input, cache reads and cache writes never overlap; reasoning is the part of
-    output spent thinking. Each kind's reader converts to these buckets, so a
-    consumer can sum and price any kind the same way.
+    **Disjoint across buckets, except two stated breakdowns.** `input_tokens`
+    (uncached input only), `cache_read_input_tokens`,
+    `cache_creation_input_tokens` and `output_tokens` never overlap, so a
+    consumer can sum them for a session's total the same way for any kind.
+    Two fields break one of those down further rather than adding to it:
+    `cache_creation_5m_input_tokens` and `cache_creation_1h_input_tokens` sum
+    to `cache_creation_input_tokens`, and `reasoning_tokens` is the part of
+    `output_tokens` spent thinking. Summing a breakdown alongside the total it
+    restates double-counts it.
 
     Every count is `None` where the record does not state it. Zero means the
     record said zero.
