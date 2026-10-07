@@ -89,7 +89,10 @@ def _subagents_directory(path: Path, root: Path) -> Path | None:
     `collect_file` can be called with a path spelled differently from `root`
     (relative vs. absolute, a different symlink alias); resolving both before
     giving up keeps the bound in that case too, rather than scanning every
-    filesystem ancestor once the raw spellings fail to match.
+    filesystem ancestor once the raw spellings fail to match. A path that is
+    not under `root` even once resolved has no "below `root`" to search, so
+    it is never treated as a subagent rather than guessed from its unrelated
+    ancestry.
     """
     try:
         depth = len(path.relative_to(root).parts) - 1
@@ -98,7 +101,7 @@ def _subagents_directory(path: Path, root: Path) -> Path | None:
             path, root = path.resolve(), root.resolve()
             depth = len(path.relative_to(root).parts) - 1
         except ValueError:
-            depth = len(path.parents)
+            return None
     return next(
         (parent for parent in list(path.parents)[:depth] if parent.name == _SUBAGENT_DIR),
         None,
