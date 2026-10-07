@@ -166,6 +166,32 @@ def test_a_root_under_a_directory_named_subagents_still_reads_main_sessions(
     assert reader.collect_file(root / "-p" / "s1.jsonl")[0][0].session_id == "claude-code:s1"
 
 
+def test_subagent_detection_normalizes_a_root_spelled_differently_from_the_path(
+    tmp_path: Path,
+) -> None:
+    """`collect_file` can be called with a path spelled differently from the
+    root the reader was built with (a relative root, a different symlink
+    alias) -- `relative_to` then raises before the bound above can be computed.
+    Falling back to scanning every ancestor, unbounded, reads the same
+    `subagents`-named ancestor the bounded case above must ignore, and
+    `collect_file` silently returns no session for a real one."""
+    root = tmp_path / "subagents" / "projects"
+    path = write_session(
+        root,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    (tmp_path / "subagents" / "x").mkdir()
+    oddly_spelled_root = tmp_path / "subagents" / "x" / ".." / "projects"
+    reader = ClaudeCodeReader(root=oddly_spelled_root)
+    sessions, failures = reader.collect_file(path)
+    assert failures == []
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+
+
 def test_a_workflow_agents_project_root_is_the_parent_of_its_session(tmp_path: Path) -> None:
     project = tmp_path / "work" / "my-project"
     project.mkdir(parents=True)
