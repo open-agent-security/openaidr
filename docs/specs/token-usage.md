@@ -28,8 +28,8 @@ total or attribute that usage:
 
 **What this does not add.** A monetary value of its own. This package reports
 tokens and the attributes that determine their price, and never prices them.
-Where the client records its own cost estimate, that is carried as recorded and
-labelled as the client's (ADR-0015).
+Where the client records its own cost estimate, that is not read at all
+(ADR-0015).
 
 ## What a consumer can build from this
 
@@ -304,7 +304,7 @@ live session has its responses, but not yet the client's figure for them.
 ## What this package does not do
 
 - **Price tokens.** No price table and no cost of its own. The client's own
-  estimate is carried as recorded (ADR-0015).
+  estimate is not read (ADR-0015).
 - **Complete a response that is not final.** Its output is reported as
   recorded and marked. Estimating the rest, or filling it from the client's
   totals, is interpretation.
@@ -425,4 +425,4 @@ machine:
 - ADR-0014 — one response per provider id, stated by its last record, final
   only with a stop reason.
 - ADR-0015 — tokens as recorded, never priced here; the client's own cost
-  carried as its own.
+  is not read.

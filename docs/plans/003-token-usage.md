@@ -3,8 +3,8 @@
 **Goal:** Build [`token-usage.md`](../specs/token-usage.md). Each session gains a
 record of every request it made to its model provider, with the tokens the
 transcript recorded and whether that record was final. Workflow agents become
-sub-agents. Compactions carry their time. The client's own totals and its
-generated title are read.
+sub-agents. Compactions carry their time. The client's own totals are not
+read; its generated title is.
 
 **Spec:** [`token-usage.md`](../specs/token-usage.md).
 
