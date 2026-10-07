@@ -17,6 +17,7 @@ from openaidr.kinds import parse_kind_filter
 from openaidr.readers.base import Window
 from openaidr.readers.claude_code import ClaudeCodeReader
 from tests.fixtures.claude_jsonl import (
+    assistant_response,
     assistant_tool_use,
     system_event,
     tool_result,
@@ -1724,6 +1725,57 @@ def test_a_transcript_that_stops_decoding_between_the_two_reads_is_not_a_failed_
 
     assert [s.session_id for s in sessions] == ["claude-code:s1"]
     assert any(str(transcript) in f.message for f in failures)
+
+
+def test_a_partial_decode_failure_withholds_the_response_it_interrupted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`responses` is read from each response's *last* record, the same
+    newest-over-the-file fold as `last_record` (ADR-0014). If the transcript
+    grows between upstream's parse and this reader's own recovery read by
+    gaining an undecodable line followed by a real final record, the response
+    accumulated before the bad line must not be exposed as a genuine
+    non-final lower bound: its real final record is the very thing the
+    failure prevented from being read, not a response that simply never
+    finished."""
+    usage = {"input_tokens": 3, "output_tokens": 5}
+    write_session(
+        tmp_path,
+        "-work",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "go"),
+            assistant_response("s1", "a1", "2026-08-01T10:00:01.000Z", "msg_1", usage),
+        ],
+    )
+    transcript = next(tmp_path.rglob("*.jsonl"))
+    parsed, _ = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+    assert parsed[0].responses[0].final is False
+
+    real_open = Path.open
+    appended = False
+
+    def growing_open(self, *args, **kwargs):
+        nonlocal appended
+        if self == transcript and not appended:
+            appended = True
+            final_record = assistant_response(
+                "s1",
+                "a2",
+                "2026-08-01T10:00:02.000Z",
+                "msg_1",
+                {"input_tokens": 3, "output_tokens": 500},
+                stop_reason="end_turn",
+            )
+            with real_open(self, "ab") as handle:
+                handle.write(b"\xff\xfe not utf-8\n")
+                handle.write((json.dumps(final_record) + "\n").encode("utf-8"))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", growing_open)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert any(str(transcript) in f.message for f in failures)
+    assert sessions[0].responses == ()
 
 
 def test_a_transcript_whose_mtime_cannot_be_converted_does_not_lose_the_others(
