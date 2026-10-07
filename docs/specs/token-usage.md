@@ -390,10 +390,13 @@ machine:
   pairs, and summed output tokens equal the sum over each response's last
   record.
 - No session identity is reported twice.
-- For each session with sub-agents, cache-read tokens summed over the session
-  and its sub-agents come within 1% of the client's own figure, leaving out
-  the side-call model. On the 2026-10-06 corpus they come to 99.4%, against
-  78.8% with workflow agents missing.
+- Aggregated over sessions with sub-agents, cache-read tokens summed over the
+  session and its sub-agents come within 1% of the client's own figure,
+  leaving out the side-call model. On the 2026-10-06 corpus they come to
+  99.4% in aggregate, against 78.8% with workflow agents missing. Per
+  session the figure varies: 8 of 14 sessions are within 1%, the other 6
+  are 1.5–14% short, in every case because of what the client recorded
+  rather than what was parsed.
 
 ## Open questions
 

@@ -192,6 +192,29 @@ def test_subagent_detection_normalizes_a_root_spelled_differently_from_the_path(
     assert [s.session_id for s in sessions] == ["claude-code:s1"]
 
 
+def test_a_path_genuinely_outside_root_is_never_guessed_as_a_subagent(
+    tmp_path: Path,
+) -> None:
+    """A path with no `relative_to` relationship to `root` at all -- not merely
+    a differently spelled one -- has no "below `root`" to bound the ancestor
+    scan. Guessing from its unrelated ancestry would still misclassify an
+    ordinary session sitting under a `subagents`-named directory elsewhere."""
+    root = tmp_path / "root"
+    root.mkdir()
+    path = write_session(
+        tmp_path / "subagents" / "elsewhere",
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    reader = ClaudeCodeReader(root=root)
+    sessions, failures = reader.collect_file(path)
+    assert failures == []
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+
+
 def test_a_workflow_agents_project_root_is_the_parent_of_its_session(tmp_path: Path) -> None:
     project = tmp_path / "work" / "my-project"
     project.mkdir(parents=True)
