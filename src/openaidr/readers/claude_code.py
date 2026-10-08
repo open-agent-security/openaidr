@@ -45,6 +45,7 @@ from openaidr.kinds import map_source
 from openaidr.model import (
     Compaction,
     ContextItem,
+    ContextPart,
     MCPConnection,
     MCPLogState,
     ModelResponse,
@@ -776,8 +777,11 @@ class ClaudeCodeReader:
                     source=source,
                     name=name,
                     text=text,
+                    parts=parts,
                 )
-                for index, (source, name, text) in enumerate(transcript.context.get(raw_id, ()))
+                for index, (source, name, text, parts) in enumerate(
+                    transcript.context.get(raw_id, ())
+                )
             ),
             compactions=tuple(
                 Compaction(
@@ -1577,7 +1581,9 @@ class _Transcript:
         default_factory=dict
     )
     #: session id -> material that reached the model outside the turn structure.
-    context: dict[str, list[tuple[str, str | None, str]]] = field(default_factory=dict)
+    context: dict[str, list[tuple[str, str | None, str, tuple[ContextPart, ...]]]] = field(
+        default_factory=dict
+    )
     #: session id -> compaction boundaries, as (trigger, pre, dropped, time).
     compactions: dict[str, list[tuple[str, int | None, int | None, datetime | None]]] = field(
         default_factory=dict
@@ -1656,7 +1662,7 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
     titles: dict[str, str] = {}
     cwd_at: dict[tuple[str, str, int], str] = {}
     attribution: dict[tuple[str, str, int], tuple[str | None, str | None]] = {}
-    context: dict[str, list[tuple[str, str | None, str]]] = {}
+    context: dict[str, list[tuple[str, str | None, str, tuple[ContextPart, ...]]]] = {}
     compactions: dict[str, list[tuple[str, int | None, int | None, datetime | None]]] = {}
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]] = {}
     generated_titles: dict[str, str] = {}
@@ -1968,6 +1974,49 @@ _CONTEXT_SOURCES: dict[str, tuple[str, tuple[str, ...]]] = {
 _CONTEXT_NAMES = ("hookName", "filename", "path", "displayPath", "name")
 
 
+def _context_parts(attachment: dict[str, object], body: str) -> tuple[ContextPart, ...]:
+    """The named parts of an attachment that describes several things at once,
+    or none where the record does not pair each with its name for certain.
+
+    - `mcp_instructions_delta` pairs `addedNames[i]` with `addedBlocks[i]`, as
+      the client itself reads the record back.
+    - `skill_listing` holds one `- name: description` entry per skill (`- name`
+      alone over the listing's budget), in the order of `names`. The entries
+      are the body's lines that start a new `- ` item; they pair only when
+      there is one per name and each entry's first line holds its name.
+    """
+    kind = attachment.get("type")
+    if kind == "mcp_instructions_delta":
+        names = attachment.get("addedNames")
+        blocks = attachment.get("addedBlocks")
+        if (
+            isinstance(names, list)
+            and isinstance(blocks, list)
+            and len(names) == len(blocks)
+            and all(isinstance(n, str) and n for n in names)
+            and all(isinstance(b, str) and b for b in blocks)
+        ):
+            return tuple(ContextPart(name=n, text=b) for n, b in zip(names, blocks, strict=True))
+        return ()
+    if kind == "skill_listing":
+        names = attachment.get("names")
+        if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
+            return ()
+        entries: list[str] = []
+        for line in body.split("\n"):
+            if line.startswith("- ") or not entries:
+                entries.append(line)
+            else:
+                entries[-1] += "\n" + line
+        if len(entries) != len(names) or not all(
+            entry.startswith("- ") and name in entry.split("\n", 1)[0]
+            for name, entry in zip(names, entries, strict=True)
+        ):
+            return ()
+        return tuple(ContextPart(name=n, text=e) for n, e in zip(names, entries, strict=True))
+    return ()
+
+
 def _body(value: object, depth: int = 0) -> str | None:
     """The text inside an attachment body, whatever shape it is stored in.
 
@@ -1995,7 +2044,7 @@ def _recover_session_scoped(
     session_id: str,
     initial_prompts: dict[str, str],
     titles: dict[str, str],
-    context: dict[str, list[tuple[str, str | None, str]]],
+    context: dict[str, list[tuple[str, str | None, str, tuple[ContextPart, ...]]]],
     compactions: dict[str, list[tuple[str, int | None, int | None, datetime | None]]],
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]],
     generated_titles: dict[str, str],
@@ -2060,7 +2109,9 @@ def _recover_session_scoped(
             ),
             None,
         )
-        context.setdefault(session_id, []).append((source, name, body))
+        context.setdefault(session_id, []).append(
+            (source, name, body, _context_parts(attachment, body))
+        )
         return
 
     if kind != "system":
