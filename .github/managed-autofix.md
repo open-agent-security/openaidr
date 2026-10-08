@@ -14,7 +14,7 @@ per-head Codex review marker.
 | Triggers | GitHub `pull_request.opened` and `pull_request.ready_for_review` (ids `3dbbaabf-df96-44b8-8957-c8cba9512b7a` opened, `d1d5925b-bf5d-4c04-8489-8054c251cb75` ready_for_review, created 2026-09-23T06:40Z); a draft PR enrolls when marked ready. Automatic enrollment: not yet observed; verify on the first qualifying PR by reading its run log for the github-trigger-context block and a successful subscribe_pr_activity |
 | Prompt source | SHA-256 of the fenced block below: `220f4afd5489a76f03297df91dffaa225a6da9503172a2684a756ae54b914eda`; saved on the routine 2026-09-23 (marker renamed for this repository's no-proprietary-references rule), read back byte-identical; saved again 2026-10-06T00:56:55Z to skip PRs authored by michealbenedict, read back byte-identical |
 | Codex review | Codex has reviewed PRs in this repository; confirm all-PRs/every-push in the Codex console. The prompt's explicit request is the fallback |
-| Legacy Actions loop | `claude.yml` and `autofix.yml` disabled 2026-09-22 (files remain); routine-based fixing replaces them |
+| Legacy Actions loop | `claude.yml` and `autofix.yml` disabled 2026-09-22 and deleted; routine-based fixing replaces them |
 
 Editing this file deploys nothing. Save the block as the routine's prompt, read
 it back, and update the SHA and deployment line.
