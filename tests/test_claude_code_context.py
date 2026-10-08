@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from openaidr.model import ContextItem
 from openaidr.readers.base import Window
 from openaidr.readers.claude_code import ClaudeCodeReader
 from tests.fixtures.claude_jsonl import (
@@ -323,3 +324,99 @@ def test_a_call_with_no_attribution_claims_none(tmp_path: Path) -> None:
     (call,) = session.turns[1].tool_calls
     assert call.attributed_skill is None
     assert call.attributed_plugin is None
+
+
+# --- Named parts: one record describing several things at once ---------------------
+
+
+def _one_attachment(tmp_path: Path, body: dict) -> ContextItem:
+    write_session(tmp_path, "proj", [*_base(), attachment("s1", "a1", _T0, body)])
+    (session,) = _read(tmp_path)
+    (item,) = session.context_items
+    return item
+
+
+def test_each_mcp_servers_instructions_are_named_as_a_part(tmp_path: Path) -> None:
+    """The record pairs each server's name with its block, as the client itself
+    reads it back: `addedNames[i]` with `addedBlocks[i]`."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "mcp_instructions_delta",
+            "addedNames": ["github", "linear"],
+            "addedBlocks": ["## github\nUse the API.", "## linear\nFile issues."],
+        },
+    )
+    assert [(p.name, p.text) for p in item.parts] == [
+        ("github", "## github\nUse the API."),
+        ("linear", "## linear\nFile issues."),
+    ]
+    # The item itself is unchanged: one per record, its text the whole body.
+    assert item.text == "## github\nUse the API.\n## linear\nFile issues."
+
+
+def test_names_that_do_not_pair_with_blocks_name_no_part(tmp_path: Path) -> None:
+    """Absence is not falsehood: a name paired with the wrong block is worse
+    than no name."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "mcp_instructions_delta",
+            "addedNames": ["github"],
+            "addedBlocks": ["## github\nUse the API.", "## linear\nFile issues."],
+        },
+    )
+    assert item.parts == ()
+
+
+def test_each_skill_in_a_listing_is_named_as_a_part(tmp_path: Path) -> None:
+    """The client lists one `- name: description` entry per skill, in the
+    order of `names`; a skill over the listing's budget is `- name` alone."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- deploy: Ship the service\n- review",
+            "names": ["deploy", "review"],
+            "skillCount": 2,
+            "isInitial": True,
+        },
+    )
+    assert [(p.name, p.text) for p in item.parts] == [
+        ("deploy", "- deploy: Ship the service"),
+        ("review", "- review"),
+    ]
+
+
+def test_a_listing_whose_entries_cannot_be_told_apart_names_no_part(tmp_path: Path) -> None:
+    """A description that itself holds a `- ` line makes one more entry than
+    there are skills: no part is named rather than a wrong one."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- deploy: Ship it:\n- build\n- push\n- review: Check it",
+            "names": ["deploy", "review"],
+        },
+    )
+    assert item.parts == ()
+
+
+def test_a_listing_whose_names_are_not_in_its_entries_names_no_part(tmp_path: Path) -> None:
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- deploy: Ship it\n- review: Check it",
+            "names": ["review", "deploy"],
+        },
+    )
+    assert item.parts == ()
+
+
+def test_a_record_that_names_nothing_has_no_parts(tmp_path: Path) -> None:
+    item = _one_attachment(
+        tmp_path,
+        {"type": "hook_success", "hookName": "SessionStart:startup", "stdout": "Run the tests"},
+    )
+    assert item.parts == ()

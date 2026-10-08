@@ -121,6 +121,21 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class ContextPart:
+    """One named part of a context item that describes several things at once:
+    one skill of a skill listing, one MCP server's instruction block.
+
+    The record names each part itself; a part is never found by reading the
+    text for names. Where the record does not pair every part with its name
+    for certain, the item has no parts rather than a wrong one.
+    """
+
+    name: str
+    #: The part's own material, exactly as it sits in the item's text.
+    text: str
+
+
+@dataclass(frozen=True)
 class ContextItem:
     """Material that reached the model without being a user turn or a tool result.
 
@@ -147,6 +162,12 @@ class ContextItem:
     name: str | None
     #: The material itself. Local-only, like a turn's text.
     text: str
+    #: The named parts of an item that describes several things at once, in
+    #: the record's order: a skill listing's skills, an MCP instructions
+    #: record's servers. Empty where the record names none, or where its parts
+    #: cannot be paired with their names for certain. The item stays one item,
+    #: so no span moves (ADR-0016).
+    parts: tuple[ContextPart, ...] = ()
 
 
 @dataclass(frozen=True)
