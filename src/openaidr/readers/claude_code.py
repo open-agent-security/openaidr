@@ -1984,7 +1984,9 @@ def _context_parts(attachment: dict[str, object], body: str) -> tuple[ContextPar
       alone over the listing's budget), in the order of `names`. The entries
       are the body's lines that start a new `- ` item; they pair only when
       there is one per name and each entry's first line names it right after
-      `- `, not merely somewhere in the line.
+      `- `, either bare or followed by `: ` — a skill id can itself contain a
+      `:` (a plugin's skill is named `plugin:skill`), so a bare `:` is not an
+      unambiguous end of the name.
     """
     kind = attachment.get("type")
     if kind == "mcp_instructions_delta":
@@ -2011,7 +2013,9 @@ def _context_parts(attachment: dict[str, object], body: str) -> tuple[ContextPar
                 entries[-1] += "\n" + line
         if len(entries) != len(names) or not all(
             entry.startswith("- ")
-            and ((heading := entry.split("\n", 1)[0][2:]) == name or heading.startswith(f"{name}:"))
+            and (
+                (heading := entry.split("\n", 1)[0][2:]) == name or heading.startswith(f"{name}: ")
+            )
             for name, entry in zip(names, entries, strict=True)
         ):
             return ()

@@ -432,6 +432,21 @@ def test_a_name_appearing_only_in_the_others_description_names_no_part(tmp_path:
     assert item.parts == ()
 
 
+def test_a_name_that_is_only_a_prefix_of_the_entrys_name_names_no_part(tmp_path: Path) -> None:
+    """A plugin's skill is named `plugin:skill`, so a bare `:` after the
+    expected name is not an unambiguous end of it: `foo:bar: ...` must not
+    pair with the shorter expected name `foo`."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- foo:bar: Namespaced skill",
+            "names": ["foo"],
+        },
+    )
+    assert item.parts == ()
+
+
 def test_a_record_that_names_nothing_has_no_parts(tmp_path: Path) -> None:
     item = _one_attachment(
         tmp_path,
