@@ -168,9 +168,11 @@ class ContextItem:
     #: cannot be paired with their names for certain. The item stays one item,
     #: so no span moves (ADR-0016).
     parts: tuple[ContextPart, ...] = ()
-    #: When the record was written: the item is in context from then on, so a
-    #: consumer counting the calls that carried it starts here. None where the
-    #: record carries no readable time.
+    #: When the record was written: a lower bound on when the item started
+    #: reaching the model, for a consumer counting from here on. A later
+    #: removal is never recorded (ADR-0017), so this is not a guarantee the
+    #: item is still active afterward. None where the record carries no
+    #: readable time.
     occurred_at: datetime | None = None
 
 
