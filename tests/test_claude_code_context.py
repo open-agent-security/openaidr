@@ -417,6 +417,21 @@ def test_a_listing_whose_names_are_not_in_its_entries_names_no_part(tmp_path: Pa
     assert item.parts == ()
 
 
+def test_a_name_appearing_only_in_the_others_description_names_no_part(tmp_path: Path) -> None:
+    """A misordered listing whose descriptions happen to mention the other
+    skill's name must not pass: the name has to head its own entry, not merely
+    occur somewhere in the line."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- bar: calls foo\n- foo: calls bar",
+            "names": ["foo", "bar"],
+        },
+    )
+    assert item.parts == ()
+
+
 def test_a_record_that_names_nothing_has_no_parts(tmp_path: Path) -> None:
     item = _one_attachment(
         tmp_path,
