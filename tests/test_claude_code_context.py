@@ -499,3 +499,18 @@ def test_a_parts_material_reaches_neither_rendered_surface(tmp_path: Path) -> No
         assert "Read" in result.stdout
         assert "Ship the private service" not in result.stdout
         assert "internal token store" not in result.stdout
+
+
+def test_an_item_carries_when_its_record_was_written(tmp_path: Path) -> None:
+    """A server connected mid-session is in context only from then on: a
+    consumer asking which calls carried it needs the record's own time."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "mcp_instructions_delta",
+            "addedNames": ["github"],
+            "addedBlocks": ["## github\nUse the API."],
+        },
+    )
+    assert item.occurred_at is not None
+    assert item.occurred_at.isoformat() == "2026-08-29T12:00:00+00:00"

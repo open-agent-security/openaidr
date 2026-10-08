@@ -778,8 +778,9 @@ class ClaudeCodeReader:
                     name=name,
                     text=text,
                     parts=parts,
+                    occurred_at=occurred_at,
                 )
-                for index, (source, name, text, parts) in enumerate(
+                for index, (source, name, text, parts, occurred_at) in enumerate(
                     transcript.context.get(raw_id, ())
                 )
             ),
@@ -1581,9 +1582,9 @@ class _Transcript:
         default_factory=dict
     )
     #: session id -> material that reached the model outside the turn structure.
-    context: dict[str, list[tuple[str, str | None, str, tuple[ContextPart, ...]]]] = field(
-        default_factory=dict
-    )
+    context: dict[
+        str, list[tuple[str, str | None, str, tuple[ContextPart, ...], datetime | None]]
+    ] = field(default_factory=dict)
     #: session id -> compaction boundaries, as (trigger, pre, dropped, time).
     compactions: dict[str, list[tuple[str, int | None, int | None, datetime | None]]] = field(
         default_factory=dict
@@ -1662,7 +1663,9 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
     titles: dict[str, str] = {}
     cwd_at: dict[tuple[str, str, int], str] = {}
     attribution: dict[tuple[str, str, int], tuple[str | None, str | None]] = {}
-    context: dict[str, list[tuple[str, str | None, str, tuple[ContextPart, ...]]]] = {}
+    context: dict[
+        str, list[tuple[str, str | None, str, tuple[ContextPart, ...], datetime | None]]
+    ] = {}
     compactions: dict[str, list[tuple[str, int | None, int | None, datetime | None]]] = {}
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]] = {}
     generated_titles: dict[str, str] = {}
@@ -2050,7 +2053,7 @@ def _recover_session_scoped(
     session_id: str,
     initial_prompts: dict[str, str],
     titles: dict[str, str],
-    context: dict[str, list[tuple[str, str | None, str, tuple[ContextPart, ...]]]],
+    context: dict[str, list[tuple[str, str | None, str, tuple[ContextPart, ...], datetime | None]]],
     compactions: dict[str, list[tuple[str, int | None, int | None, datetime | None]]],
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]],
     generated_titles: dict[str, str],
@@ -2116,7 +2119,13 @@ def _recover_session_scoped(
             None,
         )
         context.setdefault(session_id, []).append(
-            (source, name, body, _context_parts(attachment, body))
+            (
+                source,
+                name,
+                body,
+                _context_parts(attachment, body),
+                _timestamp(record.get("timestamp")),
+            )
         )
         return
 
