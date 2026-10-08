@@ -168,6 +168,10 @@ class ContextItem:
     #: cannot be paired with their names for certain. The item stays one item,
     #: so no span moves (ADR-0016).
     parts: tuple[ContextPart, ...] = ()
+    #: When the record was written: the item is in context from then on, so a
+    #: consumer counting the calls that carried it starts here. None where the
+    #: record carries no readable time.
+    occurred_at: datetime | None = None
 
 
 @dataclass(frozen=True)
