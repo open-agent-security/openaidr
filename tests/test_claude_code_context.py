@@ -15,6 +15,9 @@ results alone:
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from openaidr.model import ContextItem
@@ -420,3 +423,49 @@ def test_a_record_that_names_nothing_has_no_parts(tmp_path: Path) -> None:
         {"type": "hook_success", "hookName": "SessionStart:startup", "stdout": "Run the tests"},
     )
     assert item.parts == ()
+
+
+def test_a_parts_material_reaches_neither_rendered_surface(tmp_path: Path) -> None:
+    """A part is a slice of its item's text, so it is `LOCAL_ONLY` on the
+    same terms as `context_items`: naming parts must not give that material a
+    way into either rendered surface."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            *_base(),
+            attachment(
+                "s1",
+                "a1",
+                _T0,
+                {
+                    "type": "skill_listing",
+                    "content": "- deploy: Ship the private service",
+                    "names": ["deploy"],
+                },
+            ),
+            attachment(
+                "s1",
+                "a2",
+                _T0,
+                {
+                    "type": "mcp_instructions_delta",
+                    "addedNames": ["github"],
+                    "addedBlocks": ["## github\nUse the internal token store."],
+                },
+            ),
+        ],
+    )
+    for surface in (["--format", "json"], ["--detail"]):
+        result = subprocess.run(
+            [sys.executable, "-m", "openaidr", "sessions", "--since", "36500d", *surface],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "OPENAIDR_CLAUDE_ROOT": str(tmp_path)},
+        )
+        assert result.returncode == 0, result.stderr
+        # The session was read, so an empty stdout cannot pass for the wrong reason.
+        assert "Read" in result.stdout
+        assert "Ship the private service" not in result.stdout
+        assert "internal token store" not in result.stdout
