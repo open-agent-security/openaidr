@@ -380,11 +380,18 @@ def _milliseconds(started: datetime, ended: datetime | None) -> int | None:
 
 
 def _spans(log: ProcessLog, window: tuple[datetime | None, datetime | None]) -> bool:
-    """Whether the process was alive while the session was active."""
+    """Whether the log's process is the one the session's lock last named.
+
+    The lock names only a session's *last* holder, so the log must still be
+    alive at the session's last known activity, not merely somewhere inside
+    its lifetime: a pid can be reused by an unrelated, short-lived process
+    that falls entirely within a long-lived session's window.
+    """
     started, last_active = window
     if log.first is None or log.last is None or started is None:
         return False
-    return log.first <= (last_active or started) + _SLACK and log.last >= started - _SLACK
+    boundary = last_active or started
+    return log.first <= boundary + _SLACK and log.last >= boundary - _SLACK
 
 
 def _instant(value: str) -> datetime | None:
