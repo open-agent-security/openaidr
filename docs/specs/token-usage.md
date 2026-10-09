@@ -275,9 +275,6 @@ final record. No response disappears while the file only grows.
 A trailing partial record contributes nothing until its newline arrives. A
 truncated or replaced file is rebuilt cold, as it is today.
 
-The client's totals appear only after the work they cover. A consumer reading a
-live session has its responses, but not yet the client's figure for them.
-
 ## Where it is read
 
 - **Discovery** (`collect` and `collect_file` alike) recognises a sub-agent by
