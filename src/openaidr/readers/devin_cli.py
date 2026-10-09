@@ -361,58 +361,31 @@ class DevinCliReader:
     ) -> list[Session]:
         nodes = store.nodes.get(row.id, [])
         by_id = {node.node_id: node for node in nodes}
-        roots = {node.node_id: _root(node.node_id, by_id) for node in nodes}
         heads = store.heads.get(row.id, [])
-        # A sub-agent owns every node in its tree; the main session owns the
-        # rest. A head that hangs off the main tree instead of its own root
-        # owns only its chain's nodes off the main chain, so a malformed head
-        # can never carry the main session's turns and usage away with it.
         leaf = row.main_chain_id if row.main_chain_id in by_id else None
-        main_chain = {node.node_id for node in _chain(leaf, by_id)}
-        main_root = roots.get(leaf) if leaf is not None else None
-        owner: dict[int, str] = {}
-        for agent_id, head in heads:
-            tree = roots.get(head)
-            if tree is None:
-                continue
-            if tree == main_root:
-                claimed = [n.node_id for n in _chain(head, by_id) if n.node_id not in main_chain]
-            else:
-                claimed = [node_id for node_id, root in roots.items() if root == tree]
-            for node_id in claimed:
-                owner.setdefault(node_id, agent_id)
-        main_nodes = [node for node in nodes if node.node_id not in owner]
-        if leaf is None and main_nodes:
-            leaf = max(main_nodes, key=lambda node: node.row_id).node_id
-        built = [
+        owner = _owners(by_id, leaf, heads)
+        if leaf is None:
+            unowned = [node for node in nodes if owner[node.node_id] == _MAIN]
+            if unowned:
+                leaf = max(unowned, key=lambda node: node.row_id).node_id
+        sessions = [(_MAIN, f"{self.agent_kind}:{row.id}", leaf)]
+        sessions += [(agent, f"{self.agent_kind}:{row.id}:{agent}", head) for agent, head in heads]
+        return [
             self._session(
                 store,
                 row,
-                session_id=f"{self.agent_kind}:{row.id}",
-                chain=_chain(leaf, by_id),
-                tree=main_nodes,
-                sidechain=False,
+                session_id=session_id,
+                # The declared chain, restricted to what this session owns:
+                # a sub-agent forked from the main tree does not repeat the
+                # parent's turns above the fork.
+                chain=[n for n in _chain(tip, by_id) if owner[n.node_id] == key],
+                tree=[n for n in nodes if owner[n.node_id] == key],
+                sidechain=key != _MAIN,
                 placement=placement,
                 failures=failures,
             )
+            for key, session_id, tip in sessions
         ]
-        for agent_id, head in heads:
-            head_chain = _chain(head, by_id)
-            if roots.get(head) == main_root:
-                head_chain = [n for n in head_chain if n.node_id not in main_chain]
-            built.append(
-                self._session(
-                    store,
-                    row,
-                    session_id=f"{self.agent_kind}:{row.id}:{agent_id}",
-                    chain=head_chain,
-                    tree=[node for node in nodes if owner.get(node.node_id) == agent_id],
-                    sidechain=True,
-                    placement=placement,
-                    failures=failures,
-                )
-            )
-        return built
 
     def _session(
         self,
@@ -496,23 +469,7 @@ class DevinCliReader:
                     response_id=_response_key(node) if role == "assistant" else None,
                 )
             )
-        newest = max((n.at for n in tree if n.at is not None), default=None)
-        # A sub-agent's own tree, never the row's column: the row tracks the
-        # whole conversation's activity, which a parent can extend long after
-        # one of its sub-agents stopped.
-        last_activity = (
-            newest
-            if sidechain
-            else max((t for t in (row.last_activity_at, newest) if t is not None), default=None)
-        )
-        # Likewise for the start: a sub-agent can begin long after its
-        # parent row was created, and started_at is the oldest record
-        # observed for this session, not for the row it was derived from.
-        started_at = (
-            min((n.at for n in tree if n.at is not None), default=None)
-            if sidechain
-            else row.created_at
-        )
+        started_at, last_activity = _span(tree, None if sidechain else row)
         return Session(
             session_id=session_id,
             agent_kind=map_source(SOURCE),
@@ -619,20 +576,72 @@ def _row(values: dict[str, object]) -> _Row:
     )
 
 
-def _effective_last_activity(row: _Row, nodes: Iterable[_Node]) -> datetime | None:
-    """The row's own column, or a node's later metadata timestamp.
+#: The main session's key in an ownership map; a sub-agent's is its agent id.
+_MAIN = ""
 
-    A node's own metadata timestamp can carry precision (sub-second) the
-    store's whole-second `last_activity_at` column lacks, and so can exceed
-    it. This is the same effective value `_session()` reports as the main
-    session's `Session.last_activity_at` (ADR-0019); used wherever that
-    column alone would be a stale stand-in for it -- window filtering and
-    log placement alike.
+
+def _owners(
+    by_id: Mapping[int, _Node], leaf: int | None, heads: Iterable[tuple[str, int]]
+) -> dict[int, str]:
+    """Which session each node belongs to, by one rule (ADR-0019).
+
+    A node belongs to the session whose declared chain holds its nearest
+    ancestor-or-self: the main chain claims first, then each sub-agent's
+    chain from its head. Anything below no declared chain -- an abandoned
+    regeneration, a tree no chain reaches -- follows the nearest claimed node
+    above it, and is the main session's when there is none. One rule, so a
+    sub-agent's turns, usage and times can never be drawn from different
+    sets of nodes.
     """
-    newest = max((n.at for n in nodes if n.at is not None), default=None)
-    return max(
-        (t for t in (row.last_activity_at, row.created_at, newest) if t is not None), default=None
-    )
+    claims: dict[int, str] = {}
+    for node in _chain(leaf, by_id):
+        claims.setdefault(node.node_id, _MAIN)
+    for agent, head in heads:
+        for node in _chain(head, by_id):
+            claims.setdefault(node.node_id, agent)
+    # Each walk stops at the first node already decided, so the whole forest
+    # is resolved in one pass over its edges rather than one per node.
+    owners: dict[int, str] = {}
+    for start in by_id:
+        path: list[int] = []
+        on_path: set[int] = set()
+        found = _MAIN
+        current: int | None = start
+        while current is not None and current in by_id and current not in on_path:
+            if current in owners:
+                found = owners[current]
+                break
+            path.append(current)
+            on_path.add(current)
+            if current in claims:
+                found = claims[current]
+                break
+            current = by_id[current].parent
+        for node_id in path:
+            owners[node_id] = found
+    return owners
+
+
+def _span(nodes: Iterable[_Node], row: _Row | None) -> tuple[datetime | None, datetime | None]:
+    """A session's first and last activity, from one rule.
+
+    The session's own nodes' times; for a main session, its row's columns
+    too -- `created_at` is the start, and `last_activity_at` can postdate
+    every node -- while a sub-agent spans only its own nodes, since its parent
+    row tracks a conversation that can start before it and outlast it. Every
+    use of a session's span (its fields, the `--since` window, log
+    placement) goes through here.
+    """
+    times = [n.at for n in nodes if n.at is not None]
+    if row is None:
+        return min(times, default=None), max(times, default=None)
+    columns = [t for t in (row.created_at, row.last_activity_at) if t is not None]
+    return row.created_at or min(times, default=None), max([*times, *columns], default=None)
+
+
+def _effective_last_activity(row: _Row, nodes: Iterable[_Node]) -> datetime | None:
+    """The latest activity of a row and every session drawn from it."""
+    return _span(nodes, row)[1]
 
 
 def _within(row: _Row, nodes: Iterable[_Node], window: Window) -> bool:
@@ -640,17 +649,6 @@ def _within(row: _Row, nodes: Iterable[_Node], window: Window) -> bool:
         return True
     latest = _effective_last_activity(row, nodes)
     return latest is not None and latest >= window.since
-
-
-def _root(node_id: int, by_id: Mapping[int, _Node]) -> int:
-    seen: set[int] = set()
-    current = node_id
-    while True:
-        seen.add(current)
-        parent = by_id[current].parent if current in by_id else None
-        if parent is None or parent not in by_id or parent in seen:
-            return current
-        current = parent
 
 
 def _chain(leaf: int | None, by_id: Mapping[int, _Node]) -> list[_Node]:

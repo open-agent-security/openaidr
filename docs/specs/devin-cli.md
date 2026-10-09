@@ -94,6 +94,11 @@ Extends [Session collection](session-collection.md) and
   are the path from it to the root. A session with no `main_chain_id` uses its
   newest main-tree node. Other branches are not turns, but their requests
   count as usage (ADR-0019).
+- **One rule says which session a node is.** A node belongs to the session
+  whose declared chain holds its nearest ancestor-or-self; the main chain
+  claims first, then each sub-agent's head chain; a node below no chain is the
+  main session's. Each session's turns, usage and times come from the nodes it
+  owns and nothing else (ADR-0019).
 - **Spans are never reused, and turns can vanish.** A regenerated turn leaves
   the chain and its spans stop being reported. `node_id` is unique per session.
 - **Hidden sessions** (`hidden = 1`) are internal helpers such as the
@@ -103,8 +108,8 @@ Extends [Session collection](session-collection.md) and
 
 | Field | Source |
 |---|---|
-| `started_at` | `sessions.created_at` |
-| `last_activity_at` | The later of `sessions.last_activity_at` and the newest node's time |
+| `started_at` | Main session: `sessions.created_at`. Sub-agent: the oldest time among the nodes it owns, since it can start long after the row |
+| `last_activity_at` | Main session: the latest of `sessions.last_activity_at` and its own nodes' times. Sub-agent: the newest time among the nodes it owns, since the parent can outlast it. The `--since` window and log placement use a row's span across all its sessions |
 | `model` | The newest response's `generation_model`; else `sessions.model`, which is often empty or an alias |
 | `working_directory` | `sessions.working_directory` |
 | `machine`, `user` | The reading host and user, as for `claude-code` |
@@ -172,8 +177,9 @@ from its text:
   `request_id` and count. A node with metrics and no `request_id` is keyed
   `node-<node_id>`. `compactor` and `cache_keepalive` requests count: they were
   real calls.
-- **A sub-agent tree's requests belong to the sub-agent's session** and no
-  other, so no `request_id` counts in two sessions.
+- **A request belongs to the session that owns its node** (the ownership rule
+  above), so no `request_id` counts in two sessions, and a sub-agent's
+  abandoned regeneration is the sub-agent's.
 - **Not read:** Devin's own billing figures (`committed_credit_cost`,
   `committed_acu_cost`, `cogs_json`) and the totals in `sessions.metadata`.
   Tokens are as recorded and never priced (ADR-0015).
