@@ -281,8 +281,11 @@ declaration — naming and representation are implementation choices.
 | Span identity | Stable across re-reads — see below | |
 | Tool name | Normalized | |
 | MCP server | Absent for built-in tools | |
+| Tool class | *Proposed.* What the tool *is*, from a closed vocabulary filled from each kind's own table, so a consumer never has to learn every kind's tool names. Absent for a name the table does not know: unknown, never ordinary. It normalises vocabulary, like the server split, and says nothing about what the call did. See ADR-0021 | |
 | Arguments | | local-only |
+| Canonical arguments | *Proposed.* The arguments a consumer most often needs — command, path, content, new text, URL, agent, skill — under one key name across kinds. A key the kind did not record is absent, never guessed; the arguments above are unchanged beside them. See ADR-0021 | local-only |
 | Status | Six values — see below | |
+| Exit code | A shell command's own exit status, where the kind records one | |
 | Duration | Wall clock from the record's own timestamps, not from the dependency's event model, which carries none. For an MCP call the connection log's tool-execution time fills a gap the transcript left, and never replaces a value it stated. **No absolute per-call time is carried beside it**: a call's start is its turn's occurrence time, and — only where the duration is the transcript's own round trip, not one the log filled in — a call's end follows from the two. Carrying either again would restate a value the model already holds, and recovering an end independently would require a join this package refuses (ADR-0010) | |
 | MCP transport | Which transport carried this call, where the connection log could be read. `None` elsewhere, and `None` is *unknown*, never local | |
 | Outcome | The abridged result and error text | local-only |
