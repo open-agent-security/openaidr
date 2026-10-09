@@ -290,12 +290,17 @@ class DevinCliReader:
                 message = json.loads(raw)
             except (TypeError, ValueError):
                 failures.append(f"session {session_id} node {node_id}: chat_message is not JSON")
-                continue
-            if not isinstance(message, dict):
-                failures.append(
-                    f"session {session_id} node {node_id}: chat_message is not an object"
-                )
-                continue
+                message = {}
+            else:
+                if not isinstance(message, dict):
+                    failures.append(
+                        f"session {session_id} node {node_id}: chat_message is not an object"
+                    )
+                    message = {}
+            # Kept even when unreadable, with an empty message (no role, no
+            # turn): its parent link is the only record of where it and
+            # anything declared to chain through it actually sit, and a
+            # fallback leaf has to walk real topology, never guess a branch.
             nodes.setdefault(session_id, []).append(
                 _Node(
                     row_id=row_id,

@@ -128,6 +128,35 @@ def test_an_unparseable_node_is_reported_and_skipped(tmp_path: Path) -> None:
     assert [t.text for t in sessions[0].turns] == ["hi"]
 
 
+def test_an_unparseable_chain_head_keeps_its_own_branch_not_an_abandoned_one(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cli"
+    store = _simple(
+        root,
+        [
+            Node(1, None, user("q")),
+            Node(2, 1, assistant("abandoned try", request_id="r1", metrics=metrics())),
+        ],
+        main=1,
+    )
+    db = sqlite3.connect(store)
+    # The declared head (node 3) is malformed, but its own parent link says
+    # it continues node 1 directly -- not the abandoned reply at node 2,
+    # which merely has a higher row_id.
+    db.execute(
+        "INSERT INTO message_nodes (session_id, node_id, parent_node_id, chat_message, created_at)"
+        " VALUES ('brave-otter', 3, 1, '{not json', ?)",
+        (T0,),
+    )
+    db.execute("UPDATE sessions SET main_chain_id = 3")
+    db.commit()
+    db.close()
+    sessions, failures = _read(root)
+    assert len(failures) == 1 and "node 3" in failures[0]
+    assert [t.text for t in sessions[0].turns] == ["q"]
+
+
 def test_hidden_sessions_are_not_read(tmp_path: Path) -> None:
     root = tmp_path / "cli"
     store = create_store(root)
@@ -898,6 +927,29 @@ def test_a_log_inside_the_window_but_short_of_its_end_is_not_its_log(tmp_path: P
         [log_line(1200, "INFO", "chisel", "start"), log_line(1210, "INFO", "chisel", "end")],
     )
     assert _one(root).mcp_log_state == "no_log_for_session"
+
+
+def test_two_logs_spanning_the_boundary_leave_placement_unresolved(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    _mcp_session(root)
+    lock(root, "brave-otter", 9)
+    # The pid is reused right at the session's last activity (T0+60): one
+    # process log ends there, the next starts there, and both satisfy
+    # _spans() within its slack -- which one actually held the session
+    # cannot be established.
+    run_log(
+        root,
+        9,
+        [*startup(58), *mcp_stdio(58, "server-a"), log_line(60, "INFO", "chisel", "x")],
+        stamp="20260101-000058",
+    )
+    run_log(
+        root,
+        9,
+        [*startup(60), *mcp_stdio(60, "server-b"), log_line(62, "INFO", "chisel", "x")],
+        stamp="20260101-000060",
+    )
+    assert _one(root).mcp_log_state == "log_discovery_incomplete"
 
 
 def test_two_sessions_in_one_process_are_placement_ambiguous(tmp_path: Path) -> None:
