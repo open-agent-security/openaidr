@@ -197,6 +197,9 @@ class RunLogs:
     def pid_for(self, session: str) -> int | None:
         return self._locks.get(session)
 
+    def lock_unreadable(self, session: str) -> bool:
+        return session in self._unreadable_locks
+
     def _list_logs(self) -> MCPLogState | None:
         directory = self.root / LOGS
         try:

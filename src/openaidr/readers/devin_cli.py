@@ -199,11 +199,16 @@ class DevinCliReader:
             # session whose lock names a pid a changed session's lock does.
             changed_ids = {row.id for row in changed}
             affected_pids = {pid for row in changed if (pid := logs.pid_for(row.id)) is not None}
-            rows = [
-                row
-                for row in store.rows
-                if row.id in changed_ids or logs.pid_for(row.id) in affected_pids
-            ]
+            if any(logs.lock_unreadable(row.id) for row in changed):
+                # A changed session's own lock couldn't be read, so its pid
+                # is unknown; any session could turn out to share it.
+                rows = list(store.rows)
+            else:
+                rows = [
+                    row
+                    for row in store.rows
+                    if row.id in changed_ids or logs.pid_for(row.id) in affected_pids
+                ]
         sessions = self._sessions(store, rows, logs, failures)
         failures.extend(self._failure(message) for message in logs.failures)
         return sessions, failures
@@ -462,7 +467,11 @@ class DevinCliReader:
             if role == "system" or (role == "user" and node.meta.get("is_user_input") is False):
                 context.append(
                     ContextItem(
-                        span=span_id(session_id, "context", len(context)),
+                        # The node id, not the position in `context`: a
+                        # regeneration can move the chain to a branch with
+                        # different context nodes, and a positional index
+                        # would then misname an unrelated item's span.
+                        span=span_id(session_id, "context", node.node_id),
                         source="system" if role == "system" else "injected",
                         name=None,
                         text=text,

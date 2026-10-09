@@ -229,8 +229,32 @@ def test_a_harness_written_user_node_is_context_not_a_turn(tmp_path: Path) -> No
         ("system", "You are Devin."),
         ("injected", "continue"),
     ]
-    assert session.context_items[0].span == "devin-cli:brave-otter:context:0"
+    assert session.context_items[0].span == "devin-cli:brave-otter:context:1"
     assert session.context_items[1].occurred_at == datetime.fromtimestamp(T0, UTC)
+
+
+def test_a_context_items_span_follows_its_node_not_its_position(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    store = _simple(
+        root,
+        [
+            Node(1, None, user("q")),
+            Node(2, 1, user("continue-a", typed=False)),
+            Node(3, 1, user("continue-b", typed=False)),
+        ],
+        main=2,
+    )
+    before = _one(root)
+    assert [(c.text, c.span) for c in before.context_items] == [
+        ("continue-a", "devin-cli:brave-otter:context:2")
+    ]
+    # Regeneration moves main_chain_id to the sibling branch -- a different
+    # context node now sits at the same position in `context`.
+    append_nodes(store, "brave-otter", [], main_chain_id=3)
+    after = _one(root)
+    assert [(c.text, c.span) for c in after.context_items] == [
+        ("continue-b", "devin-cli:brave-otter:context:3")
+    ]
 
 
 def test_content_given_as_parts_is_joined(tmp_path: Path) -> None:
@@ -853,6 +877,27 @@ def test_collect_file_re_emits_a_peer_whose_placement_turns_ambiguous(tmp_path: 
     assert set(by_id) == {"devin-cli:a", "devin-cli:b"}
     assert by_id["devin-cli:a"].mcp_log_state == "placement_ambiguous"
     assert by_id["devin-cli:b"].mcp_log_state == "placement_ambiguous"
+
+
+def test_collect_file_re_emits_peers_when_a_changed_lock_is_unreadable(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(store, StoredSession(id="a", nodes=[Node(1, None, user("x"))], main_chain_id=1))
+    lock(root, "a", 9)
+    run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
+    reader = DevinCliReader(root=root)
+    first, _ = reader.collect_file(store)
+    assert [s.session_id for s in first] == ["devin-cli:a"]
+    assert first[0].mcp_log_state == "applied"
+
+    write_session(store, StoredSession(id="b", nodes=[Node(1, None, user("y"))], main_chain_id=1))
+    (root / "session_locks" / "b.lock").write_text("not-a-pid")
+    grown, _ = reader.collect_file(store)
+    by_id = {s.session_id: s for s in grown}
+    assert set(by_id) == {"devin-cli:a", "devin-cli:b"}
+    assert by_id["devin-cli:a"].mcp_log_state == "log_discovery_incomplete"
 
 
 def test_collect_file_ignores_other_paths(tmp_path: Path) -> None:

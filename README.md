@@ -10,8 +10,8 @@ Session collection for AI coding agents.
 OpenAIDR reads the session state AI coding agents already write to disk and
 normalises it into one session model with stable span identity.
 
-> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). One
-> agent kind reads today (`claude-code`). Start with
+> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Two
+> agent kinds read today (`claude-code`, `devin-cli`). Start with
 > [Install and run](#install-and-run), then
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
