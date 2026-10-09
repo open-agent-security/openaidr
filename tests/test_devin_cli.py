@@ -181,6 +181,79 @@ def test_the_window_considers_a_nodes_own_later_timestamp(tmp_path: Path) -> Non
     assert [s.session_id for s in sessions] == ["devin-cli:brave-otter"]
 
 
+def test_a_subagents_last_activity_is_scoped_to_its_own_tree(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store,
+        StoredSession(
+            id="brave-otter",
+            last_activity_at=T0 + 100,
+            main_chain_id=1,
+            subagents=[("explorer-1", 11)],
+            nodes=[
+                Node(1, None, user("q")),
+                Node(10, None, user("look", typed=False)),
+                Node(
+                    11,
+                    10,
+                    assistant(
+                        calls=[call("c9", "mcp__gh__search", {})],
+                        request_id="s1",
+                        metrics=metrics(),
+                    ),
+                ),
+                Node(12, 11, result("c9", "x", success=True)),
+            ],
+        ),
+    )
+    sessions, _ = DevinCliReader(root=root).collect(ALL)
+    by_id = {s.session_id: s for s in sessions}
+    assert by_id["devin-cli:brave-otter"].last_activity_at == datetime.fromtimestamp(T0 + 100, UTC)
+    assert by_id["devin-cli:brave-otter:explorer-1"].last_activity_at == datetime.fromtimestamp(
+        T0, UTC
+    )
+
+    since = datetime.fromtimestamp(T0 + 50, UTC)
+    filtered, _ = DevinCliReader(root=root).collect(Window(since=since))
+    assert [s.session_id for s in filtered] == ["devin-cli:brave-otter"]
+
+
+def test_placement_uses_a_nodes_effective_time_not_the_stale_column(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store,
+        StoredSession(
+            id="brave-otter",
+            last_activity_at=T0 + 60,
+            nodes=[
+                Node(1, None, user("q")),
+                Node(2, 1, assistant("a", request_id="r1", metrics=metrics(), created_at=T0 + 200)),
+            ],
+            main_chain_id=2,
+        ),
+    )
+    lock(root, "brave-otter", 9)
+    # The locked pid has logs around both the stale column (60) and the
+    # node's true, later effective time (200) -- a pid reused in between.
+    run_log(
+        root,
+        9,
+        [*startup(50), *mcp_stdio(55, "wrong-server"), log_line(59, "INFO", "chisel", "x")],
+        stamp="20260101-000050",
+    )
+    run_log(
+        root,
+        9,
+        [*startup(190), *mcp_stdio(195, "right-server"), log_line(205, "INFO", "chisel", "x")],
+        stamp="20260101-000150",
+    )
+    session = _one(root)
+    assert session.mcp_log_state == "applied"
+    assert [c.server for c in session.mcp_connections] == ["right-server"]
+
+
 # --- session fields and the conversation tree --------------------------------
 
 
