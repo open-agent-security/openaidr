@@ -153,6 +153,15 @@ class DevinCliReader:
         logs = RunLogs.load(self._root)
         rows = [row for row in store.rows if _within(row, store.nodes.get(row.id, ()), window)]
         sessions = self._sessions(store, rows, logs, failures)
+        if window.since is not None:
+            # A row can pass because its main conversation is still within
+            # the window while one of its sub-agents, scoped to its own
+            # tree (ADR-0019), is not.
+            sessions = [
+                s
+                for s in sessions
+                if s.last_activity_at is not None and s.last_activity_at >= window.since
+            ]
         failures.extend(self._failure(message) for message in logs.failures)
         return sessions, failures
 
@@ -328,7 +337,9 @@ class DevinCliReader:
         failures: list[ReaderFailure],
     ) -> list[Session]:
         windows = {
-            row.id: (row.created_at, row.last_activity_at) for row in store.rows if not row.hidden
+            row.id: (row.created_at, _effective_last_activity(row, store.nodes.get(row.id, ())))
+            for row in store.rows
+            if not row.hidden
         }
         sessions: list[Session] = []
         for row in rows:
@@ -481,8 +492,13 @@ class DevinCliReader:
                 )
             )
         newest = max((n.at for n in tree if n.at is not None), default=None)
-        last_activity = max(
-            (t for t in (row.last_activity_at, newest) if t is not None), default=None
+        # A sub-agent's own tree, never the row's column: the row tracks the
+        # whole conversation's activity, which a parent can extend long after
+        # one of its sub-agents stopped.
+        last_activity = (
+            newest
+            if sidechain
+            else max((t for t in (row.last_activity_at, newest) if t is not None), default=None)
         )
         return Session(
             session_id=session_id,
@@ -590,18 +606,26 @@ def _row(values: dict[str, object]) -> _Row:
     )
 
 
+def _effective_last_activity(row: _Row, nodes: Iterable[_Node]) -> datetime | None:
+    """The row's own column, or a node's later metadata timestamp.
+
+    A node's own metadata timestamp can carry precision (sub-second) the
+    store's whole-second `last_activity_at` column lacks, and so can exceed
+    it. This is the same effective value `_session()` reports as the main
+    session's `Session.last_activity_at` (ADR-0019); used wherever that
+    column alone would be a stale stand-in for it -- window filtering and
+    log placement alike.
+    """
+    newest = max((n.at for n in nodes if n.at is not None), default=None)
+    return max(
+        (t for t in (row.last_activity_at, row.created_at, newest) if t is not None), default=None
+    )
+
+
 def _within(row: _Row, nodes: Iterable[_Node], window: Window) -> bool:
     if window.since is None:
         return True
-    # A node's own metadata timestamp can be later than the store's own
-    # whole-second last_activity_at column -- the same effective value
-    # _session() reports as Session.last_activity_at (ADR-0019). Filtering
-    # on the column alone can drop a row whose effective activity is in
-    # the window.
-    newest = max((n.at for n in nodes if n.at is not None), default=None)
-    latest = max(
-        (t for t in (row.last_activity_at, row.created_at, newest) if t is not None), default=None
-    )
+    latest = _effective_last_activity(row, nodes)
     return latest is not None and latest >= window.since
 
 
