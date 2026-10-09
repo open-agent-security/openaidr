@@ -159,9 +159,14 @@ class RunLogs:
             return Placement(state="log_discovery_incomplete")
         if not spanning:
             return Placement(state="no_log_for_session")
-        log = max(
-            spanning, key=lambda candidate: candidate.first or datetime.min.replace(tzinfo=UTC)
-        )
+        if len(spanning) > 1:
+            # The lock names only a pid, never a specific incarnation of it;
+            # more than one process log spanning the boundary -- a pid reused
+            # right at the session's last activity, within _SLACK of both --
+            # means which one the session actually ran in cannot be
+            # established.
+            return Placement(state="log_discovery_incomplete")
+        log = spanning[0]
         sharing = [
             other
             for other, other_window in others.items()
