@@ -161,6 +161,26 @@ def test_the_window_is_applied_to_last_activity(tmp_path: Path) -> None:
     assert [s.session_id for s in sessions] == ["devin-cli:new"]
 
 
+def test_the_window_considers_a_nodes_own_later_timestamp(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store,
+        StoredSession(
+            id="brave-otter",
+            last_activity_at=T0,
+            nodes=[
+                Node(1, None, user("q")),
+                Node(2, 1, assistant("a", request_id="r1", metrics=metrics(), created_at=T0 + 100)),
+            ],
+            main_chain_id=2,
+        ),
+    )
+    since = datetime.fromtimestamp(T0 + 50, UTC)
+    sessions, _ = DevinCliReader(root=root).collect(Window(since=since))
+    assert [s.session_id for s in sessions] == ["devin-cli:brave-otter"]
+
+
 # --- session fields and the conversation tree --------------------------------
 
 
