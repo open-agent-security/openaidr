@@ -145,7 +145,7 @@ Each step starts with its failing test.
 | Duplicate session identities | 0. Before the fix, this machine reported 21 |
 | Responses against distinct `(session, message.id)` pairs | 13,460 and 13,460 |
 | Summed output against the sum of each response's last record | 9,681,781 and 9,681,781 |
-| Cache reads over a session and its sub-agents, against the client's, without the side-call model | 99.37% in aggregate, matching the spec's 99.4%. Per session, 8 of 14 sessions with sub-agents are within 1%. The other 6 are 1.5–14% short, and every one of their transcripts was read. So the gap is in what the client recorded, not in what was parsed. The spec's "for each session" should say "in aggregate" |
+| Cache reads over a session and its sub-agents, against the client's, without the side-call model | 99.37% in aggregate, matching the spec's 99.4%. Per session, 8 of 14 sessions with sub-agents are within 1%. The other 6 are 1.5–14% short, and every one of their transcripts was read. So the gap is in what the client recorded, not in what was parsed. |
 | Sub-agent responses that are final | 816 of 2,663 |
 
 ## Out of scope
