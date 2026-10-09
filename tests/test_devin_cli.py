@@ -769,6 +769,29 @@ def test_a_log_that_does_not_span_the_session_is_not_its_log(tmp_path: Path) -> 
     assert _one(root).mcp_log_state == "no_log_for_session"
 
 
+def test_a_log_inside_the_window_but_short_of_its_end_is_not_its_log(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store,
+        StoredSession(
+            id="brave-otter",
+            last_activity_at=T0 + 3600,
+            nodes=[Node(1, None, user("x"))],
+            main_chain_id=1,
+        ),
+    )
+    lock(root, "brave-otter", 9)
+    # A same-pid process that ran and ended well before the session's last
+    # activity -- a reused pid, not the session's last holder.
+    run_log(
+        root,
+        9,
+        [log_line(1200, "INFO", "chisel", "start"), log_line(1210, "INFO", "chisel", "end")],
+    )
+    assert _one(root).mcp_log_state == "no_log_for_session"
+
+
 def test_two_sessions_in_one_process_are_placement_ambiguous(tmp_path: Path) -> None:
     root = tmp_path / "cli"
     store = create_store(root)
