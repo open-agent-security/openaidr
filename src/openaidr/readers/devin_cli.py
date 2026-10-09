@@ -467,7 +467,12 @@ class DevinCliReader:
                         session_id,
                         key,
                         results,
-                        at_tip=position == len(chain) - 1,
+                        # Not just the chain's last node: an assistant node's
+                        # calls are still at the tip if everything after it
+                        # is a result for one of them -- a sibling result
+                        # landing first does not mean the conversation moved
+                        # on, so an unmatched sibling is still pending.
+                        at_tip=all(n.role == "tool" for n in chain[position + 1 :]),
                         transports=transports,
                         failures=failures,
                     ),

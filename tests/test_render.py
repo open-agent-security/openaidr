@@ -306,6 +306,56 @@ def test_a_connection_that_failed_before_any_call_is_still_reported() -> None:
     assert "connections that failed:  1 auth" in output
 
 
+def test_mcp_coverage_explanations_do_not_assume_a_single_agent_kind() -> None:
+    """`no_log_for_session` and `log_discovery_incomplete` are reachable by
+    any reader, not just Claude Code's cache-log reader (`devin-cli` reaches
+    both through its own session lock). Their explanations must not assert a
+    cause -- a pruned cache, or project-keyed cache files -- that only holds
+    for one agent kind."""
+    call = ToolCall(
+        span="devin-cli:s1:toolu_1",
+        tool_name="search",
+        mcp_server="books",
+        status="unknown",
+        arguments={},
+        result=None,
+        result_size=None,
+        error_text=None,
+        truncated=False,
+    )
+    turn = Turn(
+        position=0, key="u1", role="assistant", text="", is_sidechain=False, tool_calls=(call,)
+    )
+    no_log = Session(
+        session_id="devin-cli:s1",
+        agent_kind="devin-cli",
+        source="devin",
+        started_at=_START,
+        model=None,
+        working_directory=None,
+        machine=None,
+        user=None,
+        mcp_log_state="no_log_for_session",
+        turns=(turn,),
+    )
+    incomplete = Session(
+        session_id="devin-cli:s2",
+        agent_kind="devin-cli",
+        source="devin",
+        started_at=_START,
+        model=None,
+        working_directory=None,
+        machine=None,
+        user=None,
+        mcp_log_state="log_discovery_incomplete",
+        turns=(turn,),
+    )
+    output = render_text(Collection(sessions=[no_log, incomplete], failures=[]))
+    assert "pruned on the agent's schedule, not ours" not in output
+    assert "under one project" not in output
+    assert "filed under this id" not in output
+
+
 def test_the_summary_states_the_remainder_when_the_tool_list_is_cut() -> None:
     """A truncated list with no marker reads as the whole of it."""
     calls = tuple(
