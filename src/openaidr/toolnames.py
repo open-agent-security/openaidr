@@ -18,7 +18,9 @@ def split_tool_name(agent_kind: str | None, raw: str) -> tuple[str | None, str]:
     find a server, it finds the wrong one — which then resolves to the wrong
     component downstream.
     """
-    if agent_kind == "claude-code":
+    if agent_kind in ("claude-code", "devin-cli"):
+        # Devin CLI names MCP tools by Claude Code's convention, verified in its
+        # own hook matchers (`^mcp__`), so the same rule is correct for both.
         return _split_claude_code(raw)
     return None, raw
 

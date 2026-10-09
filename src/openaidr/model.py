@@ -15,7 +15,7 @@ fillable must say which case it is in, which is why `mcp_log_state` exists besid
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
@@ -56,6 +56,8 @@ LOCAL_ONLY = frozenset(
         # path. `failure_category` is the part a consumer acts on and the part
         # that travels.
         "failure_detail",
+        # The same material as `arguments`, under one key name across kinds.
+        "canonical_arguments",
     }
 )
 
@@ -118,6 +120,20 @@ class ToolCall:
     #: `claudeai-proxy` is not are conclusions a consumer draws; this package
     #: reports what the client negotiated and stops there.
     transport: str | None = None
+    #: What the tool *is*, from a closed vocabulary (`TOOL_CLASSES` in
+    #: `toolclass`), filled from each kind's own table so a consumer never has
+    #: to learn every kind's tool names. `None` for a name the table does not
+    #: know: a tool added after the table was written is unknown, not ordinary.
+    #: It normalises vocabulary, like the `(server, tool)` split, and says
+    #: nothing about what the call did.
+    tool_class: str | None = None
+    #: The arguments a consumer most often needs, under one key name across
+    #: kinds: `command`, `path`, `content`, `new_text`, `url`, `agent`, `skill`.
+    #: A key the kind did not record is absent, never guessed. `arguments` is
+    #: unchanged beside it. `LOCAL_ONLY`, on the same terms as `arguments`.
+    canonical_arguments: dict[str, object] = field(default_factory=dict)
+    #: A shell command's own exit status, where the kind records one.
+    exit_code: int | None = None
 
 
 @dataclass(frozen=True)
@@ -186,7 +202,8 @@ class Compaction:
     consumer that cannot see the boundary answers it without knowing that.
     """
 
-    #: What caused it: `manual` or `auto`.
+    #: What caused it: `manual` or `auto`, or `unknown` for a kind that records
+    #: a compaction but not its cause.
     trigger: str
     #: Tokens in the conversation immediately before, where recorded.
     pre_tokens: int | None
@@ -322,6 +339,7 @@ MCPLogState = Literal[
     "session_id_collision",
     "transcript_discovery_incomplete",
     "log_discovery_incomplete",
+    "placement_ambiguous",
     "not_attempted",
 ]
 """Whether this session's MCP connection log could be read, and why not.
@@ -345,7 +363,10 @@ withholds more: a scan that yields no file *names* cannot establish that the
 entries it did find are every entry filed under this session id, and that
 uniqueness is the precondition the whole join rests on (ADR-0009). Collapsing
 them would make "we could not look" indistinguishable from "there was nothing
-to find" -- the confusion this package exists to avoid.
+to find" -- the confusion this package exists to avoid. `placement_ambiguous` is
+a log found, but shared: a per-process log that more than one session ran in,
+whose connection lines name no session, so none of it can be given to one of
+them (ADR-0020).
 
 `applied` does not mean every call got an outcome: a server whose log was pruned
 while another's survived leaves some calls unenriched within an applied session.
@@ -383,7 +404,9 @@ class MCPConnection:
     #: connection failed is not evidence it did.
     connected: bool | None = None
     #: Why the connection failed, in a fixed vocabulary a consumer can act on:
-    #: `auth`, `timeout`, `http_status`, `network`, `protocol`, `unknown`.
+    #: `auth`, `timeout`, `http_status`, `network`, `protocol`, `spawn` (the
+    #: server process could not be launched), `policy` (an organisation or
+    #: client policy refused the server), `unknown`.
     failure_category: str | None = None
     #: The server's own words. `LOCAL_ONLY`.
     failure_detail: str | None = None
@@ -497,6 +520,13 @@ class Session:
     #: carries only a name a person set. Two fields state only what was
     #: recorded; which to show is the displayer's choice. `LOCAL_ONLY`.
     generated_title: str | None = None
+    #: Whether this kind records compactions at all, so an empty `compactions`
+    #: can be read as *none happened* rather than *the kind cannot say*.
+    #: Absence is not falsehood; the same reason `mcp_log_state` exists.
+    compactions_recorded: bool = False
+    #: The same, for sub-agents: whether a sub-agent this session started
+    #: would have been collected as a session of its own.
+    subagents_recorded: bool = False
 
     @property
     def turn_count(self) -> int:

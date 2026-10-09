@@ -22,6 +22,7 @@ from openaidr.readers.base import (
     collect_from,
 )
 from openaidr.readers.claude_code import ClaudeCodeReader
+from openaidr.readers.devin_cli import DevinCliReader
 
 
 @dataclass(frozen=True)
@@ -32,14 +33,20 @@ class Collection:
     failures: list[ReaderFailure] = field(default_factory=list)
 
 
-def default_readers(root: Path | None = None) -> list[Reader]:
-    """The readers this package ships. One kind today."""
-    return [ClaudeCodeReader(root=root)]
+def default_readers(root: Path | None = None, devin_root: Path | None = None) -> list[Reader]:
+    """The readers this package ships: one per kind.
+
+    `root` is Claude Code's, kept positional for existing callers; each other
+    kind's root has its own keyword.
+    """
+    return [ClaudeCodeReader(root=root), DevinCliReader(root=devin_root)]
 
 
-def default_incremental_readers(root: Path | None = None) -> list[IncrementalReader]:
-    """The stateful readers this package ships. One kind today."""
-    return [ClaudeCodeReader(root=root)]
+def default_incremental_readers(
+    root: Path | None = None, devin_root: Path | None = None
+) -> list[IncrementalReader]:
+    """The stateful readers this package ships: one per kind."""
+    return [ClaudeCodeReader(root=root), DevinCliReader(root=devin_root)]
 
 
 class IncrementalCollector:

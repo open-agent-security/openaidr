@@ -117,6 +117,11 @@ _MCP_LOG_STATE_EXPLANATIONS: dict[MCPLogState, Callable[[int], str]] = {
         "under one project may not be the only one filed under this id, and a log "
         "not found may simply be in the part that went unread."
     ),
+    "placement_ambiguous": lambda n: (
+        f"{n} withheld connections: the per-process log they would come from served "
+        "more than one session, and its lines name no session, so whose connection "
+        "each line describes cannot be established. Build and entrypoint kept."
+    ),
     "not_attempted": lambda n: (
         f"{n} not attempted: a subagent transcript is keyed by its parent's session "
         "id, so the log filed under that id cannot be shown to be this subagent's "
@@ -403,7 +408,9 @@ def _session_document(session: Session) -> dict[str, object]:
                         "span": call.span,
                         "tool_name": call.tool_name,
                         "mcp_server": call.mcp_server,
+                        "tool_class": call.tool_class,
                         "status": call.status,
+                        "exit_code": call.exit_code,
                         "result_size": call.result_size,
                         "duration_ms": call.duration_ms,
                         "truncated": call.truncated,

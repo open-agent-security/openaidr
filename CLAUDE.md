@@ -7,7 +7,9 @@ normalises it into one session model with stable span identity. It answers *what
 an agent did*, never what that means: no scoring, no identity resolution, no
 findings, and no upload path.
 
-**It reads one agent kind today: `claude-code`.** Codex and Cursor are the
+**It reads two agent kinds today: `claude-code` and `devin-cli`.** Claude Code
+is read through `adr-sensor`; Devin CLI through an OpenAIDR-owned reader of its
+SQLite store and run logs (`docs/specs/devin-cli.md`). Codex and Cursor are the
 intended next kinds and are not read yet — a session from either is absent from
 the output entirely, not collected and marked. `adr-sensor` parses seven kinds;
 this package instantiates one of them. Do not describe the others as supported.
