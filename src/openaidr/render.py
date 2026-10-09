@@ -93,7 +93,9 @@ _MCP_LOG_STATE_EXPLANATIONS: dict[MCPLogState, Callable[[int], str]] = {
         "not absent."
     ),
     "no_log_for_session": lambda n: (
-        f"{n} had MCP calls but no log — the cache is pruned on the agent's schedule, not ours."
+        f"{n} had MCP calls but no log matched the session's process — why varies "
+        "by agent kind (a pruned cache entry, or no process lock ever taken); not "
+        "established here."
     ),
     "count_mismatch": lambda n: (
         f"{n} withheld per-call outcomes: the log and the transcript disagree on "
@@ -114,8 +116,8 @@ _MCP_LOG_STATE_EXPLANATIONS: dict[MCPLogState, Callable[[int], str]] = {
     "log_discovery_incomplete": lambda n: (
         f"{n} withheld everything: part of the cache could not be read whole, so "
         "neither this session's log nor its absence is established — a log found "
-        "under one project may not be the only one filed under this id, and a log "
-        "not found may simply be in the part that went unread."
+        "may not be the only one that exists, and a log not found may simply sit "
+        "in the part that went unread."
     ),
     "placement_ambiguous": lambda n: (
         f"{n} withheld connections: the per-process log they would come from served "

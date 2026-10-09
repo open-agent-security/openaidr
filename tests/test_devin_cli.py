@@ -413,6 +413,21 @@ def test_a_call_without_a_result_is_pending_at_the_tip_and_unknown_behind_it(
     assert behind.status == "unknown"
 
 
+def test_an_unmatched_sibling_call_is_pending_while_its_result_tail_is_active(
+    tmp_path: Path,
+) -> None:
+    # c1's result lands first, but no new turn has started: c2 is still
+    # pending, not unknown -- its result could still arrive.
+    done, waiting = _calls(
+        tmp_path / "cli",
+        [call("c1", "exec", {"command": "a"}), call("c2", "exec", {"command": "b"}, index=1)],
+        [result("c1", "done", success=True)],
+        last=True,
+    )
+    assert done.status == "ok"
+    assert waiting.status == "pending"
+
+
 def test_an_overflowed_result_is_truncated(tmp_path: Path) -> None:
     [one] = _calls(
         tmp_path / "cli",
