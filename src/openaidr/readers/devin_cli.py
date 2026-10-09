@@ -505,11 +505,19 @@ class DevinCliReader:
             if sidechain
             else max((t for t in (row.last_activity_at, newest) if t is not None), default=None)
         )
+        # Likewise for the start: a sub-agent can begin long after its
+        # parent row was created, and started_at is the oldest record
+        # observed for this session, not for the row it was derived from.
+        started_at = (
+            min((n.at for n in tree if n.at is not None), default=None)
+            if sidechain
+            else row.created_at
+        )
         return Session(
             session_id=session_id,
             agent_kind=map_source(SOURCE),
             source=SOURCE,
-            started_at=row.created_at,
+            started_at=started_at,
             model=_newest_model(tree) or (row.model or None),
             working_directory=row.working_directory or None,
             machine=socket.gethostname() or None,

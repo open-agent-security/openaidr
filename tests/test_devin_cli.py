@@ -248,6 +248,41 @@ def test_a_subagents_last_activity_is_scoped_to_its_own_tree(tmp_path: Path) -> 
     assert [s.session_id for s in filtered] == ["devin-cli:brave-otter"]
 
 
+def test_a_subagents_start_time_is_derived_from_its_own_tree(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store,
+        StoredSession(
+            id="brave-otter",
+            created_at=T0,
+            main_chain_id=1,
+            subagents=[("explorer-1", 11)],
+            nodes=[
+                Node(1, None, user("q")),
+                Node(10, None, user("look", typed=False), created_at=T0 + 100),
+                Node(
+                    11,
+                    10,
+                    assistant(
+                        calls=[call("c9", "mcp__gh__search", {})],
+                        request_id="s1",
+                        metrics=metrics(),
+                    ),
+                    created_at=T0 + 105,
+                ),
+                Node(12, 11, result("c9", "x", success=True), created_at=T0 + 110),
+            ],
+        ),
+    )
+    sessions, _ = DevinCliReader(root=root).collect(ALL)
+    by_id = {s.session_id: s for s in sessions}
+    assert by_id["devin-cli:brave-otter"].started_at == datetime.fromtimestamp(T0, UTC)
+    assert by_id["devin-cli:brave-otter:explorer-1"].started_at == datetime.fromtimestamp(
+        T0 + 100, UTC
+    )
+
+
 def test_placement_uses_a_nodes_effective_time_not_the_stale_column(tmp_path: Path) -> None:
     root = tmp_path / "cli"
     store = create_store(root)
