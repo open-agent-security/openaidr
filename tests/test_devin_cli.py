@@ -860,6 +860,36 @@ def test_disagreeing_attempts_leave_connected_unknown(tmp_path: Path) -> None:
     assert connection.connected is None
 
 
+def test_connection_fields_come_from_one_attempt_not_a_newer_pending_one(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cli"
+    _mcp_session(root)
+    lock(root, "brave-otter", 9)
+    run_log(
+        root,
+        9,
+        [
+            *startup(0),
+            *mcp_http(1, "gh", "https://old", outcome="ok"),
+            # A later reconnect to a different endpoint has not resolved yet;
+            # its endpoint must not be lent to the attempt that actually
+            # connected.
+            log_line(70, "INFO", "toolbox::tools::mcp", "Connecting to MCP server 'gh'"),
+            log_line(
+                70,
+                "INFO",
+                "toolbox::tools::mcp::config",
+                "Connecting to streamable HTTP MCP server 'gh' at: https://new",
+                10,
+            ),
+        ],
+    )
+    [connection] = _one(root).mcp_connections
+    assert connection.connected is True
+    assert connection.endpoint == "https://old"
+
+
 def test_no_logs_directory_is_no_log_root(tmp_path: Path) -> None:
     root = tmp_path / "cli"
     _mcp_session(root)

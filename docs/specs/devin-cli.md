@@ -78,7 +78,7 @@ Extends [Session collection](session-collection.md) and
 | Locked past a 2-second timeout | Failure: store busy |
 | A required table or column missing | Failure: unsupported schema, naming what is missing |
 | A migration newer than V17 | Read, and reported |
-| A `chat_message` that is not a JSON object | That node skipped, and reported |
+| A `chat_message` that is not a JSON object | That node kept with an empty message -- no role, so no turn or context item, but its `parent_node_id` still places it in the tree -- and reported |
 | `arguments` that are not an object | `{}`, and reported |
 
 ## Identity

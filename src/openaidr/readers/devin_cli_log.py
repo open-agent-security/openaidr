@@ -353,8 +353,11 @@ def _connections(attempts: list[_Attempt]) -> tuple[MCPConnection, ...]:
         connected = outcomes.pop() if len(outcomes) == 1 else None
         decided = [attempt for attempt in tries if attempt.connected is not None]
         last = decided[-1] if decided else tries[-1]
-        transport = next((a.transport for a in reversed(tries) if a.transport), None)
-        endpoint = next((a.endpoint for a in reversed(tries) if a.endpoint), None)
+        # From `last` alone, never searched for independently: a newer,
+        # still-pending reconnect under a different transport must not lend
+        # its transport or endpoint to an older attempt's outcome.
+        transport = last.transport
+        endpoint = last.endpoint
         reason = last.reason if connected is False else None
         connections.append(
             MCPConnection(
