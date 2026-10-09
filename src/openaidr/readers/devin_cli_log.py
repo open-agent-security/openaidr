@@ -173,6 +173,13 @@ class RunLogs:
                 agent_version=log.agent_version,
                 entrypoint=log.entrypoint,
             )
+        if any(
+            other != session and other in self._unreadable_locks and _spans(log, other_window)
+            for other, other_window in others.items()
+        ):
+            # An overlapping peer's lock could not be read, so it cannot be
+            # ruled out as sharing this same process.
+            return Placement(state="log_discovery_incomplete")
         return Placement(
             state="applied",
             agent_version=log.agent_version,
@@ -186,6 +193,9 @@ class RunLogs:
 
     def sessions_in(self, pid: int) -> list[str]:
         return [session for session, held in self._locks.items() if held == pid]
+
+    def pid_for(self, session: str) -> int | None:
+        return self._locks.get(session)
 
     def _list_logs(self) -> MCPLogState | None:
         directory = self.root / LOGS

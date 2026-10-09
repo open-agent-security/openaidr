@@ -738,6 +738,23 @@ def test_two_sessions_in_one_process_are_placement_ambiguous(tmp_path: Path) -> 
         assert session.agent_version == "3000.11.3"
 
 
+def test_an_unreadable_peer_lock_withholds_a_confident_placement(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store, StoredSession(id="brave-otter", nodes=[Node(1, None, user("x"))], main_chain_id=1)
+    )
+    write_session(
+        store, StoredSession(id="calm-heron", nodes=[Node(1, None, user("y"))], main_chain_id=1)
+    )
+    lock(root, "brave-otter", 9)
+    (root / "session_locks" / "calm-heron.lock").write_text("not-a-pid")
+    run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
+    sessions, _ = _read(root)
+    session = next(s for s in sessions if s.session_id == "devin-cli:brave-otter")
+    assert session.mcp_log_state == "log_discovery_incomplete"
+
+
 def test_subagents_share_their_parents_process(tmp_path: Path) -> None:
     root = tmp_path / "cli"
     store = create_store(root)
@@ -816,6 +833,26 @@ def test_collect_file_returns_only_sessions_with_new_rows(tmp_path: Path) -> Non
     assert failures == []
     assert [s.session_id for s in grown] == ["devin-cli:b"]
     assert [t.text for t in grown[0].turns] == ["y", "z"]
+
+
+def test_collect_file_re_emits_a_peer_whose_placement_turns_ambiguous(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(store, StoredSession(id="a", nodes=[Node(1, None, user("x"))], main_chain_id=1))
+    lock(root, "a", 9)
+    run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
+    reader = DevinCliReader(root=root)
+    first, _ = reader.collect_file(store)
+    assert [s.session_id for s in first] == ["devin-cli:a"]
+    assert first[0].mcp_log_state == "applied"
+
+    write_session(store, StoredSession(id="b", nodes=[Node(1, None, user("y"))], main_chain_id=1))
+    lock(root, "b", 9)
+    grown, _ = reader.collect_file(store)
+    by_id = {s.session_id: s for s in grown}
+    assert set(by_id) == {"devin-cli:a", "devin-cli:b"}
+    assert by_id["devin-cli:a"].mcp_log_state == "placement_ambiguous"
+    assert by_id["devin-cli:b"].mcp_log_state == "placement_ambiguous"
 
 
 def test_collect_file_ignores_other_paths(tmp_path: Path) -> None:

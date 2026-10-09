@@ -186,14 +186,24 @@ class DevinCliReader:
                 # held about the old one describes this one.
                 self._cursors = {}
                 self._identity = store.identity
-            rows = [
+            changed = [
                 row
                 for row in store.rows
                 if row.id not in self._cursors
                 or _high(store.nodes.get(row.id, ())) > self._cursors[row.id]
             ]
-            for row in rows:
+            for row in changed:
                 self._cursors[row.id] = _high(store.nodes.get(row.id, ()))
+            # A changed session can also flip another session sharing its
+            # process from `applied` to `placement_ambiguous`; re-emit any
+            # session whose lock names a pid a changed session's lock does.
+            changed_ids = {row.id for row in changed}
+            affected_pids = {pid for row in changed if (pid := logs.pid_for(row.id)) is not None}
+            rows = [
+                row
+                for row in store.rows
+                if row.id in changed_ids or logs.pid_for(row.id) in affected_pids
+            ]
         sessions = self._sessions(store, rows, logs, failures)
         failures.extend(self._failure(message) for message in logs.failures)
         return sessions, failures
