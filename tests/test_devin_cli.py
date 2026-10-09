@@ -951,6 +951,67 @@ def test_collect_file_re_emits_a_peer_freed_from_a_stale_shared_pid(tmp_path: Pa
     assert by_id["devin-cli:b"].mcp_log_state == "applied"
 
 
+def test_a_log_event_re_emits_a_peer_freed_from_an_old_pid(tmp_path: Path) -> None:
+    """The lock moves to a new process and only that process's log is reported:
+    no store row changes, yet the peer left behind on the old pid is no longer
+    ambiguous."""
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(store, StoredSession(id="a", nodes=[Node(1, None, user("x"))], main_chain_id=1))
+    write_session(store, StoredSession(id="b", nodes=[Node(1, None, user("y"))], main_chain_id=1))
+    lock(root, "a", 9)
+    lock(root, "b", 9)
+    run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
+    reader = DevinCliReader(root=root)
+    reader.collect_file(store)
+
+    lock(root, "a", 10)
+    log = run_log(root, 10, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
+    grown, _ = reader.collect_file(log)
+    by_id = {s.session_id: s for s in grown}
+    assert by_id["devin-cli:b"].mcp_log_state == "applied"
+    assert by_id["devin-cli:a"].mcp_log_state == "applied"
+
+
+def test_an_incremental_consumer_always_holds_what_a_cold_read_would(tmp_path: Path) -> None:
+    """The one rule every re-emission case is an instance of: after any event,
+    whichever file it names, a consumer that replaces the sessions
+    `collect_file` returned holds exactly what a cold read returns."""
+    root = tmp_path / "cli"
+    store = create_store(root)
+    reader = DevinCliReader(root=root)
+    held: dict[str, Session] = {}
+
+    def event(path: Path) -> None:
+        emitted, _ = reader.collect_file(path)
+        held.update({s.session_id: s for s in emitted})
+        cold, _ = DevinCliReader(root=root).collect(ALL)
+        assert held == {s.session_id: s for s in cold}
+
+    log_9 = [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")]
+    write_session(store, StoredSession(id="a", nodes=[Node(1, None, user("x"))], main_chain_id=1))
+    lock(root, "a", 9)
+    event(run_log(root, 9, log_9))
+    # A second session joins the same process: both become ambiguous.
+    write_session(store, StoredSession(id="b", nodes=[Node(1, None, user("y"))], main_chain_id=1))
+    lock(root, "b", 9)
+    event(store)
+    # "a" moves to a new process, announced only by that process's log.
+    lock(root, "a", 10)
+    event(run_log(root, 10, log_9, stamp="20260101-000001"))
+    # "b"'s lock is caught mid-write, then names a process with no log yet.
+    (root / "session_locks" / "b.lock").write_text("")
+    event(root / "session_locks" / "b.lock")
+    lock(root, "b", 11)
+    event(root / "session_locks" / "b.lock")
+    # Ordinary growth, through the WAL.
+    append_nodes(store, "a", [Node(2, 1, assistant("z", metrics=metrics()))], main_chain_id=2)
+    event(Path(f"{store}-wal"))
+    # The missing log arrives.
+    event(run_log(root, 11, log_9, stamp="20260101-000002"))
+    assert held["devin-cli:b"].mcp_log_state == "applied"
+
+
 def test_collect_file_ignores_other_paths(tmp_path: Path) -> None:
     root = tmp_path / "cli"
     create_store(root)
@@ -958,6 +1019,8 @@ def test_collect_file_ignores_other_paths(tmp_path: Path) -> None:
 
 
 def test_a_replaced_store_is_read_cold(tmp_path: Path) -> None:
+    """A replacement store reuses row ids for different content, which a
+    row-id cursor would skip; the new content is what is emitted."""
     root = tmp_path / "cli"
     store = create_store(root)
     write_session(store, StoredSession(id="a", nodes=[Node(1, None, user("x"))], main_chain_id=1))
@@ -966,9 +1029,9 @@ def test_a_replaced_store_is_read_cold(tmp_path: Path) -> None:
     for suffix in ("", "-wal", "-shm"):
         Path(f"{store}{suffix}").unlink(missing_ok=True)
     store = create_store(root)
-    write_session(store, StoredSession(id="a", nodes=[Node(1, None, user("x"))], main_chain_id=1))
+    write_session(store, StoredSession(id="a", nodes=[Node(1, None, user("new"))], main_chain_id=1))
     again, _ = reader.collect_file(store)
-    assert [s.session_id for s in again] == ["devin-cli:a"]
+    assert [(s.session_id, s.turns[0].text) for s in again] == [("devin-cli:a", "new")]
 
 
 # --- wiring -------------------------------------------------------------------------

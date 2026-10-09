@@ -39,7 +39,10 @@ sessions run in their parent's process and share its placement.
 
 Only the newest holder of a session is known, so a session resumed across
 processes is placed on its last process only. A REPL process that opens several
-sessions makes each of them ambiguous for connections. `failure_category` gains
+sessions makes each of them ambiguous for connections. Because one session's
+lock changes another's placement, a growing store re-emits by comparing each
+session's output, not by tracing which session an event touched (ADR-0018).
+`failure_category` gains
 `spawn` and `policy`, the two most actionable reasons this log states.
 
 ## When to revisit
