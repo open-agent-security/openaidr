@@ -26,7 +26,9 @@ between them: the session's `mcp_log_state` is `placement_ambiguous` and it gets
 no connections, while the process-level facts (`agent_version`, `entrypoint`)
 are kept. Failures announced as the background description-cache pass are set
 aside; attempts that still disagree leave `connected` unknown. Sub-agent
-sessions run in their parent's process and share its placement.
+sessions run in their parent's process; the row's placement is held to each
+session's own span, so a sub-agent that ended before the lock's last holder
+started gets no log rather than a later process's.
 
 ## Alternatives considered
 

@@ -370,22 +370,27 @@ class DevinCliReader:
                 leaf = max(unowned, key=lambda node: node.row_id).node_id
         sessions = [(_MAIN, f"{self.agent_kind}:{row.id}", leaf)]
         sessions += [(agent, f"{self.agent_kind}:{row.id}:{agent}", head) for agent, head in heads]
-        return [
-            self._session(
-                store,
-                row,
-                session_id=session_id,
-                # The declared chain, restricted to what this session owns:
-                # a sub-agent forked from the main tree does not repeat the
-                # parent's turns above the fork.
-                chain=[n for n in _chain(tip, by_id) if owner[n.node_id] == key],
-                tree=[n for n in nodes if owner[n.node_id] == key],
-                sidechain=key != _MAIN,
-                placement=placement,
-                failures=failures,
+        built: list[Session] = []
+        for key, session_id, tip in sessions:
+            tree = [n for n in nodes if owner[n.node_id] == key]
+            sidechain = key != _MAIN
+            built.append(
+                self._session(
+                    store,
+                    row,
+                    session_id=session_id,
+                    # The declared chain, restricted to what this session
+                    # owns: a sub-agent forked from the main tree does not
+                    # repeat the parent's turns above the fork.
+                    chain=[n for n in _chain(tip, by_id) if owner[n.node_id] == key],
+                    tree=tree,
+                    sidechain=sidechain,
+                    # Placed for the row; held to this session's own span.
+                    placement=placement.for_session(_span(tree, None if sidechain else row)),
+                    failures=failures,
+                )
             )
-            for key, session_id, tip in sessions
-        ]
+        return built
 
     def _session(
         self,

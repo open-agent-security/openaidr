@@ -230,7 +230,10 @@ last held the session, which is the PID in the log's file name.
 3. A failure followed by the description-cache line for the same server is the
    background pass, and is set aside. Attempts that still disagree leave
    `connected` as `None`.
-4. Sub-agent sessions run in the parent's process and share its placement.
+4. A placement is made for the row, then held to each session's own span: a
+   session, sub-agent included, takes the log only if its process was alive at
+   that session's last activity. A sub-agent that finished in an earlier process
+   than the lock's last holder is `no_log_for_session`.
 
 | `MCPConnection` | Source |
 |---|---|
