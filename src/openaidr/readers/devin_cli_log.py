@@ -111,19 +111,19 @@ class Placement:
     agent_version: str | None = None
     entrypoint: str | None = None
     connections: tuple[MCPConnection, ...] = ()
-    #: When the placed log's process was alive, first line to last; `None`
-    #: when no log was placed.
-    alive: tuple[datetime, datetime] | None = None
+    #: When each process this verdict was drawn from was alive, first line to
+    #: last; empty when the verdict rests on no readable log.
+    candidates: tuple[tuple[datetime, datetime], ...] = ()
 
     def for_session(self, window: tuple[datetime | None, datetime | None]) -> Placement:
         """This placement, for one session drawn from the row it was made for.
 
-        The lock names the row's last holder, so its log is a session's only
-        if that process was alive at the session's own last activity -- the
-        same test that chose the log for the row. A sub-agent that finished in
-        an earlier process has no log the lock can name.
+        The lock names the row's last holder, so the verdict is a session's only
+        if one of the processes it was drawn from was alive at the session's own
+        last activity -- the same test that chose them for the row. A sub-agent
+        that finished in an earlier process has no log the lock can name.
         """
-        if self.alive is None or _alive_at(self.alive, window):
+        if not self.candidates or any(_alive_at(span, window) for span in self.candidates):
             return self
         return Placement(state="no_log_for_session")
 
@@ -174,26 +174,29 @@ class RunLogs:
             return Placement(state="log_discovery_incomplete")
         if not spanning:
             return Placement(state="no_log_for_session")
+        # Every verdict below rests on these logs alone, so each carries their
+        # spans: a session drawn from this row that none of them covers ran in
+        # none of these processes (`for_session`).
+        candidates = tuple((log.first, log.last) for log in spanning if log.first and log.last)
         if len(spanning) > 1:
             # The lock names only a pid, never a specific incarnation of it;
             # more than one process log spanning the boundary -- a pid reused
             # right at the session's last activity, within _SLACK of both --
             # means which one the session actually ran in cannot be
             # established.
-            return Placement(state="log_discovery_incomplete")
+            return Placement(state="log_discovery_incomplete", candidates=candidates)
         log = spanning[0]
         sharing = [
             other
             for other, other_window in others.items()
             if other != session and self._locks.get(other) == pid and _spans(log, other_window)
         ]
-        alive = (log.first, log.last) if log.first and log.last else None
         if sharing:
             return Placement(
                 state="placement_ambiguous",
                 agent_version=log.agent_version,
                 entrypoint=log.entrypoint,
-                alive=alive,
+                candidates=candidates,
             )
         if any(
             other != session and other in self._unreadable_locks and _spans(log, other_window)
@@ -201,13 +204,13 @@ class RunLogs:
         ):
             # An overlapping peer's lock could not be read, so it cannot be
             # ruled out as sharing this same process.
-            return Placement(state="log_discovery_incomplete")
+            return Placement(state="log_discovery_incomplete", candidates=candidates)
         return Placement(
             state="applied",
             agent_version=log.agent_version,
             entrypoint=log.entrypoint,
             connections=log.connections,
-            alive=alive,
+            candidates=candidates,
         )
 
     def _list_logs(self) -> MCPLogState | None:

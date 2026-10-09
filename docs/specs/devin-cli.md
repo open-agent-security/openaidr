@@ -231,9 +231,11 @@ last held the session, which is the PID in the log's file name.
    background pass, and is set aside. Attempts that still disagree leave
    `connected` as `None`.
 4. A placement is made for the row, then held to each session's own span: a
-   session, sub-agent included, takes the log only if its process was alive at
-   that session's last activity. A sub-agent that finished in an earlier process
-   than the lock's last holder is `no_log_for_session`.
+   session, sub-agent included, takes the row's verdict only if a process it was
+   drawn from was alive at that session's last activity. A sub-agent that
+   finished in an earlier process than the lock's last holder is
+   `no_log_for_session`, whether the row was placed, ambiguous, or unresolved
+   between candidate logs or by an unreadable peer lock.
 
 | `MCPConnection` | Source |
 |---|---|

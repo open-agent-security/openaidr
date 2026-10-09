@@ -1526,3 +1526,98 @@ def test_a_subagent_that_ended_before_its_parents_last_process_is_not_placed_on_
     assert [c.server for c in parent.mcp_connections] == ["gh"]
     assert (child.mcp_log_state, child.mcp_connections) == ("no_log_for_session", ())
     assert (child.agent_version, child.entrypoint) == (None, None)
+
+
+def _at(seconds: int, message: str) -> str:
+    """A run-log line `seconds` after T0, past the first hour `log_line` covers."""
+    moment = datetime.fromtimestamp(T0 + seconds, UTC).strftime("%Y-%m-%dT%H:%M:%S")
+    return f"{moment}.000000Z  INFO {message}"
+
+
+@pytest.mark.parametrize(
+    ("row_state", "parent_state"),
+    [
+        ("applied", "applied"),
+        ("ambiguous", "placement_ambiguous"),
+        ("peer_unreadable", "log_discovery_incomplete"),
+        ("two_logs", "log_discovery_incomplete"),
+    ],
+)
+def test_every_row_verdict_from_a_readable_log_spares_a_subagent_outside_it(
+    tmp_path: Path, row_state: str, parent_state: str
+) -> None:
+    """Every verdict the row's placement draws from readable logs -- placed,
+    shared, an unreadable peer lock, two logs at the boundary -- concerns only
+    the processes those logs record. A sub-agent that finished before any of
+    them started ran in none of them, so it is `no_log_for_session`, never the
+    row's ambiguity."""
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store,
+        StoredSession(
+            id="brave-otter",
+            main_chain_id=3,
+            created_at=T0,
+            last_activity_at=T0 + 3600,
+            subagents=[("early-1", 11)],
+            nodes=[
+                Node(1, None, user("q"), created_at=T0),
+                Node(10, None, user("look", typed=False), created_at=T0 + 5),
+                Node(
+                    11,
+                    10,
+                    assistant("found", request_id="s1", metrics=metrics()),
+                    created_at=T0 + 10,
+                ),
+                Node(
+                    3,
+                    1,
+                    assistant("resumed", request_id="m1", metrics=metrics()),
+                    created_at=T0 + 3600,
+                ),
+            ],
+        ),
+    )
+    lock(root, "brave-otter", 10)
+    run_log(
+        root,
+        10,
+        [
+            _at(3590, "init_cli: chisel: version=3000.11.3 commit=x binary=devin startup"),
+            _at(3590, "run_acp_server: chisel: dispatching"),
+            _at(3660, "chisel: still running"),
+        ],
+        stamp="20260101-005950",
+    )
+    if row_state in ("ambiguous", "peer_unreadable"):
+        write_session(
+            store,
+            StoredSession(
+                id="calm-heron",
+                main_chain_id=1,
+                created_at=T0 + 3620,
+                last_activity_at=T0 + 3620,
+                nodes=[Node(1, None, user("y"), created_at=T0 + 3620)],
+            ),
+        )
+        lock(root, "calm-heron", 10)
+        if row_state == "peer_unreadable":
+            (root / "session_locks" / "calm-heron.lock").write_text("not-a-pid")
+    if row_state == "two_logs":
+        # The pid reused right at the parent's last activity: both logs span it.
+        run_log(
+            root,
+            10,
+            [_at(3600, "init_cli: chisel: version=3000.11.3"), _at(3630, "chisel: x")],
+            stamp="20260101-010000",
+        )
+    sessions, _ = _read(root)
+    by_id = {s.session_id: s for s in sessions}
+    parent, child = by_id["devin-cli:brave-otter"], by_id["devin-cli:brave-otter:early-1"]
+    assert parent.mcp_log_state == parent_state
+    assert (child.mcp_log_state, child.agent_version, child.entrypoint) == (
+        "no_log_for_session",
+        None,
+        None,
+    )
