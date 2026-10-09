@@ -151,7 +151,7 @@ class DevinCliReader:
         if store is None:
             return [], failures
         logs = RunLogs.load(self._root)
-        rows = [row for row in store.rows if _within(row, window)]
+        rows = [row for row in store.rows if _within(row, store.nodes.get(row.id, ()), window)]
         sessions = self._sessions(store, rows, logs, failures)
         failures.extend(self._failure(message) for message in logs.failures)
         return sessions, failures
@@ -590,10 +590,18 @@ def _row(values: dict[str, object]) -> _Row:
     )
 
 
-def _within(row: _Row, window: Window) -> bool:
+def _within(row: _Row, nodes: Iterable[_Node], window: Window) -> bool:
     if window.since is None:
         return True
-    latest = row.last_activity_at or row.created_at
+    # A node's own metadata timestamp can be later than the store's own
+    # whole-second last_activity_at column -- the same effective value
+    # _session() reports as Session.last_activity_at (ADR-0019). Filtering
+    # on the column alone can drop a row whose effective activity is in
+    # the window.
+    newest = max((n.at for n in nodes if n.at is not None), default=None)
+    latest = max(
+        (t for t in (row.last_activity_at, row.created_at, newest) if t is not None), default=None
+    )
     return latest is not None and latest >= window.since
 
 
