@@ -144,6 +144,12 @@ class DevinCliReader:
         #: `collect_file`. In memory only (ADR-0011); `row_id` only grows.
         self._cursors: dict[str, int] = {}
         self._identity: tuple[int, int, str] | None = None
+        #: Per session, the pid its lock named as of the last collect_file
+        #: call. A session resuming under a new pid can also free a peer
+        #: that shared its old one from `placement_ambiguous`; both the old
+        #: and new pid's peers need re-placing, and the old one is only
+        #: known here, not in `RunLogs`'s fresh-each-call state.
+        self._last_pids: dict[str, int] = {}
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         store, failures = self._load()
@@ -185,6 +191,7 @@ class DevinCliReader:
                 # A replaced store, or one whose rows went backwards: nothing
                 # held about the old one describes this one.
                 self._cursors = {}
+                self._last_pids = {}
                 self._identity = store.identity
             changed = [
                 row
@@ -195,10 +202,17 @@ class DevinCliReader:
             for row in changed:
                 self._cursors[row.id] = _high(store.nodes.get(row.id, ()))
             # A changed session can also flip another session sharing its
-            # process from `applied` to `placement_ambiguous`; re-emit any
-            # session whose lock names a pid a changed session's lock does.
+            # process from `applied` to `placement_ambiguous` (its new pid),
+            # or free one from `placement_ambiguous` back to `applied` (its
+            # old pid, no longer known to RunLogs' fresh-each-call state);
+            # re-emit any session whose lock names either.
             changed_ids = {row.id for row in changed}
-            affected_pids = {pid for row in changed if (pid := logs.pid_for(row.id)) is not None}
+            affected_pids = set()
+            for row in changed:
+                if (pid := logs.pid_for(row.id)) is not None:
+                    affected_pids.add(pid)
+                if (previous := self._last_pids.get(row.id)) is not None:
+                    affected_pids.add(previous)
             if any(logs.lock_unreadable(row.id) for row in changed):
                 # A changed session's own lock couldn't be read, so its pid
                 # is unknown; any session could turn out to share it.
@@ -209,6 +223,9 @@ class DevinCliReader:
                     for row in store.rows
                     if row.id in changed_ids or logs.pid_for(row.id) in affected_pids
                 ]
+            for row in store.rows:
+                if (pid := logs.pid_for(row.id)) is not None:
+                    self._last_pids[row.id] = pid
         sessions = self._sessions(store, rows, logs, failures)
         failures.extend(self._failure(message) for message in logs.failures)
         return sessions, failures
@@ -508,13 +525,12 @@ class DevinCliReader:
         last_activity = max(
             (t for t in (row.last_activity_at, newest) if t is not None), default=None
         )
-        models = [r.model for r in responses if r.model]
         return Session(
             session_id=session_id,
             agent_kind=map_source(SOURCE),
             source=SOURCE,
             started_at=row.created_at,
-            model=models[-1] if models else (row.model or None),
+            model=_newest_model(tree) or (row.model or None),
             working_directory=row.working_directory or None,
             machine=socket.gethostname() or None,
             user=_user(),
@@ -685,6 +701,23 @@ def _status(
     if success is False and isinstance(reason, str) and reason in _FAILURES:
         return _FAILURES[reason]
     return "unknown", None
+
+
+def _newest_model(tree: list[_Node]) -> str | None:
+    """The model of the most recently written response, by `row_id`.
+
+    Not `responses[-1].model`: that list is ordered by a response's first
+    appearance, and a regeneration can add a later record under an id that
+    appeared earlier, leaving the true newest record stranded mid-list.
+    """
+    candidates = [
+        node
+        for node in tree
+        if node.role == "assistant" and _string(node.meta.get("generation_model")) is not None
+    ]
+    if not candidates:
+        return None
+    return _string(max(candidates, key=lambda node: node.row_id).meta.get("generation_model"))
 
 
 def _responses(tree: list[_Node], sidechain: bool) -> tuple[ModelResponse, ...]:

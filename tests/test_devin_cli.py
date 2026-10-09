@@ -212,6 +212,33 @@ def test_turns_follow_the_main_chain_not_abandoned_branches(tmp_path: Path) -> N
     assert sorted(r.response_id for r in session.responses) == ["r1", "r2"]
 
 
+def test_a_session_reports_the_model_of_the_newest_response_not_the_last_appearing(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cli"
+    store = _simple(
+        root,
+        [
+            Node(1, None, user("q")),
+            Node(2, 1, assistant("r1a", request_id="r1", model="model-a", metrics=metrics())),
+            Node(3, 2, assistant("r2", request_id="r2", model="model-b", metrics=metrics())),
+        ],
+        main=3,
+    )
+    before = _one(root)
+    assert before.model == "model-b"
+    # A later regeneration appends a newer record under the earlier response
+    # id, carrying a different model.
+    append_nodes(
+        store,
+        "brave-otter",
+        [Node(4, 3, assistant("r1-regen", request_id="r1", model="model-c", metrics=metrics()))],
+        main_chain_id=4,
+    )
+    after = _one(root)
+    assert after.model == "model-c"
+
+
 def test_a_harness_written_user_node_is_context_not_a_turn(tmp_path: Path) -> None:
     root = tmp_path / "cli"
     _simple(
@@ -898,6 +925,30 @@ def test_collect_file_re_emits_peers_when_a_changed_lock_is_unreadable(
     by_id = {s.session_id: s for s in grown}
     assert set(by_id) == {"devin-cli:a", "devin-cli:b"}
     assert by_id["devin-cli:a"].mcp_log_state == "log_discovery_incomplete"
+
+
+def test_collect_file_re_emits_a_peer_freed_from_a_stale_shared_pid(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(store, StoredSession(id="a", nodes=[Node(1, None, user("x"))], main_chain_id=1))
+    write_session(store, StoredSession(id="b", nodes=[Node(1, None, user("y"))], main_chain_id=1))
+    lock(root, "a", 9)
+    lock(root, "b", 9)
+    run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
+    reader = DevinCliReader(root=root)
+    first, _ = reader.collect_file(store)
+    by_id = {s.session_id: s for s in first}
+    assert by_id["devin-cli:a"].mcp_log_state == "placement_ambiguous"
+    assert by_id["devin-cli:b"].mcp_log_state == "placement_ambiguous"
+
+    # "a" resumes under a new process; it no longer shares pid 9 with "b".
+    append_nodes(store, "a", [Node(2, 1, assistant("more", metrics=metrics()))], main_chain_id=2)
+    lock(root, "a", 10)
+    run_log(root, 10, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
+    grown, _ = reader.collect_file(store)
+    by_id = {s.session_id: s for s in grown}
+    assert set(by_id) == {"devin-cli:a", "devin-cli:b"}
+    assert by_id["devin-cli:b"].mcp_log_state == "applied"
 
 
 def test_collect_file_ignores_other_paths(tmp_path: Path) -> None:
