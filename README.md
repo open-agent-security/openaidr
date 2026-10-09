@@ -165,7 +165,7 @@ tool families are reported as coverage gaps. Compaction replacement history is
 not replayed. There is no Codex MCP connection-log enrichment, provider-refusal
 recovery, session-title lookup, or skill attribution. Compaction trigger/token
 counts are unavailable. Namespaced aliases are resolved only by explicit MCP
-completion metadata. See [ADR-0015](docs/adrs/0015-codex-durable-enrichment.md).
+completion metadata. See [ADR-0024](docs/adrs/0024-codex-durable-enrichment.md).
 
 ## Design
 

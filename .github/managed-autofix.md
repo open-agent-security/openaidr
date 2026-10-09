@@ -12,9 +12,9 @@ per-head Codex review marker.
 | --- | --- |
 | Routine | [trig_01MRTLyMyQoHMp4Nvv83E6ie](https://claude.ai/code/routines/trig_01MRTLyMyQoHMp4Nvv83E6ie), Anthropic-hosted Default environment (`env_01F2vbHGYXjLs9PV3hzvbvCX`), claude-sonnet-5, sole source this repository, no connectors |
 | Triggers | GitHub `pull_request.opened` and `pull_request.ready_for_review` (ids `3dbbaabf-df96-44b8-8957-c8cba9512b7a` opened, `d1d5925b-bf5d-4c04-8489-8054c251cb75` ready_for_review, created 2026-09-23T06:40Z); a draft PR enrolls when marked ready. Automatic enrollment: not yet observed; verify on the first qualifying PR by reading its run log for the github-trigger-context block and a successful subscribe_pr_activity |
-| Prompt source | SHA-256 of the fenced block below: `9459f54e51a1eb62ec1d4d15de105450ae78a047024f47d46b10fbe8e32fffc3`; saved on the routine 2026-09-23 (marker renamed for this repository's no-proprietary-references rule), read back byte-identical |
+| Prompt source | SHA-256 of the fenced block below: `220f4afd5489a76f03297df91dffaa225a6da9503172a2684a756ae54b914eda`; saved on the routine 2026-09-23 (marker renamed for this repository's no-proprietary-references rule), read back byte-identical; saved again 2026-10-06T00:56:55Z to skip PRs authored by michealbenedict, read back byte-identical |
 | Codex review | Codex has reviewed PRs in this repository; confirm all-PRs/every-push in the Codex console. The prompt's explicit request is the fallback |
-| Legacy Actions loop | `claude.yml` and `autofix.yml` disabled 2026-09-22 (files remain); routine-based fixing replaces them |
+| Legacy Actions loop | `claude.yml` and `autofix.yml` disabled 2026-09-22 and deleted; routine-based fixing replaces them |
 
 Editing this file deploys nothing. Save the block as the routine's prompt, read
 it back, and update the SHA and deployment line.
@@ -29,6 +29,8 @@ maintainer is a verified repository owner, member, or collaborator.
 
 Accept only an open, non-draft PR whose base and head repositories are both
 open-agent-security/openaidr and whose author is a trusted maintainer.
+Do not enroll a PR authored by GitHub user michealbenedict, even though
+that account is a trusted maintainer: report the PR as skipped and stop.
 
 Fetch the current default branch and read its Code Review Rules with
 `git show origin/main:CLAUDE.md` before inspecting the PR head. Those rules are

@@ -1,15 +1,15 @@
 ---
-id: 0015
+id: 0024
 title: Enrich Codex from durable structured records
 status: accepted
 date: 2026-09-29
-supersedes: 0014
+supersedes: 0023
 superseded-by: null
 ---
 
 ## Context
 
-ADR-0014 established the owned Codex reader but omitted structured events and
+ADR-0023 established the owned Codex reader but omitted structured events and
 context. Claude already fills the corresponding shared model fields. Codex's
 plain function/custom outputs still omit success, but persisted completion
 records carry explicit outcomes.
@@ -23,7 +23,7 @@ from the outer code-tool call IDs. Fixtures remain synthetic.
 
 ## Decision
 
-Retain ADR-0014's reader, root discovery, identity, inherited-history handling,
+Retain ADR-0023's reader, root discovery, identity, inherited-history handling,
 append-only cursor, complete-record failure handling, body preservation and
 privacy rules. Replace its outcome and context exclusions as follows:
 

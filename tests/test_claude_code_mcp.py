@@ -21,6 +21,7 @@ from tests.fixtures.claude_jsonl import (
     user_text,
     write_session,
     write_subagent_session,
+    write_workflow_agent_session,
 )
 
 SESSION = "11111111-2222-3333-4444-555555555555"
@@ -1249,6 +1250,35 @@ def test_a_subagent_outside_the_window_does_not_manufacture_a_collision(
     assert len(sessions) == 1
     assert sessions[0].mcp_log_state == "applied"
     assert [c.server for c in sessions[0].mcp_connections] == ["books"]
+
+
+def test_a_workflow_agent_does_not_withhold_its_parents_log(tmp_path: Path) -> None:
+    """A workflow agent's records carry the parent's session id one level below
+    a plain subagent's directory. Counted as a claimant, it turned the parent's
+    own log into a collision (token-usage spec, "Sub-agents and workflow
+    agents")."""
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    _transcript(root, ["search"], project="-project-one")
+    write_workflow_agent_session(
+        root,
+        "-project-one",
+        SESSION,
+        "wf_1",
+        "a1",
+        [
+            user_text(SESSION, "wu0", "2026-01-01T00:00:00Z", "step", isSidechain=True),
+            assistant_tool_use(SESSION, "wa0", "2026-01-01T00:00:01Z", "toolu_w0", "Read"),
+            tool_result(SESSION, "wr0", "2026-01-01T00:00:02Z", "toolu_w0", "x"),
+        ],
+    )
+    log.write_server_log(
+        cache,
+        "books",
+        [log.connected(SESSION, transport="stdio"), log.completed(SESSION, "search")],
+        project="-project-one",
+    )
+    parent = next(s for s in _collect(root, cache) if s.session_id == f"claude-code:{SESSION}")
+    assert parent.mcp_log_state == "applied"
 
 
 def test_a_renamed_copy_outside_the_window_is_a_known_uncovered_shape(

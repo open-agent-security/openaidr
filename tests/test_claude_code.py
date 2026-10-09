@@ -12,15 +12,19 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 
+from openaidr.collector import collect
+from openaidr.kinds import parse_kind_filter
 from openaidr.readers.base import Window
 from openaidr.readers.claude_code import ClaudeCodeReader
 from tests.fixtures.claude_jsonl import (
+    assistant_response,
     assistant_tool_use,
     system_event,
     tool_result,
     user_text,
     write_session,
     write_subagent_session,
+    write_workflow_agent_session,
 )
 
 
@@ -78,6 +82,201 @@ def test_every_turn_in_a_subagent_transcript_is_marked_sidechain(tmp_path: Path)
     )
     session = _sessions(tmp_path)[0]
     assert all(turn.is_sidechain for turn in session.turns)
+
+
+def _parent_with_workflow_agent(root: Path) -> Path:
+    write_session(
+        root,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "parent"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    return write_workflow_agent_session(
+        root,
+        "-p",
+        "s1",
+        "wf_1",
+        "x",
+        [
+            user_text("s1", "w1", "2026-08-01T10:00:02.000Z", "workflow step", isSidechain=True),
+            assistant_tool_use("s1", "w2", "2026-08-01T10:00:03.000Z", "toolu_w", "Grep"),
+        ],
+    )
+
+
+def test_a_workflow_agent_is_a_subagent_of_its_session(tmp_path: Path) -> None:
+    """A workflow writes its agents one level deeper than a plain subagent, and
+    their records carry the parent's session id. Read as a main session, an
+    agent claimed the parent's identity, and a cold pass could keep the agent
+    and drop the parent (token-usage spec, "Sub-agents and workflow agents")."""
+    _parent_with_workflow_agent(tmp_path)
+    collection = collect(
+        parse_kind_filter(["claude-code"]),
+        Window(since=None),
+        readers=[ClaudeCodeReader(root=tmp_path)],
+    )
+    by_id = {s.session_id: s for s in collection.sessions}
+    assert sorted(by_id) == ["claude-code:s1", "claude-code:s1:agent-x"]
+    assert by_id["claude-code:s1"].turns[0].text == "parent"
+    assert all(t.is_sidechain for t in by_id["claude-code:s1:agent-x"].turns)
+    assert not any("duplicate session identity" in f.message for f in collection.failures)
+
+
+def test_collect_file_reads_a_workflow_agent_under_its_own_identity(tmp_path: Path) -> None:
+    """A consumer keyed by session identity would otherwise overwrite the parent
+    with the agent."""
+    agent = _parent_with_workflow_agent(tmp_path)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect_file(agent)
+    assert failures == []
+    assert [s.session_id for s in sessions] == ["claude-code:s1:agent-x"]
+    assert all(t.is_sidechain for t in sessions[0].turns)
+
+
+def test_a_workflow_journal_is_not_a_transcript(tmp_path: Path) -> None:
+    agent = _parent_with_workflow_agent(tmp_path)
+    (agent.parent / "journal.jsonl").write_text(
+        json.dumps({"type": "started", "agentId": "x", "label": "step"}) + "\n",
+        encoding="utf-8",
+    )
+    reader = ClaudeCodeReader(root=tmp_path)
+    sessions, failures = reader.collect(Window(since=None))
+    assert sorted(s.session_id for s in sessions) == ["claude-code:s1", "claude-code:s1:agent-x"]
+    assert failures == []
+    assert reader.collect_file(agent.parent / "journal.jsonl") == ([], [])
+
+
+def test_a_root_under_a_directory_named_subagents_still_reads_main_sessions(
+    tmp_path: Path,
+) -> None:
+    """The subagent rule looks only below the root. Searching every ancestor
+    would read each main transcript as a non-agent file under `subagents/` and
+    drop it."""
+    root = tmp_path / "subagents" / "projects"
+    write_session(
+        root,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    reader = ClaudeCodeReader(root=root)
+    assert [s.session_id for s in reader.collect(Window(since=None))[0]] == ["claude-code:s1"]
+    assert reader.collect_file(root / "-p" / "s1.jsonl")[0][0].session_id == "claude-code:s1"
+
+
+def test_subagent_detection_normalizes_a_root_spelled_differently_from_the_path(
+    tmp_path: Path,
+) -> None:
+    """`collect_file` can be called with a path spelled differently from the
+    root the reader was built with (a relative root, a different symlink
+    alias) -- `relative_to` then raises before the bound above can be computed.
+    Falling back to scanning every ancestor, unbounded, reads the same
+    `subagents`-named ancestor the bounded case above must ignore, and
+    `collect_file` silently returns no session for a real one."""
+    root = tmp_path / "subagents" / "projects"
+    path = write_session(
+        root,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    (tmp_path / "subagents" / "x").mkdir()
+    oddly_spelled_root = tmp_path / "subagents" / "x" / ".." / "projects"
+    reader = ClaudeCodeReader(root=oddly_spelled_root)
+    sessions, failures = reader.collect_file(path)
+    assert failures == []
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+
+
+def test_a_path_genuinely_outside_root_is_never_guessed_as_a_subagent(
+    tmp_path: Path,
+) -> None:
+    """A path with no `relative_to` relationship to `root` at all -- not merely
+    a differently spelled one -- has no "below `root`" to bound the ancestor
+    scan. Guessing from its unrelated ancestry would still misclassify an
+    ordinary session sitting under a `subagents`-named directory elsewhere."""
+    root = tmp_path / "root"
+    root.mkdir()
+    path = write_session(
+        tmp_path / "subagents" / "elsewhere",
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    reader = ClaudeCodeReader(root=root)
+    sessions, failures = reader.collect_file(path)
+    assert failures == []
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+
+
+def test_an_unresolved_dotdot_cannot_make_relative_to_lexically_succeed(
+    tmp_path: Path,
+) -> None:
+    """`relative_to` is purely lexical: a `path` spelled as `root / ".." /
+    "subagents" / ...` lexically starts with `root`'s own parts, so it raises
+    no `ValueError` at all even though the file is not really under `root` --
+    it sits beside it, under an unrelated `subagents` directory. Resolving
+    only in the `except` branch never runs; both must be resolved up front."""
+    root = tmp_path / "root"
+    root.mkdir()
+    write_session(
+        tmp_path / "subagents" / "elsewhere",
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    lexically_rooted_path = root / ".." / "subagents" / "elsewhere" / "-p" / "s1.jsonl"
+    reader = ClaudeCodeReader(root=root)
+    sessions, failures = reader.collect_file(lexically_rooted_path)
+    assert failures == []
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+
+
+def test_a_symlink_loop_transcript_does_not_abort_discovery_for_other_sessions(
+    tmp_path: Path,
+) -> None:
+    """`_discover_transcripts` calls `_subagents_directory` (through
+    `_is_transcript`) while filtering every `*.jsonl` path it walks, before the
+    per-file `stat()` loop below gets a chance to isolate a broken one.
+    `Path.resolve()` raises `RuntimeError` on a symlink loop even without
+    `strict=True`; letting that escape would abort the whole walk and drop
+    every other session discovered in the same pass, not just the broken one."""
+    root = tmp_path / "projects"
+    write_session(
+        root,
+        "-p",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "hello"),
+            assistant_tool_use("s1", "a1", "2026-08-01T10:00:01.000Z", "toolu_1", "Read"),
+        ],
+    )
+    loop = root / "-p" / "loop.jsonl"
+    loop.symlink_to(loop)
+
+    sessions, failures = ClaudeCodeReader(root=root).collect(Window(since=None))
+
+    assert [s.session_id for s in sessions] == ["claude-code:s1"]
+    assert any("loop.jsonl" in f.message for f in failures)
+
+
+def test_a_workflow_agents_project_root_is_the_parent_of_its_session(tmp_path: Path) -> None:
+    project = tmp_path / "work" / "my-project"
+    project.mkdir(parents=True)
+    encoded = str(project).replace("/", "-")
+    record = user_text("s1", "w1", "2026-08-01T10:00:00.000Z", "workflow step")
+    del record["cwd"]
+    write_workflow_agent_session(tmp_path, encoded, "s1", "wf_1", "x", [record])
+    session = _sessions(tmp_path)[0]
+    assert session.working_directory == str(project)
 
 
 def test_a_repeated_sequence_id_does_not_collide(tmp_path: Path) -> None:
@@ -1526,6 +1725,57 @@ def test_a_transcript_that_stops_decoding_between_the_two_reads_is_not_a_failed_
 
     assert [s.session_id for s in sessions] == ["claude-code:s1"]
     assert any(str(transcript) in f.message for f in failures)
+
+
+def test_a_partial_decode_failure_withholds_the_response_it_interrupted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`responses` is read from each response's *last* record, the same
+    newest-over-the-file fold as `last_record` (ADR-0014). If the transcript
+    grows between upstream's parse and this reader's own recovery read by
+    gaining an undecodable line followed by a real final record, the response
+    accumulated before the bad line must not be exposed as a genuine
+    non-final lower bound: its real final record is the very thing the
+    failure prevented from being read, not a response that simply never
+    finished."""
+    usage = {"input_tokens": 3, "output_tokens": 5}
+    write_session(
+        tmp_path,
+        "-work",
+        [
+            user_text("s1", "u1", "2026-08-01T10:00:00.000Z", "go"),
+            assistant_response("s1", "a1", "2026-08-01T10:00:01.000Z", "msg_1", usage),
+        ],
+    )
+    transcript = next(tmp_path.rglob("*.jsonl"))
+    parsed, _ = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+    assert parsed[0].responses[0].final is False
+
+    real_open = Path.open
+    appended = False
+
+    def growing_open(self, *args, **kwargs):
+        nonlocal appended
+        if self == transcript and not appended:
+            appended = True
+            final_record = assistant_response(
+                "s1",
+                "a2",
+                "2026-08-01T10:00:02.000Z",
+                "msg_1",
+                {"input_tokens": 3, "output_tokens": 500},
+                stop_reason="end_turn",
+            )
+            with real_open(self, "ab") as handle:
+                handle.write(b"\xff\xfe not utf-8\n")
+                handle.write((json.dumps(final_record) + "\n").encode("utf-8"))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", growing_open)
+    sessions, failures = ClaudeCodeReader(root=tmp_path).collect(Window(since=None))
+
+    assert any(str(transcript) in f.message for f in failures)
+    assert sessions[0].responses == ()
 
 
 def test_a_transcript_whose_mtime_cannot_be_converted_does_not_lose_the_others(

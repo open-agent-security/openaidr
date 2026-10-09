@@ -15,8 +15,12 @@ results alone:
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
+from openaidr.model import ContextItem
 from openaidr.readers.base import Window
 from openaidr.readers.claude_code import ClaudeCodeReader
 from tests.fixtures.claude_jsonl import (
@@ -323,3 +327,190 @@ def test_a_call_with_no_attribution_claims_none(tmp_path: Path) -> None:
     (call,) = session.turns[1].tool_calls
     assert call.attributed_skill is None
     assert call.attributed_plugin is None
+
+
+# --- Named parts: one record describing several things at once ---------------------
+
+
+def _one_attachment(tmp_path: Path, body: dict) -> ContextItem:
+    write_session(tmp_path, "proj", [*_base(), attachment("s1", "a1", _T0, body)])
+    (session,) = _read(tmp_path)
+    (item,) = session.context_items
+    return item
+
+
+def test_each_mcp_servers_instructions_are_named_as_a_part(tmp_path: Path) -> None:
+    """The record pairs each server's name with its block, as the client itself
+    reads it back: `addedNames[i]` with `addedBlocks[i]`."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "mcp_instructions_delta",
+            "addedNames": ["github", "linear"],
+            "addedBlocks": ["## github\nUse the API.", "## linear\nFile issues."],
+        },
+    )
+    assert [(p.name, p.text) for p in item.parts] == [
+        ("github", "## github\nUse the API."),
+        ("linear", "## linear\nFile issues."),
+    ]
+    # The item itself is unchanged: one per record, its text the whole body.
+    assert item.text == "## github\nUse the API.\n## linear\nFile issues."
+
+
+def test_names_that_do_not_pair_with_blocks_name_no_part(tmp_path: Path) -> None:
+    """Absence is not falsehood: a name paired with the wrong block is worse
+    than no name."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "mcp_instructions_delta",
+            "addedNames": ["github"],
+            "addedBlocks": ["## github\nUse the API.", "## linear\nFile issues."],
+        },
+    )
+    assert item.parts == ()
+
+
+def test_each_skill_in_a_listing_is_named_as_a_part(tmp_path: Path) -> None:
+    """The client lists one `- name: description` entry per skill, in the
+    order of `names`; a skill over the listing's budget is `- name` alone."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- deploy: Ship the service\n- review",
+            "names": ["deploy", "review"],
+            "skillCount": 2,
+            "isInitial": True,
+        },
+    )
+    assert [(p.name, p.text) for p in item.parts] == [
+        ("deploy", "- deploy: Ship the service"),
+        ("review", "- review"),
+    ]
+
+
+def test_a_listing_whose_entries_cannot_be_told_apart_names_no_part(tmp_path: Path) -> None:
+    """A description that itself holds a `- ` line makes one more entry than
+    there are skills: no part is named rather than a wrong one."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- deploy: Ship it:\n- build\n- push\n- review: Check it",
+            "names": ["deploy", "review"],
+        },
+    )
+    assert item.parts == ()
+
+
+def test_a_listing_whose_names_are_not_in_its_entries_names_no_part(tmp_path: Path) -> None:
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- deploy: Ship it\n- review: Check it",
+            "names": ["review", "deploy"],
+        },
+    )
+    assert item.parts == ()
+
+
+def test_a_name_appearing_only_in_the_others_description_names_no_part(tmp_path: Path) -> None:
+    """A misordered listing whose descriptions happen to mention the other
+    skill's name must not pass: the name has to head its own entry, not merely
+    occur somewhere in the line."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- bar: calls foo\n- foo: calls bar",
+            "names": ["foo", "bar"],
+        },
+    )
+    assert item.parts == ()
+
+
+def test_a_name_that_is_only_a_prefix_of_the_entrys_name_names_no_part(tmp_path: Path) -> None:
+    """A plugin's skill is named `plugin:skill`, so a bare `:` after the
+    expected name is not an unambiguous end of it: `foo:bar: ...` must not
+    pair with the shorter expected name `foo`."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "skill_listing",
+            "content": "- foo:bar: Namespaced skill",
+            "names": ["foo"],
+        },
+    )
+    assert item.parts == ()
+
+
+def test_a_record_that_names_nothing_has_no_parts(tmp_path: Path) -> None:
+    item = _one_attachment(
+        tmp_path,
+        {"type": "hook_success", "hookName": "SessionStart:startup", "stdout": "Run the tests"},
+    )
+    assert item.parts == ()
+
+
+def test_a_parts_material_reaches_neither_rendered_surface(tmp_path: Path) -> None:
+    """A part is a slice of its item's text, so it is `LOCAL_ONLY` on the
+    same terms as `context_items`: naming parts must not give that material a
+    way into either rendered surface."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            *_base(),
+            attachment(
+                "s1",
+                "a1",
+                _T0,
+                {
+                    "type": "skill_listing",
+                    "content": "- deploy: Ship the private service",
+                    "names": ["deploy"],
+                },
+            ),
+            attachment(
+                "s1",
+                "a2",
+                _T0,
+                {
+                    "type": "mcp_instructions_delta",
+                    "addedNames": ["github"],
+                    "addedBlocks": ["## github\nUse the internal token store."],
+                },
+            ),
+        ],
+    )
+    for surface in (["--format", "json"], ["--detail"]):
+        result = subprocess.run(
+            [sys.executable, "-m", "openaidr", "sessions", "--since", "36500d", *surface],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "OPENAIDR_CLAUDE_ROOT": str(tmp_path)},
+        )
+        assert result.returncode == 0, result.stderr
+        # The session was read, so an empty stdout cannot pass for the wrong reason.
+        assert "Read" in result.stdout
+        assert "Ship the private service" not in result.stdout
+        assert "internal token store" not in result.stdout
+
+
+def test_an_item_carries_when_its_record_was_written(tmp_path: Path) -> None:
+    """A server connected mid-session is in context only from then on: a
+    consumer asking which calls carried it needs the record's own time."""
+    item = _one_attachment(
+        tmp_path,
+        {
+            "type": "mcp_instructions_delta",
+            "addedNames": ["github"],
+            "addedBlocks": ["## github\nUse the API."],
+        },
+    )
+    assert item.occurred_at is not None
+    assert item.occurred_at.isoformat() == "2026-08-29T12:00:00+00:00"

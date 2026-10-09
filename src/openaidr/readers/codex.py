@@ -2,7 +2,7 @@
 
 A response record is a turn; output records resolve earlier calls, never add
 turns. Physical line numbers survive appended records and skipped event types.
-See ADR-0015 for identity, outcome and coverage boundaries.
+See ADR-0024 for identity, outcome and coverage boundaries.
 """
 
 from __future__ import annotations

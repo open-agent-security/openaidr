@@ -34,7 +34,7 @@ import os
 import re
 import stat
 from collections import Counter, defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -45,11 +45,14 @@ from openaidr.kinds import map_source
 from openaidr.model import (
     Compaction,
     ContextItem,
+    ContextPart,
     MCPConnection,
     MCPLogState,
+    ModelResponse,
     ProviderRefusal,
     Session,
     Status,
+    TokenUsage,
     ToolCall,
     Turn,
     span_id,
@@ -61,8 +64,7 @@ from openaidr.readers.claude_code_mcp import (
     _IncrementalMCPLogReader,
     read_mcp_logs,
 )
-from openaidr.readers.common import directory_present
-from openaidr.readers.common import discover_files as _discover_transcripts
+from openaidr.readers.common import directory_present, discover_files
 from openaidr.readers.common import timestamp as _timestamp
 from openaidr.toolnames import split_tool_name
 
@@ -74,6 +76,63 @@ SOURCE = "claude"
 
 #: A subagent's transcript lives under this directory beside its parent's file.
 _SUBAGENT_DIR = "subagents"
+
+
+def _subagents_directory(path: Path, root: Path) -> Path | None:
+    """The `subagents` directory `path` sits under, at any depth below `root`.
+
+    A plain subagent is `<sid>/subagents/agent-<id>.jsonl`. A workflow writes
+    its agents deeper, at `<sid>/subagents/workflows/<run>/agent-<id>.jsonl`,
+    and their records carry the parent's session id the same way. Testing only
+    the file's own directory read those as main sessions under the parent's
+    identity (token-usage spec, "Sub-agents and workflow agents").
+
+    Only directories below `root` are searched, so a root that itself sits
+    under a directory of that name does not make every transcript a subagent.
+    `relative_to` is a purely lexical check, so both are resolved first:
+    unresolved, an embedded `..` can make `path` lexically start with `root`
+    while actually sitting elsewhere, and a `root` spelled differently from
+    `path` (relative vs. absolute, a different symlink alias) can lexically
+    fail to match a `path` that really is under it. A path that is not under
+    `root` once resolved has no "below `root`" to search, so it is never
+    treated as a subagent rather than guessed from its unrelated ancestry.
+
+    `_discover_transcripts` calls this while filtering every `*.jsonl` path
+    it walks, before the per-file `stat()` below gets a chance to isolate a
+    broken one, so a resolution failure here must not raise: a symlink loop
+    makes `resolve()` raise `RuntimeError` even without `strict=True`, and
+    one such file anywhere under `root` would otherwise abort discovery for
+    every session. Leaving the path unresolved for the bound below, as a
+    main-session file, lets `stat()` catch and isolate it by its own name.
+    """
+    try:
+        path, root = path.resolve(), root.resolve()
+    except (RuntimeError, OSError):
+        return None
+    try:
+        depth = len(path.relative_to(root).parts) - 1
+    except ValueError:
+        return None
+    return next(
+        (parent for parent in list(path.parents)[:depth] if parent.name == _SUBAGENT_DIR),
+        None,
+    )
+
+
+def _is_subagent(path: Path, root: Path) -> bool:
+    return _subagents_directory(path, root) is not None
+
+
+def _is_transcript(path: Path, root: Path) -> bool:
+    """Under `subagents/`, only `agent-<id>.jsonl` is a transcript.
+
+    A workflow run also keeps a `journal.jsonl` there, which records the run,
+    not a conversation.
+    """
+    return not _is_subagent(path, root) or (
+        path.name.startswith("agent-") and path.suffix == ".jsonl"
+    )
+
 
 #: What `toolDenialKind` says, mapped onto this package's vocabulary.
 #:
@@ -457,8 +516,8 @@ class ClaudeCodeReader:
                 failures.append(file_failure)
                 unparsed.append(path)
                 continue
-            parsed.append((path, path.parent.name == _SUBAGENT_DIR, events))
-        ambiguous_ids = _ambiguous_transcript_ids(parsed, unparsed)
+            parsed.append((path, _is_subagent(path, self._root), events))
+        ambiguous_ids = _ambiguous_transcript_ids(parsed, unparsed, self._root)
         # A directory the walk could not enter yields no file *names*, and a
         # name is the whole of what `_ambiguous_transcript_ids` falls back to
         # for a file it cannot read (ADR-0008). So an unscanned subtree is not
@@ -479,6 +538,8 @@ class ClaudeCodeReader:
 
     def collect_file(self, path: Path) -> tuple[list[Session], list[ReaderFailure]]:
         """Read one growing transcript, projecting only complete appended records."""
+        if not _is_transcript(path, self._root):
+            return [], []
         projection = self._incremental.setdefault(path, _IncrementalProjection(self._parser))
         events, failure = projection.read(path)
         if failure is not None:
@@ -510,9 +571,9 @@ class ClaudeCodeReader:
             for error in walk_failures
         )
         unparsed = [candidate for candidate in jsonl_paths if not _same_file(candidate, path)]
-        is_subagent = path.parent.name == _SUBAGENT_DIR
+        is_subagent = _is_subagent(path, self._root)
         parsed = [(path, is_subagent, events)]
-        ambiguous_ids = _ambiguous_transcript_ids(parsed, unparsed)
+        ambiguous_ids = _ambiguous_transcript_ids(parsed, unparsed, self._root)
         sessions = [
             self._session(event, path, is_subagent, ambiguous_ids, bool(walk_failures))
             for event in events
@@ -575,12 +636,13 @@ class ClaudeCodeReader:
         recorded = self._recorded_cwd(path, event.session_id)
         if recorded:
             return recorded
-        # A subagent transcript lives two levels below the project directory
-        # (`<project>/<sessionId>/subagents/agent-<id>.jsonl`, ADR-0001), not
-        # one -- `path.parent` is `subagents` and `path.parent.parent` is the
-        # session id's own directory, not the mangled project name this
-        # decodes.
-        directory = path.parent.parent.parent if path.parent.name == _SUBAGENT_DIR else path.parent
+        # A subagent transcript lives at least two levels below the project
+        # directory (`<project>/<sessionId>/subagents/agent-<id>.jsonl`,
+        # ADR-0001), and a workflow agent deeper still. The project directory
+        # is the parent of the session id's own directory, however deep the
+        # file sits, never the mangled-looking name of a directory in between.
+        subagents = _subagents_directory(path, self._root)
+        directory = subagents.parent.parent if subagents is not None else path.parent
         return _decode_project_directory(directory.name)
 
     def _read(self, path: Path) -> _Transcript:
@@ -683,12 +745,18 @@ class ClaudeCodeReader:
                     source=source,
                     name=name,
                     text=text,
+                    parts=parts,
+                    occurred_at=occurred_at,
                 )
-                for index, (source, name, text) in enumerate(transcript.context.get(raw_id, ()))
+                for index, (source, name, text, parts, occurred_at) in enumerate(
+                    transcript.context.get(raw_id, ())
+                )
             ),
             compactions=tuple(
-                Compaction(trigger=trigger, pre_tokens=pre, dropped_tokens=dropped)
-                for trigger, pre, dropped in transcript.compactions.get(raw_id, ())
+                Compaction(
+                    trigger=trigger, pre_tokens=pre, dropped_tokens=dropped, occurred_at=occurred_at
+                )
+                for trigger, pre, dropped, occurred_at in transcript.compactions.get(raw_id, ())
             ),
             provider_refusals=tuple(
                 ProviderRefusal(category=category, original_model=original, fallback_model=fallback)
@@ -701,6 +769,11 @@ class ClaudeCodeReader:
             turns=_turns(
                 event.chat_history, session_id, raw_id, is_subagent, transcript, enrichment
             ),
+            responses=tuple(
+                replace(response, is_sidechain=True) if is_subagent else response
+                for response in transcript.responses.get(raw_id, {}).values()
+            ),
+            generated_title=transcript.generated_titles.get(raw_id),
         )
 
     def _mcp_enrichment(self, raw_id: str, project: str, event: AgentEvent) -> _MCPEnrichment:
@@ -881,6 +954,7 @@ class _MCPEnrichment:
 def _ambiguous_transcript_ids(
     parsed: list[tuple[Path, bool, list[AgentEvent]]],
     unparsed: list[Path],
+    root: Path,
 ) -> set[str]:
     """Raw session ids more than one transcript file claims.
 
@@ -941,7 +1015,7 @@ def _ambiguous_transcript_ids(
         # The same exclusion the parsed side makes, from the only evidence an
         # unparsed file offers: a subagent's records carry its parent's id, so
         # counting one would manufacture a collision with its own parent.
-        if path.parent.name == _SUBAGENT_DIR:
+        if _is_subagent(path, root):
             continue
         paths_by_id[path.stem].add(path)
     return {raw_id for raw_id, paths in paths_by_id.items() if len(paths) > 1}
@@ -1019,6 +1093,7 @@ def _turns(
                 ),
                 permission_mode=transcript.permission_modes.get((raw_session_id, base, occurrence)),
                 occurred_at=transcript.record_times.get((raw_session_id, base, occurrence)),
+                response_id=transcript.response_ids.get((raw_session_id, base, occurrence)),
             )
         )
     return tuple(turns)
@@ -1475,9 +1550,13 @@ class _Transcript:
         default_factory=dict
     )
     #: session id -> material that reached the model outside the turn structure.
-    context: dict[str, list[tuple[str, str | None, str]]] = field(default_factory=dict)
-    #: session id -> compaction boundaries, as (trigger, pre, dropped).
-    compactions: dict[str, list[tuple[str, int | None, int | None]]] = field(default_factory=dict)
+    context: dict[
+        str, list[tuple[str, str | None, str, tuple[ContextPart, ...], datetime | None]]
+    ] = field(default_factory=dict)
+    #: session id -> compaction boundaries, as (trigger, pre, dropped, time).
+    compactions: dict[str, list[tuple[str, int | None, int | None, datetime | None]]] = field(
+        default_factory=dict
+    )
     #: session id -> provider refusals, as (category, original, fallback).
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]] = field(
         default_factory=dict
@@ -1508,6 +1587,17 @@ class _Transcript:
     #: for it, so a max over turns alone would understate how recently the
     #: session did anything.
     last_record: dict[str, datetime] = field(default_factory=dict)
+    #: session id -> response id -> the response, as its latest record states
+    #: it (ADR-0014). Insertion order is each response's first record, which is
+    #: the order `Session.responses` reports; a later record replaces the value
+    #: without moving it. Built as a main session's response: `_session` marks
+    #: a subagent's sidechain, on the same rule as its turns.
+    responses: dict[str, dict[str, ModelResponse]] = field(default_factory=dict)
+    #: (session id, record uuid, occurrence) -> the response that record belongs
+    #: to. Keyed as `record_times` is, which is the key a turn reads.
+    response_ids: dict[tuple[str, str, int], str] = field(default_factory=dict)
+    #: session id -> the name the client generated, from its latest `ai-title`.
+    generated_titles: dict[str, str] = field(default_factory=dict)
 
 
 def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str | None]:
@@ -1541,9 +1631,14 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
     titles: dict[str, str] = {}
     cwd_at: dict[tuple[str, str, int], str] = {}
     attribution: dict[tuple[str, str, int], tuple[str | None, str | None]] = {}
-    context: dict[str, list[tuple[str, str | None, str]]] = {}
-    compactions: dict[str, list[tuple[str, int | None, int | None]]] = {}
+    context: dict[
+        str, list[tuple[str, str | None, str, tuple[ContextPart, ...], datetime | None]]
+    ] = {}
+    compactions: dict[str, list[tuple[str, int | None, int | None, datetime | None]]] = {}
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]] = {}
+    generated_titles: dict[str, str] = {}
+    responses: dict[str, dict[str, ModelResponse]] = {}
+    response_ids: dict[tuple[str, str, int], str] = {}
     permission_modes: dict[tuple[str, str, int], str] = {}
     call_ids: dict[tuple[str, str, int, int], str] = {}
     started: dict[tuple[str, str], datetime] = {}
@@ -1610,7 +1705,13 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
                         context,
                         compactions,
                         refusals,
+                        generated_titles,
                     )
+                    response = _model_response(record)
+                    if response is not None:
+                        # Assigned, not `setdefault`: the latest record states
+                        # the response, and replacing a key keeps its place.
+                        responses.setdefault(session_id, {})[response.response_id] = response
 
                 declared = record.get("permissionMode")
                 if session_id is not None and isinstance(declared, str) and declared:
@@ -1668,6 +1769,9 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
                         permission_modes[(sid, key_uuid, occurrence)] = mode
                     if timestamp is not None:
                         record_times[(sid, key_uuid, occurrence)] = timestamp
+                    response_id = _response_id(record)
+                    if response_id is not None:
+                        response_ids[(sid, key_uuid, occurrence)] = response_id
                     where = record.get("cwd")
                     if isinstance(where, str) and where:
                         cwd_at[(sid, key_uuid, occurrence)] = where
@@ -1716,16 +1820,22 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
         # It is reachable for the same reason a permission failure is: upstream
         # can decode a file that has since gained a byte that will not.
         failure = f"{path}: {error}"
-        # A record folded in before the failing line is genuine, but a session's
-        # recency is a *newest*-over-the-whole-file fold (ADR-0010): a failure
-        # partway through withholds exactly the later records that would have
+        # A record folded in before the failing line is genuine, but every
+        # *newest*-over-the-whole-file fold -- a session's recency (ADR-0010),
+        # and a response, which is likewise read from its last record
+        # (ADR-0014) -- withholds exactly the later records that would have
         # raised it, so what survives here is not "the newest seen" but "the
-        # newest seen before the read broke" -- a stale answer with no marker
-        # to tell it apart from a complete one. ADR-0010 promises a failed
-        # second read yields no time, not a truncated one.
+        # newest seen before the read broke": a non-final response here can be
+        # one whose real final record was the very thing that failed to
+        # decode, indistinguishable from a genuine lower bound. ADR-0010
+        # promises a failed second read yields no time, not a truncated one;
+        # the same holds for a response, its turn link, and a generated title.
         record_times.clear()
         first_record.clear()
         last_record.clear()
+        responses.clear()
+        response_ids.clear()
+        generated_titles.clear()
     else:
         failure = None
 
@@ -1751,6 +1861,9 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
         record_times=record_times,
         first_record=first_record,
         last_record=last_record,
+        responses=responses,
+        response_ids=response_ids,
+        generated_titles=generated_titles,
     ), failure
 
 
@@ -1832,6 +1945,55 @@ _CONTEXT_SOURCES: dict[str, tuple[str, tuple[str, ...]]] = {
 _CONTEXT_NAMES = ("hookName", "filename", "path", "displayPath", "name")
 
 
+def _context_parts(attachment: dict[str, object], body: str) -> tuple[ContextPart, ...]:
+    """The named parts of an attachment that describes several things at once,
+    or none where the record does not pair each with its name for certain.
+
+    - `mcp_instructions_delta` pairs `addedNames[i]` with `addedBlocks[i]`, as
+      the client itself reads the record back.
+    - `skill_listing` holds one `- name: description` entry per skill (`- name`
+      alone over the listing's budget), in the order of `names`. The entries
+      are the body's lines that start a new `- ` item; they pair only when
+      there is one per name and each entry's first line names it right after
+      `- `, either bare or followed by `: ` — a skill id can itself contain a
+      `:` (a plugin's skill is named `plugin:skill`), so a bare `:` is not an
+      unambiguous end of the name.
+    """
+    kind = attachment.get("type")
+    if kind == "mcp_instructions_delta":
+        names = attachment.get("addedNames")
+        blocks = attachment.get("addedBlocks")
+        if (
+            isinstance(names, list)
+            and isinstance(blocks, list)
+            and len(names) == len(blocks)
+            and all(isinstance(n, str) and n for n in names)
+            and all(isinstance(b, str) and b for b in blocks)
+        ):
+            return tuple(ContextPart(name=n, text=b) for n, b in zip(names, blocks, strict=True))
+        return ()
+    if kind == "skill_listing":
+        names = attachment.get("names")
+        if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
+            return ()
+        entries: list[str] = []
+        for line in body.split("\n"):
+            if line.startswith("- ") or not entries:
+                entries.append(line)
+            else:
+                entries[-1] += "\n" + line
+        if len(entries) != len(names) or not all(
+            entry.startswith("- ")
+            and (
+                (heading := entry.split("\n", 1)[0][2:]) == name or heading.startswith(f"{name}: ")
+            )
+            for name, entry in zip(names, entries, strict=True)
+        ):
+            return ()
+        return tuple(ContextPart(name=n, text=e) for n, e in zip(names, entries, strict=True))
+    return ()
+
+
 def _body(value: object, depth: int = 0) -> str | None:
     """The text inside an attachment body, whatever shape it is stored in.
 
@@ -1859,18 +2021,33 @@ def _recover_session_scoped(
     session_id: str,
     initial_prompts: dict[str, str],
     titles: dict[str, str],
-    context: dict[str, list[tuple[str, str | None, str]]],
-    compactions: dict[str, list[tuple[str, int | None, int | None]]],
+    context: dict[str, list[tuple[str, str | None, str, tuple[ContextPart, ...], datetime | None]]],
+    compactions: dict[str, list[tuple[str, int | None, int | None, datetime | None]]],
     refusals: dict[str, list[tuple[str | None, str | None, str | None]]],
+    generated_titles: dict[str, str],
 ) -> None:
     """Everything recorded about a session rather than about one of its turns.
 
-    Four record shapes upstream's event schema has no place for, each of which
+    Record shapes upstream's event schema has no place for, each of which
     bounds or explains what the turns say: the initiating prompt (which survives
     compaction, unlike the first user turn), material injected outside the turn
-    structure, the compaction boundaries themselves, and the provider declining.
+    structure, the compaction boundaries themselves, the provider declining,
+    and the client's generated name.
     """
     kind = record.get("type")
+
+    # Assigned rather than kept from the first, as `custom-title` is, though no
+    # session was seen to change it.
+    if kind == "ai-title":
+        title = record.get("aiTitle")
+        if isinstance(title, str):
+            generated_titles[session_id] = title
+        return
+
+    # The client's running totals: not read. They carry no time, follow the
+    # work they cover, and add little to the responses' own counts (ADR-0015).
+    if kind == "cost-state":
+        return
 
     if kind == "last-prompt":
         prompt = record.get("lastPrompt")
@@ -1909,7 +2086,15 @@ def _recover_session_scoped(
             ),
             None,
         )
-        context.setdefault(session_id, []).append((source, name, body))
+        context.setdefault(session_id, []).append(
+            (
+                source,
+                name,
+                body,
+                _context_parts(attachment, body),
+                _timestamp(record.get("timestamp")),
+            )
+        )
         return
 
     if kind != "system":
@@ -1923,6 +2108,7 @@ def _recover_session_scoped(
                 str(metadata.get("trigger") or "unknown"),
                 _count(metadata.get("preTokens")),
                 _count(metadata.get("cumulativeDroppedTokens")),
+                _timestamp(record.get("timestamp")),
             )
         )
     elif subtype in ("model_refusal_fallback", "model_consent_fallback"):
@@ -1941,6 +2127,63 @@ def _count(value: object) -> int | None:
 
 def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _mapping(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _response_id(record: dict[str, object]) -> str | None:
+    """The provider response an `assistant` record belongs to, if it names one."""
+    if record.get("type") != "assistant":
+        return None
+    return _text(_mapping(record.get("message")).get("id"))
+
+
+def _model_response(record: dict[str, object]) -> ModelResponse | None:
+    """What one record states about its provider response, or None if it is
+    not a usage-bearing `assistant` record (ADR-0014, rule 1).
+
+    Every field is this record's own: the caller keeps the latest record per
+    response, so nothing is merged across records (rule 4). Final is a stop
+    reason on this record (rule 5).
+    """
+    message = _mapping(record.get("message"))
+    usage = message.get("usage")
+    response_id = _response_id(record)
+    if response_id is None or not isinstance(usage, dict):
+        return None
+    return ModelResponse(
+        response_id=response_id,
+        request_id=_text(record.get("requestId")),
+        model=_text(message.get("model")),
+        occurred_at=_timestamp(record.get("timestamp")),
+        final=message.get("stop_reason") is not None,
+        is_sidechain=False,
+        usage=_token_usage(usage),
+        service_tier=_text(usage.get("service_tier")),
+        speed=_text(usage.get("speed")),
+        inference_region=_text(usage.get("inference_geo")),
+    )
+
+
+def _token_usage(usage: dict[str, object]) -> TokenUsage:
+    """Claude Code's `usage`, in the disjoint buckets. Its `input_tokens`
+    already excludes cache reads and writes, so it is uncached input as is."""
+    cache = _mapping(usage.get("cache_creation"))
+    details = _mapping(usage.get("output_tokens_details"))
+    server = _mapping(usage.get("server_tool_use"))
+    return TokenUsage(
+        input_tokens=_count(usage.get("input_tokens")),
+        cache_read_input_tokens=_count(usage.get("cache_read_input_tokens")),
+        cache_creation_input_tokens=_count(usage.get("cache_creation_input_tokens")),
+        cache_creation_5m_input_tokens=_count(cache.get("ephemeral_5m_input_tokens")),
+        cache_creation_1h_input_tokens=_count(cache.get("ephemeral_1h_input_tokens")),
+        output_tokens=_count(usage.get("output_tokens")),
+        reasoning_tokens=_count(details.get("thinking_tokens")),
+        web_search_requests=_count(server.get("web_search_requests")),
+        web_fetch_requests=_count(server.get("web_fetch_requests")),
+    )
 
 
 def _decode_project_directory(name: str) -> str | None:
@@ -2030,3 +2273,14 @@ def _within_window(path: Path, window: Window) -> bool:
         return True
     modified = datetime.fromtimestamp(path.stat().st_mtime, tz=window.since.tzinfo)
     return modified >= window.since
+
+
+def _discover_transcripts(root: Path) -> tuple[list[Path], list[OSError]]:
+    """Every transcript under `root`, and every subtree scan that failed
+    (ADR-0009), on the shared walk in `common.discover_files`.
+
+    A `*.jsonl` under `subagents/` that is not an agent's transcript -- a
+    workflow run's journal -- is not listed (`_is_transcript`).
+    """
+    files, failures = discover_files(root)
+    return [path for path in files if _is_transcript(path, root)], failures

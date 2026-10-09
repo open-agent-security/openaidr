@@ -8,7 +8,7 @@ an agent did*, never what that means: no scoring, no identity resolution, no
 findings, and no upload path.
 
 **It reads two agent kinds today: `claude-code` and `codex`.** Claude Code uses
-an adapter around `adr-sensor`; Codex uses an owned rollout reader (ADR-0014).
+an adapter around `adr-sensor`; Codex uses an owned rollout reader (ADR-0023).
 Cursor is not read yet. Do not describe it as supported.
 
 Apache-2.0, and deliberately plumbing rather than judgement. Every new agent

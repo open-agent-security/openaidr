@@ -1,10 +1,10 @@
 ---
-id: 0014
+id: 0023
 title: Read Codex rollout records directly and preserve their evidence boundaries
 status: superseded
 date: 2026-09-28
 supersedes: null
-superseded-by: 0015
+superseded-by: 0024
 ---
 
 ## Context

@@ -21,6 +21,11 @@
   turn and tool call, with the local-only boundary marked per field.
 - [Stable span identity](specs/session-collection.md#stable-span-identity) —
   the load-bearing contract, and what disqualifies a candidate derivation.
+- [Token usage](specs/token-usage.md) — one record per provider response with
+  the token counts the transcript recorded, why a response is read from its last
+  record and when that record is final, why nothing is priced, and the changes
+  that make a session's usage complete: workflow agents as sub-agents, the
+  generated title, and compaction times. *Proposed.*
 
 ## Decisions
 
