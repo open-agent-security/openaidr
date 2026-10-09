@@ -111,6 +111,21 @@ class Placement:
     agent_version: str | None = None
     entrypoint: str | None = None
     connections: tuple[MCPConnection, ...] = ()
+    #: When the placed log's process was alive, first line to last; `None`
+    #: when no log was placed.
+    alive: tuple[datetime, datetime] | None = None
+
+    def for_session(self, window: tuple[datetime | None, datetime | None]) -> Placement:
+        """This placement, for one session drawn from the row it was made for.
+
+        The lock names the row's last holder, so its log is a session's only
+        if that process was alive at the session's own last activity -- the
+        same test that chose the log for the row. A sub-agent that finished in
+        an earlier process has no log the lock can name.
+        """
+        if self.alive is None or _alive_at(self.alive, window):
+            return self
+        return Placement(state="no_log_for_session")
 
 
 @dataclass
@@ -172,11 +187,13 @@ class RunLogs:
             for other, other_window in others.items()
             if other != session and self._locks.get(other) == pid and _spans(log, other_window)
         ]
+        alive = (log.first, log.last) if log.first and log.last else None
         if sharing:
             return Placement(
                 state="placement_ambiguous",
                 agent_version=log.agent_version,
                 entrypoint=log.entrypoint,
+                alive=alive,
             )
         if any(
             other != session and other in self._unreadable_locks and _spans(log, other_window)
@@ -190,6 +207,7 @@ class RunLogs:
             agent_version=log.agent_version,
             entrypoint=log.entrypoint,
             connections=log.connections,
+            alive=alive,
         )
 
     def _list_logs(self) -> MCPLogState | None:
@@ -395,11 +413,22 @@ def _spans(log: ProcessLog, window: tuple[datetime | None, datetime | None]) -> 
     its lifetime: a pid can be reused by an unrelated, short-lived process
     that falls entirely within a long-lived session's window.
     """
-    started, last_active = window
-    if log.first is None or log.last is None or started is None:
+    if log.first is None or log.last is None:
         return False
+    return _alive_at((log.first, log.last), window)
+
+
+def _alive_at(
+    alive: tuple[datetime, datetime], window: tuple[datetime | None, datetime | None]
+) -> bool:
+    """Whether a process alive from `alive[0]` to `alive[1]` was running at a
+    session's last known activity (its start when it has no other)."""
+    started, last_active = window
     boundary = last_active or started
-    return log.first <= boundary + _SLACK and log.last >= boundary - _SLACK
+    if boundary is None:
+        return False
+    first, last = alive
+    return first <= boundary + _SLACK and last >= boundary - _SLACK
 
 
 def _instant(value: str) -> datetime | None:

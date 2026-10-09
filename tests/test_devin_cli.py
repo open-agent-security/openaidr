@@ -1469,3 +1469,60 @@ def test_every_node_belongs_to_exactly_the_session_the_ownership_rule_names(
         if owner != "main" and mine:
             assert session.started_at == datetime.fromtimestamp(T0 + mine[0], UTC), seed
             assert session.last_activity_at == datetime.fromtimestamp(T0 + mine[-1], UTC), seed
+
+
+def test_a_subagent_that_ended_before_its_parents_last_process_is_not_placed_on_it(
+    tmp_path: Path,
+) -> None:
+    """The lock names only the parent's last holder. A sub-agent that finished
+    in an earlier process has no log the lock can name, so it gets none --
+    not the later process's connections, build or entrypoint."""
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store,
+        StoredSession(
+            id="brave-otter",
+            main_chain_id=3,
+            created_at=T0,
+            last_activity_at=T0 + 3600,
+            subagents=[("early-1", 11)],
+            nodes=[
+                Node(1, None, user("q"), created_at=T0),
+                Node(10, None, user("look", typed=False), created_at=T0 + 5),
+                Node(
+                    11,
+                    10,
+                    assistant("found", request_id="s1", metrics=metrics()),
+                    created_at=T0 + 10,
+                ),
+                Node(
+                    3,
+                    1,
+                    assistant("resumed", request_id="m1", metrics=metrics()),
+                    created_at=T0 + 3600,
+                ),
+            ],
+        ),
+    )
+    lock(root, "brave-otter", 10)
+    run_log(
+        root,
+        10,
+        [
+            "2026-01-01T00:59:50.000000Z  INFO init_cli: chisel: version=3000.11.3 commit=x binary=devin startup",
+            "2026-01-01T00:59:50.000000Z  INFO run_acp_server: chisel: dispatching",
+            "2026-01-01T00:59:51.000000Z  INFO toolbox::tools::mcp: Connecting to MCP server 'gh'",
+            "2026-01-01T00:59:51.000010Z  INFO toolbox::tools::mcp::config: Starting stdio MCP server 'gh': \"x\" []",
+            "2026-01-01T00:59:51.250000Z  INFO toolbox::tools::mcp: MCP server 'gh' connected successfully",
+            "2026-01-01T01:01:00.000000Z  INFO chisel: still running",
+        ],
+        stamp="20260101-005950",
+    )
+    sessions, _ = _read(root)
+    by_id = {s.session_id: s for s in sessions}
+    parent, child = by_id["devin-cli:brave-otter"], by_id["devin-cli:brave-otter:early-1"]
+    assert (parent.mcp_log_state, parent.entrypoint) == ("applied", "acp")
+    assert [c.server for c in parent.mcp_connections] == ["gh"]
+    assert (child.mcp_log_state, child.mcp_connections) == ("no_log_for_session", ())
+    assert (child.agent_version, child.entrypoint) == (None, None)
