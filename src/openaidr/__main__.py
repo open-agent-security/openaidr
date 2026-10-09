@@ -53,10 +53,14 @@ def _sessions(args: argparse.Namespace) -> int:
         return 2
 
     root = os.environ.get("OPENAIDR_CLAUDE_ROOT")
+    devin_root = os.environ.get("OPENAIDR_DEVIN_ROOT")
     collection = collect(
         parse_kind_filter(args.agent_kind),
         Window(since=since),
-        default_readers(root=Path(root) if root else None),
+        default_readers(
+            root=Path(root) if root else None,
+            devin_root=Path(devin_root) if devin_root else None,
+        ),
     )
     output = (
         render_json(collection) if args.format == "json" else render_text(collection, args.detail)

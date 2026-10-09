@@ -64,6 +64,7 @@ from openaidr.readers.claude_code_mcp import (
     _IncrementalMCPLogReader,
     read_mcp_logs,
 )
+from openaidr.toolclass import canonical_arguments, tool_class
 from openaidr.toolnames import split_tool_name
 
 #: Where Claude Code keeps session transcripts, one directory per project root.
@@ -806,6 +807,8 @@ class ClaudeCodeReader:
                 for response in transcript.responses.get(raw_id, {}).values()
             ),
             generated_title=transcript.generated_titles.get(raw_id),
+            compactions_recorded=True,
+            subagents_recorded=True,
         )
 
     def _mcp_enrichment(self, raw_id: str, project: str, event: AgentEvent) -> _MCPEnrichment:
@@ -1331,13 +1334,14 @@ def _tool_calls(
         skill, plugin = transcript.attribution.get(
             (raw_session_id, record_uuid, occurrence), (None, None)
         )
+        arguments = dict(tool.arguments or {})
         calls.append(
             ToolCall(
                 span=span_id(session_id, turn_key, index),
                 tool_name=name,
                 mcp_server=server,
                 status=status,
-                arguments=dict(tool.arguments or {}),
+                arguments=arguments,
                 result=result,
                 result_size=size,
                 error_text=error_text,
@@ -1355,6 +1359,10 @@ def _tool_calls(
                 # over a known connection; only its status and duration are
                 # genuinely ambiguous.
                 transport=mcp.transport_for(server),
+                tool_class=tool_class(ClaudeCodeReader.agent_kind, name, server),
+                canonical_arguments=canonical_arguments(
+                    ClaudeCodeReader.agent_kind, name, server, arguments
+                ),
             )
         )
     return tuple(calls)

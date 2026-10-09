@@ -1812,3 +1812,28 @@ def test_a_transcript_whose_mtime_cannot_be_converted_does_not_lose_the_others(
 
     assert [s.session_id for s in sessions] == ["claude-code:s1"]
     assert any(str(bogus) in f.message and "out of range" in f.message for f in failures)
+
+
+def test_a_claude_code_call_carries_its_class_and_canonical_arguments(tmp_path: Path) -> None:
+    """The same vocabulary a `devin-cli` call carries, so a consumer reads one."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use(
+                "s1",
+                "u1",
+                "2026-08-01T10:00:00.000Z",
+                "toolu_1",
+                "Write",
+                {"file_path": "/a.env", "content": "KEY=1"},
+            ),
+            tool_result("s1", "r1", "2026-08-01T10:00:01.000Z", "toolu_1", "ok"),
+        ],
+    )
+    session = _sessions(tmp_path)[0]
+    call = session.turns[0].tool_calls[0]
+    assert call.tool_class == "file_write"
+    assert call.canonical_arguments == {"path": "/a.env", "content": "KEY=1"}
+    assert call.exit_code is None
+    assert (session.compactions_recorded, session.subagents_recorded) == (True, True)

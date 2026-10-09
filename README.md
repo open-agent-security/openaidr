@@ -16,9 +16,10 @@ normalises it into one session model with stable span identity.
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
 
-**Today it reads one kind: Claude Code.** Codex and Cursor are the intended next
-kinds and are not read yet — a session from either is absent from the output
-entirely, not collected and marked. The parsing dependency supports more formats
+**Today it reads two kinds: Claude Code and Devin CLI** (`devin-cli`, which
+covers Devin Local and editors driving it over ACP). Codex and Cursor are the
+intended next kinds and are not read yet — a session from either is absent from
+the output entirely, not collected and marked. The parsing dependency supports more formats
 than this package instantiates, which is a distinction worth holding onto; what
 each additional kind would cost is measured in
 [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage).
