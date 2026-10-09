@@ -187,19 +187,6 @@ class RunLogs:
             connections=log.connections,
         )
 
-    def pids_for(self, path: Path) -> int | None:
-        match = _LOG_NAME.match(path.name)
-        return int(match.group("pid")) if match else None
-
-    def sessions_in(self, pid: int) -> list[str]:
-        return [session for session, held in self._locks.items() if held == pid]
-
-    def pid_for(self, session: str) -> int | None:
-        return self._locks.get(session)
-
-    def lock_unreadable(self, session: str) -> bool:
-        return session in self._unreadable_locks
-
     def _list_logs(self) -> MCPLogState | None:
         directory = self.root / LOGS
         try:

@@ -256,9 +256,10 @@ ADR-0011's discipline, applied to a database (ADR-0018):
 | Rule | Detail |
 |---|---|
 | Committed unit | A committed row: what a newline-terminated record is to JSONL |
-| Cursor | Per session: the highest `message_nodes.row_id` returned. In memory, never persisted |
-| `collect_file(path)` | `sessions.db` or `sessions.db-wal` (a WAL commit changes only `-wal`): each session with rows above its cursor, rebuilt in full. A run-log path: the sessions whose lock names its process, re-placed. Any other path: nothing |
-| Replaced store | A new device, inode or first-migration `applied_on`, or a `row_id` going backwards: every cursor dropped, read cold |
+| What is held | Per session, a digest of the session last returned. In memory, never persisted |
+| `collect_file(path)` | Any path under the data root that can change a session: `sessions.db`, `sessions.db-wal` (a WAL commit changes only `-wal`), a run log, a session lock. Every session is rebuilt; those whose digest differs are returned. Any other path: nothing |
+| The invariant | After any event, a consumer that replaced the sessions returned holds exactly what a cold read returns. One session's lock changes another's placement, so outputs are compared rather than inputs traced (ADR-0018) |
+| Replaced store | Needs no special case: content that differs is returned, identical content is not |
 | Between reads | Responses replace by `(session, response_id)`. **Turns can disappear on regeneration**, so a consumer replaces a `devin-cli` session's turns wholesale |
 
 ## Model additions
@@ -358,9 +359,11 @@ asks for Codex. Fixtures are synthetic. **Real stores are never committed.**
 
 ## Decisions
 
-1. **An OpenAIDR-owned, read-only, transaction-consistent reader over SQLite**,
-   with per-session `row_id` cursors (ADR-0018). Rejected: the program's
-   `--export`, which runs the agent's binary; the export-only transcripts.
+1. **An OpenAIDR-owned, read-only, transaction-consistent reader over SQLite**
+   that re-emits whatever session differs from what it last returned
+   (ADR-0018). Rejected: the program's `--export`, which runs the agent's
+   binary; the export-only transcripts; `row_id` cursors with per-event peer
+   re-placement, which review showed cannot be made complete.
 2. **Turns from the main chain; responses from the whole tree** (ADR-0019).
 3. **The run log is the MCP connection source, placed through the session
    lock** (ADR-0020). Rejected: time overlap, which misses connections made

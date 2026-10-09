@@ -1,6 +1,6 @@
 ---
 id: 0018
-title: Read Devin CLI from its SQLite store, read-only, inside one transaction
+title: Read Devin CLI from its SQLite store read-only; re-emit what differs
 status: proposed
 date: 2026-10-09
 supersedes: null
@@ -18,12 +18,15 @@ while it is being written, and has to follow it as it grows (ADR-0011).
 
 An OpenAIDR-owned reader opens `sessions.db` with `mode=ro` and reads every
 table it needs inside one read transaction, so one pass sees one committed
-state and never a half-written message. Growth is followed with a per-session
-cursor on `message_nodes.row_id`, held in memory only: a session whose highest
-`row_id` rose is rebuilt in full. A watcher's `sessions.db-wal` path is accepted,
-because a WAL commit changes only that file. A store whose identity changes
-(device, inode, or the first migration's `applied_on`) or whose rows go
-backwards is read cold.
+state and never a half-written message.
+
+**Growth is followed by comparing outputs, not by reasoning about inputs.** On
+any watcher event under the data root -- `sessions.db`, `sessions.db-wal` (a
+WAL commit changes only that file), a run log, a session lock -- `collect_file`
+rebuilds every session and returns each one whose digest differs from the one
+it last returned under that identity, held in memory only. The invariant, and
+the test that holds it: after any event, a consumer that replaced the sessions
+returned holds exactly what a cold read returns.
 
 ## Alternatives considered
 
@@ -34,8 +37,21 @@ backwards is read cold.
   snapshots of a subset of the store, written only when asked for.
 - **Open read-write to checkpoint the WAL first**: rejected; read-only sensing
   is a repository rule, and a read transaction already sees the WAL.
+- **A per-session `row_id` cursor, plus re-placing the peers an event could
+  affect**: rejected after review found four peer cases in turn. A session's
+  placement depends on every other session's lock (ADR-0020), so a new
+  session, a lock moving to another process, an unreadable lock or a new log
+  can each change a session whose own rows did not change, and each arrives as
+  a different watcher path. Enumerating which inputs an event touched misses
+  the next case; comparing what each session now is cannot.
 
 ## Consequences
+
+An event costs a rebuild of the whole store, which a pass already reads in
+full; a session's digest is held for the reader's lifetime. A session deleted
+from the store is not announced. If the rebuild is measured to matter, the
+digest can be keyed on each session's inputs instead, provided the key covers
+everything a session is built from, placement included.
 
 A schema change upstream surfaces as a reported unsupported-schema failure
 rather than a wrong answer; a migration newer than the one the reader was built

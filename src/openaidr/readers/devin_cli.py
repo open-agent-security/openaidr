@@ -23,6 +23,7 @@ tool's fault is the worst wrong answer this model can give.
 from __future__ import annotations
 
 import getpass
+import hashlib
 import json
 import os
 import socket
@@ -46,7 +47,7 @@ from openaidr.model import (
     span_id,
 )
 from openaidr.readers.base import ReaderFailure, Window
-from openaidr.readers.devin_cli_log import LOGS, Placement, RunLogs
+from openaidr.readers.devin_cli_log import LOCKS, LOGS, Placement, RunLogs
 from openaidr.toolclass import canonical_arguments, tool_class
 from openaidr.toolnames import split_tool_name
 
@@ -128,7 +129,6 @@ class _Store:
     nodes: dict[str, list[_Node]]
     heads: dict[str, list[tuple[str, int]]]
     prompts: dict[str, str]
-    identity: tuple[int, int, str]
     subagents_recorded: bool
     failures: list[str] = field(default_factory=list)
 
@@ -140,16 +140,11 @@ class DevinCliReader:
 
     def __init__(self, root: Path | None = None) -> None:
         self._root = (root if root is not None else default_root()).resolve()
-        #: Per session, the highest `message_nodes.row_id` already returned by
-        #: `collect_file`. In memory only (ADR-0011); `row_id` only grows.
-        self._cursors: dict[str, int] = {}
-        self._identity: tuple[int, int, str] | None = None
-        #: Per session, the pid its lock named as of the last collect_file
-        #: call. A session resuming under a new pid can also free a peer
-        #: that shared its old one from `placement_ambiguous`; both the old
-        #: and new pid's peers need re-placing, and the old one is only
-        #: known here, not in `RunLogs`'s fresh-each-call state.
-        self._last_pids: dict[str, int] = {}
+        #: Per session, a digest of the session `collect_file` last returned.
+        #: In memory only (ADR-0011). What is re-emitted is decided by
+        #: comparing outputs, never by reasoning about which input an event
+        #: touched (ADR-0018).
+        self._emitted: dict[str, bytes] = {}
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         store, failures = self._load()
@@ -162,73 +157,37 @@ class DevinCliReader:
         return sessions, failures
 
     def collect_file(self, path: Path) -> tuple[list[Session], list[ReaderFailure]]:
-        """Read what changed, given the path a watcher saw change.
+        """Return every session that differs from what this reader last returned.
 
-        `sessions.db` or `sessions.db-wal` -- a WAL commit changes only the
-        `-wal` file, so a watcher on the main file alone misses every write --
-        returns each session with rows above its cursor, rebuilt in full. A run
-        log returns the sessions whose lock names its process, re-placed.
+        Any event under the data root -- `sessions.db` or its `-wal` (a WAL
+        commit changes only that file), a run log, a session lock -- can
+        change what a session is: its rows, its placement, or the placement
+        of every other session that shared its process. So whichever path
+        the watcher names, every session is rebuilt and compared with the
+        one last returned under its identity, and only those that differ are
+        returned (ADR-0018). A consumer replacing by identity then holds what
+        a cold read holds, without this reader enumerating what changed.
         """
         path = path.resolve()
         store_path = self._root / STORE
-        is_store = path in (store_path, Path(f"{store_path}-wal"))
-        is_log = path.parent == self._root / LOGS
-        if not (is_store or is_log):
+        ours = path in (store_path, Path(f"{store_path}-wal")) or path.parent in (
+            self._root / LOGS,
+            self._root / LOCKS,
+        )
+        if not ours:
             return [], []
         store, failures = self._load()
         if store is None:
             return [], failures
         logs = RunLogs.load(self._root)
-        if is_log:
-            pid = logs.pids_for(path)
-            wanted = set(logs.sessions_in(pid)) if pid is not None else set()
-            rows = [row for row in store.rows if row.id in wanted]
-        else:
-            if store.identity != self._identity or any(
-                self._cursors.get(row.id, 0) > _high(store.nodes.get(row.id, ()))
-                for row in store.rows
-            ):
-                # A replaced store, or one whose rows went backwards: nothing
-                # held about the old one describes this one.
-                self._cursors = {}
-                self._last_pids = {}
-                self._identity = store.identity
-            changed = [
-                row
-                for row in store.rows
-                if row.id not in self._cursors
-                or _high(store.nodes.get(row.id, ())) > self._cursors[row.id]
-            ]
-            for row in changed:
-                self._cursors[row.id] = _high(store.nodes.get(row.id, ()))
-            # A changed session can also flip another session sharing its
-            # process from `applied` to `placement_ambiguous` (its new pid),
-            # or free one from `placement_ambiguous` back to `applied` (its
-            # old pid, no longer known to RunLogs' fresh-each-call state);
-            # re-emit any session whose lock names either.
-            changed_ids = {row.id for row in changed}
-            affected_pids = set()
-            for row in changed:
-                if (pid := logs.pid_for(row.id)) is not None:
-                    affected_pids.add(pid)
-                if (previous := self._last_pids.get(row.id)) is not None:
-                    affected_pids.add(previous)
-            if any(logs.lock_unreadable(row.id) for row in changed):
-                # A changed session's own lock couldn't be read, so its pid
-                # is unknown; any session could turn out to share it.
-                rows = list(store.rows)
-            else:
-                rows = [
-                    row
-                    for row in store.rows
-                    if row.id in changed_ids or logs.pid_for(row.id) in affected_pids
-                ]
-            for row in store.rows:
-                if (pid := logs.pid_for(row.id)) is not None:
-                    self._last_pids[row.id] = pid
-        sessions = self._sessions(store, rows, logs, failures)
+        changed: list[Session] = []
+        for session in self._sessions(store, store.rows, logs, failures):
+            digest = hashlib.sha256(repr(session).encode()).digest()
+            if self._emitted.get(session.session_id) != digest:
+                self._emitted[session.session_id] = digest
+                changed.append(session)
         failures.extend(self._failure(message) for message in logs.failures)
-        return sessions, failures
+        return changed, failures
 
     # --- the store -----------------------------------------------------------
 
@@ -243,7 +202,7 @@ class DevinCliReader:
         if not stat.S_ISDIR(root_mode):
             return None, [self._failure(f"{self._root}: not a directory")]
         try:
-            info = path.stat()
+            path.stat()
         except FileNotFoundError:
             return None, []
         except OSError as error:
@@ -255,7 +214,7 @@ class DevinCliReader:
         try:
             connection.isolation_level = None
             connection.execute("BEGIN")
-            store = self._read(connection, info)
+            store = self._read(connection)
             connection.execute("COMMIT")
         except sqlite3.OperationalError as error:
             text = str(error)
@@ -269,7 +228,7 @@ class DevinCliReader:
             return None, [self._failure(f"{path}: {store}")]
         return store, [self._failure(message) for message in store.failures]
 
-    def _read(self, db: sqlite3.Connection, info: os.stat_result) -> _Store | str:
+    def _read(self, db: sqlite3.Connection) -> _Store | str:
         tables = {
             name: {column[1] for column in db.execute(f"PRAGMA table_info({name})")}
             for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -279,12 +238,8 @@ class DevinCliReader:
             if missing:
                 return f"unsupported store schema: {table} lacks {', '.join(sorted(missing))}"
         failures: list[str] = []
-        applied = ""
         if "refinery_schema_history" in tables:
-            newest, applied = db.execute(
-                "SELECT max(version), (SELECT applied_on FROM refinery_schema_history"
-                " ORDER BY version LIMIT 1) FROM refinery_schema_history"
-            ).fetchone()
+            (newest,) = db.execute("SELECT max(version) FROM refinery_schema_history").fetchone()
             if isinstance(newest, int) and newest > KNOWN_MIGRATION:
                 failures.append(
                     f"store schema V{newest} is newer than V{KNOWN_MIGRATION}; read for the known columns"
@@ -359,7 +314,6 @@ class DevinCliReader:
             nodes=nodes,
             heads=heads,
             prompts=prompts,
-            identity=(info.st_dev, info.st_ino, str(applied or "")),
             subagents_recorded="subagent_heads" in tables,
             failures=failures,
         )
@@ -636,10 +590,6 @@ def _within(row: _Row, window: Window) -> bool:
         return True
     latest = row.last_activity_at or row.created_at
     return latest is not None and latest >= window.since
-
-
-def _high(nodes: Iterable[_Node]) -> int:
-    return max((node.row_id for node in nodes), default=0)
 
 
 def _root(node_id: int, by_id: Mapping[int, _Node]) -> int:
