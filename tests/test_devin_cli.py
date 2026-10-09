@@ -1351,3 +1351,121 @@ def test_a_subagent_head_on_the_main_tree_claims_only_its_own_branch(tmp_path: P
     assert [r.response_id for r in by_id["devin-cli:brave-otter:odd-1"].responses] == ["s1"]
     assert [t.text for t in by_id["devin-cli:brave-otter"].turns] == ["q", "main"]
     assert [t.text for t in by_id["devin-cli:brave-otter:odd-1"].turns] == ["side"]
+
+
+def test_a_regenerated_subagent_branch_belongs_to_the_subagent(tmp_path: Path) -> None:
+    """A sub-agent hanging off the main tree whose own reply was regenerated:
+    the abandoned attempt sits below the sub-agent's chain, so its usage is
+    the sub-agent's, not the parent's."""
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store,
+        StoredSession(
+            id="brave-otter",
+            main_chain_id=2,
+            subagents=[("odd-1", 4)],
+            nodes=[
+                Node(1, None, user("q")),
+                Node(2, 1, assistant("main", request_id="m1", metrics=metrics())),
+                Node(3, 1, user("look", typed=False)),
+                Node(4, 3, assistant("kept", request_id="s2", metrics=metrics())),
+                Node(5, 3, assistant("abandoned", request_id="s1", metrics=metrics())),
+            ],
+        ),
+    )
+    sessions, _ = _read(root)
+    by_id = {s.session_id: s for s in sessions}
+    assert [r.response_id for r in by_id["devin-cli:brave-otter"].responses] == ["m1"]
+    assert sorted(r.response_id for r in by_id["devin-cli:brave-otter:odd-1"].responses) == [
+        "s1",
+        "s2",
+    ]
+
+
+def _owners(
+    parents: dict[int, int | None], main_leaf: int, heads: list[tuple[str, int]]
+) -> dict[int, str]:
+    """The ownership rule, restated independently of the reader: a node
+    belongs to the session whose declared chain holds its nearest
+    ancestor-or-self, the main chain claiming first; anything below no
+    declared chain is the main session's."""
+
+    def chain(leaf: int) -> list[int]:
+        path: list[int] = []
+        current: int | None = leaf
+        while current is not None and current not in path:
+            path.append(current)
+            current = parents[current]
+        return path
+
+    claims: dict[int, str] = {}
+    for node in chain(main_leaf):
+        claims.setdefault(node, "main")
+    for agent, head in heads:
+        for node in chain(head):
+            claims.setdefault(node, agent)
+    owners: dict[int, str] = {}
+    for node in parents:
+        owners[node] = next((claims[n] for n in chain(node) if n in claims), "main")
+    return owners
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_every_node_belongs_to_exactly_the_session_the_ownership_rule_names(
+    tmp_path: Path, seed: int
+) -> None:
+    """Over random forests: each session's usage is exactly the requests of
+    the nodes it owns, its turns are its declared chain restricted to what it
+    owns, and a sub-agent's times span only its own nodes."""
+    import random
+
+    rng = random.Random(seed)
+    count = rng.randint(3, 14)
+    parents: dict[int, int | None] = {1: None}
+    for node in range(2, count + 1):
+        parents[node] = None if rng.random() < 0.15 else rng.randint(1, node - 1)
+    main_leaf = rng.randint(1, count)
+    heads = [
+        (f"agent-{i}", head)
+        for i, head in enumerate(rng.sample(range(1, count + 1), k=rng.randint(0, 2)))
+    ]
+    nodes = [
+        Node(
+            n,
+            parents[n],
+            assistant(f"a{n}", request_id=f"r{n}", metrics=metrics()) if n % 3 else user(f"u{n}"),
+            created_at=T0 + n,
+        )
+        for n in parents
+    ]
+    root = tmp_path / "cli"
+    store = create_store(root)
+    write_session(
+        store,
+        StoredSession(id="s", main_chain_id=main_leaf, subagents=heads, nodes=nodes),
+    )
+    sessions, _ = _read(root)
+    by_owner = {
+        ("main" if s.session_id == "devin-cli:s" else s.session_id.rsplit(":", 1)[1]): s
+        for s in sessions
+    }
+    owners = _owners(parents, main_leaf, heads)
+
+    for owner, session in by_owner.items():
+        mine = sorted(n for n, o in owners.items() if o == owner)
+        assert sorted(r.response_id for r in session.responses) == sorted(
+            f"r{n}" for n in mine if n % 3
+        ), (seed, owner)
+        leaf = main_leaf if owner == "main" else dict(heads)[owner]
+        path: list[int] = []
+        current: int | None = leaf
+        while current is not None and current not in path:
+            path.append(current)
+            current = parents[current]
+        assert [int(t.key) for t in session.turns] == [
+            n for n in reversed(path) if owners[n] == owner
+        ], (seed, owner)
+        if owner != "main" and mine:
+            assert session.started_at == datetime.fromtimestamp(T0 + mine[0], UTC), seed
+            assert session.last_activity_at == datetime.fromtimestamp(T0 + mine[-1], UTC), seed
