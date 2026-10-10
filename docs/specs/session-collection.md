@@ -369,6 +369,14 @@ does supply a genuine outcome maps it to `ok` or `error` directly. `unknown` is
 therefore a *coverage statement about the dependency*, and it narrows as the asks
 below are met.
 
+For Claude Code's built-in Write, Edit and Read it narrows from the same record:
+the client writes `is_error` on those results only when the call failed, and on
+success writes a `toolUseResult` naming the file it wrote, changed or read. That
+object is read as `ok` for exactly those three tools, by the field that states
+the outcome (ADR-0026). Any other tool's structured result says nothing here —
+WebFetch records one for a 403 as for a 200 — and a sub-agent's transcript
+records none, so its file calls stay `unknown`.
+
 For an MCP call it narrows from a second source rather than from the parser: the
 connection log states the outcome the transcript does not. It only ever *resolves*
 an `unknown` — a status the record itself stated is evidence from the session and
