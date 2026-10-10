@@ -30,11 +30,13 @@ had the name: `read` read, `exec` execute, `grep` search, `edit` edit.
 
 The table decides first. A call the table does not name, and that is not an
 MCP call, takes the class of the kind Devin declared for it
-(`toolclass.class_of_acp_kind`): `read` is `file_read`, `edit` `file_edit`,
-`delete` and `move` `file_write`, `execute` `shell`, `fetch` `web_fetch`. A kind
-that does not say one thing carries no capability: `search` is ACP's word for
-searching files and the web alike, so it is `other`, like `think`,
-`switch_mode` and `other`. A call with no declared kind still gets `None`. Only
+(`toolclass.class_of_acp_kind`). A kind carries a capability only where ACP's
+definition names one thing: `move` ("Moving or renaming files") is
+`file_write`, `execute` ("Running commands or code") `shell`, and `fetch`
+("Retrieving external data") `web_fetch`. `read`, `edit` and `delete` are
+defined over "files or data" and `search` over information anywhere, so each
+is `other`, like `think`, `switch_mode` and `other`: the call is known to be
+the agent's own, and nothing about what it touched is claimed. A call with no declared kind still gets `None`. Only
 `kind` is read from `tool_call_state`; the table still gains the names seen in
 real sessions, so they keep their precise class.
 
@@ -45,8 +47,10 @@ real sessions, so they keep their precise class.
 - **Let the declared kind override the table**: rejected because ACP's kinds are
   coarser than the table's classes (`search` cannot be `file_search` or
   `web_search`), so a named tool would lose precision.
-- **Map `search` to `file_search`**: rejected because a web search would then
-  read as a local file search, a wrong answer rather than a missing one.
+- **Map `search` to `file_search`, or `read`, `edit` and `delete` to the file
+  classes**: rejected because ACP defines those over files *or* data, so a web
+  search or a database read would then read as a local file operation, a wrong
+  answer rather than a missing one.
 
 ## Consequences
 
