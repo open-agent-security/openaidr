@@ -26,8 +26,7 @@
   record and when that record is final, why nothing is priced, and the changes
   that make a session's usage complete: workflow agents as sub-agents, the
   generated title, and compaction times. *Proposed.*
-- [Devin](specs/devin-cli.md) — a second agent kind, `devin` (Devin CLI and
-  Devin Desktop's local agent), read from
+- [Devin CLI](specs/devin-cli.md) — a second agent kind, `devin-cli`, read from
   its local SQLite session store and its per-process run log: identity across a
   branching conversation, statuses from the result's own record, usage per
   provider request, MCP connections from the log placed through each session's

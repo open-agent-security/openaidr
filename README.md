@@ -11,14 +11,13 @@ OpenAIDR reads the session state AI coding agents already write to disk and
 normalises it into one session model with stable span identity.
 
 > **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Two
-> agent kinds read today (`claude-code`, `devin`). Start with
+> agent kinds read today (`claude-code`, `devin-cli`). Start with
 > [Install and run](#install-and-run), then
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
 
-**Today it reads two kinds: Claude Code and Devin** (`devin`, which covers
-Devin CLI, Devin Desktop's local agent and editors driving it over ACP: one
-agent, one session store). Codex and Cursor are the
+**Today it reads two kinds: Claude Code and Devin CLI** (`devin-cli`, which
+covers Devin Local and editors driving it over ACP). Codex and Cursor are the
 intended next kinds and are not read yet — a session from either is absent from
 the output entirely, not collected and marked. The parsing dependency supports more formats
 than this package instantiates, which is a distinction worth holding onto; what

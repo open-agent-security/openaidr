@@ -3,10 +3,8 @@
 Every kind names its tools its own way: Claude Code's shell is `Bash`, Devin
 CLI's is `exec`. A consumer asking *did this session run a command* should not
 have to learn every kind's vocabulary, and holding that knowledge is what this
-package is for (ADR-0021). The tables below come first. A name a table does not
-list gets the class its agent declared for the call, where the agent speaks the
-Agent Client Protocol and its store kept that declaration (`class_of_acp_kind`,
-ADR-0025), and otherwise no class, never a guessed one. A key a kind does not
+package is for (ADR-0021). The tables below are the whole of it: a name a table
+does not list gets no class, never a guessed one, and a key a kind does not
 record is absent from the canonical arguments, never filled from a neighbour.
 
 `tool_name` and `arguments` are left exactly as recorded beside both.
@@ -82,7 +80,7 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "SendUserFile": "other",
     },
     # Devin CLI 3000.11.3's built-in tool names, as its binary declares them.
-    "devin": {
+    "devin-cli": {
         "exec": "shell",
         "get_output": "shell_control",
         "write_to_process": "shell_control",
@@ -91,13 +89,6 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "notebook_read": "file_read",
         "grep": "file_search",
         "glob": "file_search",
-        # Not in the 3000.11.3 schemas this table was first read from, and
-        # called in real sessions on the `swe-1-6` models. The binary's own
-        # hook matcher groups `find_file_by_name` with `read` and `grep`, and
-        # Devin declares both as ACP `search`.
-        "find_file_by_name": "file_search",
-        "code_search": "file_search",
-        "web_search": "web_search",
         "write": "file_write",
         "edit": "file_edit",
         "apply_patch": "file_edit",
@@ -136,7 +127,7 @@ _ARGUMENT_KEYS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "Task": (("agent", "subagent_type"),),
         "Skill": (("skill", "skill"),),
     },
-    "devin": {
+    "devin-cli": {
         "exec": (("command", "command"),),
         "read": (("path", "file_path"),),
         "notebook_read": (("path", "notebook_path"),),
@@ -160,31 +151,6 @@ def tool_class(agent_kind: str | None, tool_name: str, mcp_server: str | None) -
     if table is None:
         return None
     return table.get(tool_name)
-
-
-#: The Agent Client Protocol's tool kinds (`ToolKind`, schema v1), as an agent
-#: speaking ACP declares one for each call, to the class each means. A call the
-#: table above does not name falls back to this (ADR-0025). Only a kind that says
-#: one thing carries a class with a capability behind it: `search` is ACP's word
-#: for searching files *and* the web, so it is `other`, which still says the call
-#: is the agent's own without claiming where it reached.
-ACP_KIND_CLASSES: Mapping[str, str] = {
-    "read": "file_read",
-    "edit": "file_edit",
-    "delete": "file_write",
-    "move": "file_write",
-    "search": "other",
-    "execute": "shell",
-    "think": "other",
-    "fetch": "web_fetch",
-    "switch_mode": "other",
-    "other": "other",
-}
-
-
-def class_of_acp_kind(kind: object) -> str | None:
-    """The class an ACP tool kind means, or None for anything ACP does not define."""
-    return ACP_KIND_CLASSES.get(kind) if isinstance(kind, str) else None
 
 
 def canonical_arguments(

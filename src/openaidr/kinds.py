@@ -11,7 +11,7 @@ from dataclasses import dataclass
 #: belong here; adding a row is a coverage claim.
 AGENT_KIND_BY_SOURCE = {
     "claude": "claude-code",
-    "devin": "devin",
+    "devin": "devin-cli",
 }
 
 

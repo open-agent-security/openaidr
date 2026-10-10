@@ -1,8 +1,7 @@
-"""The `devin` reader, against synthetic stores shaped like Devin CLI 3000.11.3's."""
+"""The `devin-cli` reader, against synthetic stores shaped like Devin CLI 3000.11.3's."""
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -45,7 +44,7 @@ def _read(root: Path) -> tuple[list[Session], list[str]]:
     return sessions, [failure.message for failure in failures]
 
 
-def _one(root: Path, session_id: str = "devin:brave-otter") -> Session:
+def _one(root: Path, session_id: str = "devin-cli:brave-otter") -> Session:
     sessions, failures = _read(root)
     assert failures == []
     return next(s for s in sessions if s.session_id == session_id)
@@ -75,7 +74,7 @@ def test_a_relative_root_does_not_crash_the_store_connection(tmp_path: Path, mon
     monkeypatch.chdir(tmp_path)
     sessions, failures = DevinCliReader(root=Path("cli")).collect(ALL)
     assert failures == []
-    assert [s.session_id for s in sessions] == ["devin:brave-otter"]
+    assert [s.session_id for s in sessions] == ["devin-cli:brave-otter"]
 
 
 def test_collect_file_recognizes_an_absolute_path_against_a_relative_root(
@@ -87,7 +86,7 @@ def test_collect_file_recognizes_an_absolute_path_against_a_relative_root(
     monkeypatch.chdir(tmp_path)
     sessions, failures = DevinCliReader(root=Path("cli")).collect_file(store)
     assert failures == []
-    assert [s.session_id for s in sessions] == ["devin:a"]
+    assert [s.session_id for s in sessions] == ["devin-cli:a"]
 
 
 def test_a_store_missing_a_required_table_is_an_unsupported_schema(tmp_path: Path) -> None:
@@ -108,7 +107,7 @@ def test_a_newer_schema_is_read_and_reported(tmp_path: Path) -> None:
         store, StoredSession(id="brave-otter", nodes=[Node(1, None, user("hi"))], main_chain_id=1)
     )
     sessions, failures = _read(root)
-    assert [s.session_id for s in sessions] == ["devin:brave-otter"]
+    assert [s.session_id for s in sessions] == ["devin-cli:brave-otter"]
     assert len(failures) == 1 and "V18" in failures[0]
 
 
@@ -188,7 +187,7 @@ def test_the_window_is_applied_to_last_activity(tmp_path: Path) -> None:
     )
     since = datetime.fromtimestamp(T0 + 3600, UTC)
     sessions, _ = DevinCliReader(root=root).collect(Window(since=since))
-    assert [s.session_id for s in sessions] == ["devin:new"]
+    assert [s.session_id for s in sessions] == ["devin-cli:new"]
 
 
 def test_the_window_considers_a_nodes_own_later_timestamp(tmp_path: Path) -> None:
@@ -208,7 +207,7 @@ def test_the_window_considers_a_nodes_own_later_timestamp(tmp_path: Path) -> Non
     )
     since = datetime.fromtimestamp(T0 + 50, UTC)
     sessions, _ = DevinCliReader(root=root).collect(Window(since=since))
-    assert [s.session_id for s in sessions] == ["devin:brave-otter"]
+    assert [s.session_id for s in sessions] == ["devin-cli:brave-otter"]
 
 
 def test_a_subagents_last_activity_is_scoped_to_its_own_tree(tmp_path: Path) -> None:
@@ -239,12 +238,14 @@ def test_a_subagents_last_activity_is_scoped_to_its_own_tree(tmp_path: Path) -> 
     )
     sessions, _ = DevinCliReader(root=root).collect(ALL)
     by_id = {s.session_id: s for s in sessions}
-    assert by_id["devin:brave-otter"].last_activity_at == datetime.fromtimestamp(T0 + 100, UTC)
-    assert by_id["devin:brave-otter:explorer-1"].last_activity_at == datetime.fromtimestamp(T0, UTC)
+    assert by_id["devin-cli:brave-otter"].last_activity_at == datetime.fromtimestamp(T0 + 100, UTC)
+    assert by_id["devin-cli:brave-otter:explorer-1"].last_activity_at == datetime.fromtimestamp(
+        T0, UTC
+    )
 
     since = datetime.fromtimestamp(T0 + 50, UTC)
     filtered, _ = DevinCliReader(root=root).collect(Window(since=since))
-    assert [s.session_id for s in filtered] == ["devin:brave-otter"]
+    assert [s.session_id for s in filtered] == ["devin-cli:brave-otter"]
 
 
 def test_a_subagents_start_time_is_derived_from_its_own_tree(tmp_path: Path) -> None:
@@ -276,8 +277,10 @@ def test_a_subagents_start_time_is_derived_from_its_own_tree(tmp_path: Path) -> 
     )
     sessions, _ = DevinCliReader(root=root).collect(ALL)
     by_id = {s.session_id: s for s in sessions}
-    assert by_id["devin:brave-otter"].started_at == datetime.fromtimestamp(T0, UTC)
-    assert by_id["devin:brave-otter:explorer-1"].started_at == datetime.fromtimestamp(T0 + 100, UTC)
+    assert by_id["devin-cli:brave-otter"].started_at == datetime.fromtimestamp(T0, UTC)
+    assert by_id["devin-cli:brave-otter:explorer-1"].started_at == datetime.fromtimestamp(
+        T0 + 100, UTC
+    )
 
 
 def test_placement_uses_a_nodes_effective_time_not_the_stale_column(tmp_path: Path) -> None:
@@ -331,7 +334,7 @@ def test_session_fields(tmp_path: Path) -> None:
         working_directory="/work/app",
     )
     session = _one(root)
-    assert session.agent_kind == "devin"
+    assert session.agent_kind == "devin-cli"
     assert session.source == "devin"
     assert session.started_at == datetime.fromtimestamp(T0, UTC)
     assert session.last_activity_at == datetime.fromtimestamp(T0 + 60, UTC)
@@ -410,7 +413,7 @@ def test_a_harness_written_user_node_is_context_not_a_turn(tmp_path: Path) -> No
         ("system", "You are Devin."),
         ("injected", "continue"),
     ]
-    assert session.context_items[0].span == "devin:brave-otter:context:1"
+    assert session.context_items[0].span == "devin-cli:brave-otter:context:1"
     assert session.context_items[1].occurred_at == datetime.fromtimestamp(T0, UTC)
 
 
@@ -427,14 +430,14 @@ def test_a_context_items_span_follows_its_node_not_its_position(tmp_path: Path) 
     )
     before = _one(root)
     assert [(c.text, c.span) for c in before.context_items] == [
-        ("continue-a", "devin:brave-otter:context:2")
+        ("continue-a", "devin-cli:brave-otter:context:2")
     ]
     # Regeneration moves main_chain_id to the sibling branch -- a different
     # context node now sits at the same position in `context`.
     append_nodes(store, "brave-otter", [], main_chain_id=3)
     after = _one(root)
     assert [(c.text, c.span) for c in after.context_items] == [
-        ("continue-b", "devin:brave-otter:context:3")
+        ("continue-b", "devin-cli:brave-otter:context:3")
     ]
 
 
@@ -507,92 +510,13 @@ def _calls(root: Path, calls: list[dict], results: list[dict], *, last: bool = F
     return list(_one(root).turns[1].tool_calls)
 
 
-def _declare(store: Path, session_id: str, kinds: dict[str, str]) -> None:
-    """Write the ACP kind Devin declares for each call, as `tool_call_state` holds it."""
-    db = sqlite3.connect(store)
-    db.executemany(
-        "INSERT INTO tool_call_state (session_id, tool_call_id, tool_call_json) VALUES (?, ?, ?)",
-        [
-            (session_id, call_id, json.dumps({"toolCallId": call_id, "title": "t", "kind": kind}))
-            for call_id, kind in kinds.items()
-        ],
-    )
-    db.commit()
-    db.close()
-
-
-def _declared_calls(root: Path, calls: list[dict], kinds: dict[str, str]) -> list:
-    nodes = [Node(1, None, user("go")), Node(2, 1, assistant(calls=calls, metrics=metrics()))]
-    for index, one in enumerate(calls):
-        nodes.append(Node(3 + index, 2 + index, result(one["id"], "ok", success=True)))
-    tail = 2 + len(calls)
-    nodes.append(Node(tail + 1, tail, assistant("ok", request_id="r-end", metrics=metrics())))
-    _declare(_simple(root, nodes, main=tail + 1), "brave-otter", kinds)
-    return list(_one(root).turns[1].tool_calls)
-
-
-def test_a_tool_the_table_does_not_name_takes_the_kind_devin_declared(tmp_path: Path) -> None:
-    shell, fetch, search, unknown = _declared_calls(
-        tmp_path / "cli",
-        [
-            call("c1", "shell_command", {"command": "ls"}, 0),
-            call("c2", "browser_preview", {"url": "http://x"}, 1),
-            call("c3", "semantic_search", {"query": "x"}, 2),
-            call("c4", "brand_new", {}, 3),
-        ],
-        {"c1": "execute", "c2": "fetch", "c3": "search"},
-    )
-    assert [c.tool_class for c in (shell, fetch, search, unknown)] == [
-        "shell",
-        "web_fetch",
-        "other",
-        None,
-    ]
-    # A class from the declared kind says what the call is; it does not
-    # invent where its arguments sit.
-    assert shell.canonical_arguments == {}
-
-
-def test_the_table_wins_over_the_declared_kind(tmp_path: Path) -> None:
-    [grep] = _declared_calls(
-        tmp_path / "cli", [call("c1", "grep", {"pattern": "x"})], {"c1": "search"}
-    )
-    assert grep.tool_class == "file_search"
-
-
-def test_an_mcp_call_is_mcp_whatever_kind_is_declared(tmp_path: Path) -> None:
-    [one] = _declared_calls(
-        tmp_path / "cli", [call("c1", "mcp__github__create_issue", {"title": "t"})], {"c1": "edit"}
-    )
-    assert one.tool_class == "mcp"
-
-
-def test_a_store_without_tool_call_state_reads_unnamed_tools_as_unclassed(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "cli"
-    nodes = [
-        Node(1, None, user("go")),
-        Node(2, 1, assistant(calls=[call("c1", "brand_new", {})], metrics=metrics())),
-        Node(3, 2, result("c1", "ok", success=True)),
-        Node(4, 3, assistant("ok", request_id="r-end", metrics=metrics())),
-    ]
-    store = _simple(root, nodes, main=4)
-    db = sqlite3.connect(store)
-    db.execute("DROP TABLE tool_call_state")
-    db.commit()
-    db.close()
-    [one] = _one(root).turns[1].tool_calls
-    assert one.tool_class is None
-
-
 def test_a_shell_call_and_its_result(tmp_path: Path) -> None:
     [shell] = _calls(
         tmp_path / "cli",
         [call("c1", "exec", {"command": "npm test"})],
         [result("c1", "3 passed", success=True, exit_code=0, cwd="/work/project/pkg")],
     )
-    assert shell.span == "devin:brave-otter:2:0"
+    assert shell.span == "devin-cli:brave-otter:2:0"
     assert shell.tool_name == "exec"
     assert shell.mcp_server is None
     assert shell.status == "ok"
@@ -812,8 +736,8 @@ def test_subagents_are_their_own_sessions_and_nothing_counts_twice(tmp_path: Pat
     sessions, failures = _read(root)
     assert failures == []
     by_id = {s.session_id: s for s in sessions}
-    parent = by_id["devin:brave-otter"]
-    child = by_id["devin:brave-otter:explorer-1"]
+    parent = by_id["devin-cli:brave-otter"]
+    child = by_id["devin-cli:brave-otter:explorer-1"]
     assert [r.response_id for r in parent.responses] == ["p1"]
     assert [r.response_id for r in child.responses] == ["s1"]
     assert all(r.is_sidechain for r in child.responses)
@@ -1026,7 +950,7 @@ def test_an_unreadable_lock_is_discovery_incomplete_not_no_log(tmp_path: Path) -
     run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh")])
     sessions, failures = _read(root)
     assert failures != []
-    session = next(s for s in sessions if s.session_id == "devin:brave-otter")
+    session = next(s for s in sessions if s.session_id == "devin-cli:brave-otter")
     assert session.mcp_log_state == "log_discovery_incomplete"
 
 
@@ -1126,7 +1050,7 @@ def test_an_unreadable_peer_lock_withholds_a_confident_placement(tmp_path: Path)
     (root / "session_locks" / "calm-heron.lock").write_text("not-a-pid")
     run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
     sessions, _ = _read(root)
-    session = next(s for s in sessions if s.session_id == "devin:brave-otter")
+    session = next(s for s in sessions if s.session_id == "devin-cli:brave-otter")
     assert session.mcp_log_state == "log_discovery_incomplete"
 
 
@@ -1157,7 +1081,7 @@ def test_subagents_share_their_parents_process(tmp_path: Path) -> None:
     )
     lock(root, "brave-otter", 9)
     run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
-    child = _one(root, "devin:brave-otter:explorer-1")
+    child = _one(root, "devin-cli:brave-otter:explorer-1")
     assert child.mcp_log_state == "applied"
     assert child.turns[0].tool_calls[0].transport == "stdio"
 
@@ -1186,7 +1110,7 @@ def test_a_log_parse_failure_is_reported_from_collect(tmp_path: Path) -> None:
     bad.write_bytes(b"not actually gzip")
     sessions, failures = _read(root)
     assert any("devin_20260101-000000_9.log.gz" in f for f in failures)
-    session = next(s for s in sessions if s.session_id == "devin:brave-otter")
+    session = next(s for s in sessions if s.session_id == "devin-cli:brave-otter")
     assert session.mcp_log_state == "log_discovery_incomplete"
 
 
@@ -1200,13 +1124,13 @@ def test_collect_file_returns_only_sessions_with_new_rows(tmp_path: Path) -> Non
     write_session(store, StoredSession(id="b", nodes=[Node(1, None, user("y"))], main_chain_id=1))
     reader = DevinCliReader(root=root)
     first, _ = reader.collect_file(store)
-    assert sorted(s.session_id for s in first) == ["devin:a", "devin:b"]
+    assert sorted(s.session_id for s in first) == ["devin-cli:a", "devin-cli:b"]
     again, _ = reader.collect_file(store)
     assert again == []
     append_nodes(store, "b", [Node(2, 1, assistant("z", metrics=metrics()))], main_chain_id=2)
     grown, failures = reader.collect_file(Path(f"{store}-wal"))
     assert failures == []
-    assert [s.session_id for s in grown] == ["devin:b"]
+    assert [s.session_id for s in grown] == ["devin-cli:b"]
     assert [t.text for t in grown[0].turns] == ["y", "z"]
 
 
@@ -1218,16 +1142,16 @@ def test_collect_file_re_emits_a_peer_whose_placement_turns_ambiguous(tmp_path: 
     run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
     reader = DevinCliReader(root=root)
     first, _ = reader.collect_file(store)
-    assert [s.session_id for s in first] == ["devin:a"]
+    assert [s.session_id for s in first] == ["devin-cli:a"]
     assert first[0].mcp_log_state == "applied"
 
     write_session(store, StoredSession(id="b", nodes=[Node(1, None, user("y"))], main_chain_id=1))
     lock(root, "b", 9)
     grown, _ = reader.collect_file(store)
     by_id = {s.session_id: s for s in grown}
-    assert set(by_id) == {"devin:a", "devin:b"}
-    assert by_id["devin:a"].mcp_log_state == "placement_ambiguous"
-    assert by_id["devin:b"].mcp_log_state == "placement_ambiguous"
+    assert set(by_id) == {"devin-cli:a", "devin-cli:b"}
+    assert by_id["devin-cli:a"].mcp_log_state == "placement_ambiguous"
+    assert by_id["devin-cli:b"].mcp_log_state == "placement_ambiguous"
 
 
 def test_collect_file_re_emits_peers_when_a_changed_lock_is_unreadable(
@@ -1240,15 +1164,15 @@ def test_collect_file_re_emits_peers_when_a_changed_lock_is_unreadable(
     run_log(root, 9, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
     reader = DevinCliReader(root=root)
     first, _ = reader.collect_file(store)
-    assert [s.session_id for s in first] == ["devin:a"]
+    assert [s.session_id for s in first] == ["devin-cli:a"]
     assert first[0].mcp_log_state == "applied"
 
     write_session(store, StoredSession(id="b", nodes=[Node(1, None, user("y"))], main_chain_id=1))
     (root / "session_locks" / "b.lock").write_text("not-a-pid")
     grown, _ = reader.collect_file(store)
     by_id = {s.session_id: s for s in grown}
-    assert set(by_id) == {"devin:a", "devin:b"}
-    assert by_id["devin:a"].mcp_log_state == "log_discovery_incomplete"
+    assert set(by_id) == {"devin-cli:a", "devin-cli:b"}
+    assert by_id["devin-cli:a"].mcp_log_state == "log_discovery_incomplete"
 
 
 def test_collect_file_re_emits_a_peer_freed_from_a_stale_shared_pid(tmp_path: Path) -> None:
@@ -1262,8 +1186,8 @@ def test_collect_file_re_emits_a_peer_freed_from_a_stale_shared_pid(tmp_path: Pa
     reader = DevinCliReader(root=root)
     first, _ = reader.collect_file(store)
     by_id = {s.session_id: s for s in first}
-    assert by_id["devin:a"].mcp_log_state == "placement_ambiguous"
-    assert by_id["devin:b"].mcp_log_state == "placement_ambiguous"
+    assert by_id["devin-cli:a"].mcp_log_state == "placement_ambiguous"
+    assert by_id["devin-cli:b"].mcp_log_state == "placement_ambiguous"
 
     # "a" resumes under a new process; it no longer shares pid 9 with "b".
     append_nodes(store, "a", [Node(2, 1, assistant("more", metrics=metrics()))], main_chain_id=2)
@@ -1271,8 +1195,8 @@ def test_collect_file_re_emits_a_peer_freed_from_a_stale_shared_pid(tmp_path: Pa
     run_log(root, 10, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
     grown, _ = reader.collect_file(store)
     by_id = {s.session_id: s for s in grown}
-    assert set(by_id) == {"devin:a", "devin:b"}
-    assert by_id["devin:b"].mcp_log_state == "applied"
+    assert set(by_id) == {"devin-cli:a", "devin-cli:b"}
+    assert by_id["devin-cli:b"].mcp_log_state == "applied"
 
 
 def test_a_log_event_re_emits_a_peer_freed_from_an_old_pid(tmp_path: Path) -> None:
@@ -1293,8 +1217,8 @@ def test_a_log_event_re_emits_a_peer_freed_from_an_old_pid(tmp_path: Path) -> No
     log = run_log(root, 10, [*startup(0), *mcp_stdio(1, "gh"), log_line(70, "INFO", "chisel", "x")])
     grown, _ = reader.collect_file(log)
     by_id = {s.session_id: s for s in grown}
-    assert by_id["devin:b"].mcp_log_state == "applied"
-    assert by_id["devin:a"].mcp_log_state == "applied"
+    assert by_id["devin-cli:b"].mcp_log_state == "applied"
+    assert by_id["devin-cli:a"].mcp_log_state == "applied"
 
 
 def test_an_incremental_consumer_always_holds_what_a_cold_read_would(tmp_path: Path) -> None:
@@ -1333,7 +1257,7 @@ def test_an_incremental_consumer_always_holds_what_a_cold_read_would(tmp_path: P
     event(Path(f"{store}-wal"))
     # The missing log arrives.
     event(run_log(root, 11, log_9, stamp="20260101-000002"))
-    assert held["devin:b"].mcp_log_state == "applied"
+    assert held["devin-cli:b"].mcp_log_state == "applied"
 
 
 def test_collect_file_ignores_other_paths(tmp_path: Path) -> None:
@@ -1355,7 +1279,7 @@ def test_a_replaced_store_is_read_cold(tmp_path: Path) -> None:
     store = create_store(root)
     write_session(store, StoredSession(id="a", nodes=[Node(1, None, user("new"))], main_chain_id=1))
     again, _ = reader.collect_file(store)
-    assert [(s.session_id, s.turns[0].text) for s in again] == [("devin:a", "new")]
+    assert [(s.session_id, s.turns[0].text) for s in again] == [("devin-cli:a", "new")]
 
 
 # --- wiring -------------------------------------------------------------------------
@@ -1365,11 +1289,11 @@ def test_the_default_readers_include_devin(tmp_path: Path) -> None:
     root = tmp_path / "cli"
     _simple(root, [Node(1, None, user("hi"))], main=1)
     collection = collect(
-        parse_kind_filter(["devin"]),
+        parse_kind_filter(["devin-cli"]),
         ALL,
         default_readers(root=tmp_path / "no-claude", devin_root=root),
     )
-    assert [s.session_id for s in collection.sessions] == ["devin:brave-otter"]
+    assert [s.session_id for s in collection.sessions] == ["devin-cli:brave-otter"]
 
 
 def test_the_default_root_follows_xdg_data_home(
@@ -1423,10 +1347,10 @@ def test_a_subagent_head_on_the_main_tree_claims_only_its_own_branch(tmp_path: P
     )
     sessions, _ = _read(root)
     by_id = {s.session_id: s for s in sessions}
-    assert [r.response_id for r in by_id["devin:brave-otter"].responses] == ["m1"]
-    assert [r.response_id for r in by_id["devin:brave-otter:odd-1"].responses] == ["s1"]
-    assert [t.text for t in by_id["devin:brave-otter"].turns] == ["q", "main"]
-    assert [t.text for t in by_id["devin:brave-otter:odd-1"].turns] == ["side"]
+    assert [r.response_id for r in by_id["devin-cli:brave-otter"].responses] == ["m1"]
+    assert [r.response_id for r in by_id["devin-cli:brave-otter:odd-1"].responses] == ["s1"]
+    assert [t.text for t in by_id["devin-cli:brave-otter"].turns] == ["q", "main"]
+    assert [t.text for t in by_id["devin-cli:brave-otter:odd-1"].turns] == ["side"]
 
 
 def test_a_regenerated_subagent_branch_belongs_to_the_subagent(tmp_path: Path) -> None:
@@ -1452,8 +1376,8 @@ def test_a_regenerated_subagent_branch_belongs_to_the_subagent(tmp_path: Path) -
     )
     sessions, _ = _read(root)
     by_id = {s.session_id: s for s in sessions}
-    assert [r.response_id for r in by_id["devin:brave-otter"].responses] == ["m1"]
-    assert sorted(r.response_id for r in by_id["devin:brave-otter:odd-1"].responses) == [
+    assert [r.response_id for r in by_id["devin-cli:brave-otter"].responses] == ["m1"]
+    assert sorted(r.response_id for r in by_id["devin-cli:brave-otter:odd-1"].responses) == [
         "s1",
         "s2",
     ]
@@ -1523,7 +1447,7 @@ def test_every_node_belongs_to_exactly_the_session_the_ownership_rule_names(
     )
     sessions, _ = _read(root)
     by_owner = {
-        ("main" if s.session_id == "devin:s" else s.session_id.rsplit(":", 1)[1]): s
+        ("main" if s.session_id == "devin-cli:s" else s.session_id.rsplit(":", 1)[1]): s
         for s in sessions
     }
     owners = _owners(parents, main_leaf, heads)
@@ -1597,7 +1521,7 @@ def test_a_subagent_that_ended_before_its_parents_last_process_is_not_placed_on_
     )
     sessions, _ = _read(root)
     by_id = {s.session_id: s for s in sessions}
-    parent, child = by_id["devin:brave-otter"], by_id["devin:brave-otter:early-1"]
+    parent, child = by_id["devin-cli:brave-otter"], by_id["devin-cli:brave-otter:early-1"]
     assert (parent.mcp_log_state, parent.entrypoint) == ("applied", "acp")
     assert [c.server for c in parent.mcp_connections] == ["gh"]
     assert (child.mcp_log_state, child.mcp_connections) == ("no_log_for_session", ())
@@ -1690,7 +1614,7 @@ def test_every_row_verdict_from_a_readable_log_spares_a_subagent_outside_it(
         )
     sessions, _ = _read(root)
     by_id = {s.session_id: s for s in sessions}
-    parent, child = by_id["devin:brave-otter"], by_id["devin:brave-otter:early-1"]
+    parent, child = by_id["devin-cli:brave-otter"], by_id["devin-cli:brave-otter:early-1"]
     assert parent.mcp_log_state == parent_state
     assert (child.mcp_log_state, child.agent_version, child.entrypoint) == (
         "no_log_for_session",
