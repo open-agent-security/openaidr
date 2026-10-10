@@ -1447,6 +1447,120 @@ def test_a_result_that_states_no_outcome_stays_unknown(tmp_path: Path) -> None:
     assert _calls(tmp_path)[0].status == "unknown"
 
 
+def test_a_file_tools_structured_result_is_its_recorded_success(tmp_path: Path) -> None:
+    """Claude Code writes `is_error` on a Write, Edit or Read result only when
+    the call failed. On success it leaves it out and records what the call did
+    in `toolUseResult` -- the file it created or changed, or the file it read.
+    That object is the record's own statement of the outcome, not a guess from
+    a result's mere presence. Shapes as Claude Code writes them."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use("s1", "u2", "2026-08-01T10:00:00.000Z", "t1", "Write"),
+            tool_result(
+                "s1",
+                "u3",
+                "2026-08-01T10:00:01.000Z",
+                "t1",
+                "File created successfully at: /work/project/a.txt",
+                toolUseResult={
+                    "type": "create",
+                    "filePath": "/work/project/a.txt",
+                    "content": "x",
+                    "structuredPatch": [],
+                    "originalFile": None,
+                },
+            ),
+            assistant_tool_use("s1", "u4", "2026-08-01T10:00:02.000Z", "t2", "Edit"),
+            tool_result(
+                "s1",
+                "u5",
+                "2026-08-01T10:00:03.000Z",
+                "t2",
+                "The file /work/project/a.txt has been updated.",
+                toolUseResult={"filePath": "/work/project/a.txt", "structuredPatch": []},
+            ),
+            assistant_tool_use("s1", "u6", "2026-08-01T10:00:04.000Z", "t3", "Read"),
+            tool_result(
+                "s1",
+                "u7",
+                "2026-08-01T10:00:05.000Z",
+                "t3",
+                "1\tx",
+                toolUseResult={"type": "text", "file": {"filePath": "/work/project/a.txt"}},
+            ),
+        ],
+    )
+    assert [c.status for c in _calls(tmp_path)] == ["ok", "ok", "ok"]
+
+
+def test_a_file_tools_recorded_failure_is_still_error(tmp_path: Path) -> None:
+    """A failed file tool carries `is_error` and a plain-text `toolUseResult`.
+    The explicit statement decides, whatever else the record holds."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use("s1", "u2", "2026-08-01T10:00:00.000Z", "t1", "Write"),
+            tool_result(
+                "s1",
+                "u3",
+                "2026-08-01T10:00:01.000Z",
+                "t1",
+                "File has not been read yet.",
+                is_error=True,
+                toolUseResult="Error: File has not been read yet.",
+            ),
+            assistant_tool_use("s1", "u4", "2026-08-01T10:00:02.000Z", "t2", "Edit"),
+            tool_result(
+                "s1",
+                "u5",
+                "2026-08-01T10:00:03.000Z",
+                "t2",
+                "boom",
+                is_error=True,
+                toolUseResult={"filePath": "/work/project/a.txt"},
+            ),
+        ],
+    )
+    assert [c.status for c in _calls(tmp_path)] == ["error", "error"]
+
+
+def test_a_structured_result_states_success_only_for_the_tools_that_mean_it(
+    tmp_path: Path,
+) -> None:
+    """Not every structured result is a success. WebFetch records one, with no
+    `is_error`, for a 403 as readily as for a 200, so a tool outside the table
+    stays `unknown`. So does a file tool whose object lacks the field that
+    states what it did."""
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use("s1", "u2", "2026-08-01T10:00:00.000Z", "t1", "WebFetch"),
+            tool_result(
+                "s1",
+                "u3",
+                "2026-08-01T10:00:01.000Z",
+                "t1",
+                "Forbidden",
+                toolUseResult={"code": 403, "codeText": "Forbidden", "url": "https://a.example"},
+            ),
+            assistant_tool_use("s1", "u4", "2026-08-01T10:00:02.000Z", "t2", "Write"),
+            tool_result(
+                "s1",
+                "u5",
+                "2026-08-01T10:00:03.000Z",
+                "t2",
+                "done",
+                toolUseResult={"type": "create"},
+            ),
+        ],
+    )
+    assert [c.status for c in _calls(tmp_path)] == ["unknown", "unknown"]
+
+
 def test_a_calls_duration_needs_both_ends_of_it(tmp_path: Path) -> None:
     """A start alone would invite reading *still running* as *fast*."""
     write_session(
