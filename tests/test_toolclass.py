@@ -53,3 +53,35 @@ def test_an_unknown_name_or_kind_is_unclassed_never_other() -> None:
 
 def test_a_key_the_call_did_not_record_is_absent() -> None:
     assert canonical_arguments("devin-cli", "edit", None, {"file_path": "/a"}) == {"path": "/a"}
+
+
+#: Claude Code built-ins seen in real transcripts after the table was first
+#: written. Each must be classed: unclassed, a consumer reads the agent's own
+#: call as a tool it cannot place.
+_CLAUDE_BUILTINS_SEEN_LATER = (
+    "Monitor",
+    "TaskOutput",
+    "TaskStop",
+    "TaskCreate",
+    "ToolSearch",
+    "EnterPlanMode",
+    "SendMessage",
+    "ListAgents",
+    "SubagentHandback",
+    "Artifact",
+    "ReportFindings",
+    "SendUserFile",
+)
+
+
+@pytest.mark.parametrize("name", _CLAUDE_BUILTINS_SEEN_LATER)
+def test_claude_code_built_ins_seen_in_transcripts_are_classed(name: str) -> None:
+    assert tool_class("claude-code", name, None) in TOOL_CLASSES - {"mcp"}
+
+
+def test_claude_codes_monitor_is_a_shell_carrying_its_command() -> None:
+    assert tool_class("claude-code", "Monitor", None) == "shell"
+    arguments = {"command": "tail -f app.log", "description": "errors", "timeout_ms": 1000}
+    assert canonical_arguments("claude-code", "Monitor", None, arguments) == {
+        "command": "tail -f app.log"
+    }
