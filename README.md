@@ -169,6 +169,9 @@ Not yet built, in the order they matter:
 For long-lived consumers, `IncrementalCollector` accepts an agent kind and one
 changed transcript path. It cold-reads that file once, then projects only newly
 appended, newline-terminated records while returning its current full session.
+`IncrementalCollector.locations()` says which directories hold each kind's
+session files, sub-agents included, so a consumer can watch every kind without
+knowing its layout ([ADR-0023](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0023-each-reader-says-where-its-files-live.md)).
 The cursor is in memory only; process restart deliberately falls back to a cold
 read. See [ADR-0011](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0011-keep-append-cursors-in-memory.md).
 

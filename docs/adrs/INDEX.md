@@ -30,6 +30,7 @@ against the rules in effect at the time.
 - [0020](0020-place-devin-run-log-facts-through-the-session-lock.md) — **Place Devin's run-log facts on a session through its lock, or not at all.** The lock's PID names the process log; a log another session's lock also names is `placement_ambiguous` for connections, while build and entrypoint are kept. Read before changing MCP placement for Devin or adding a failure category.
 - [0021](0021-tool-class-and-canonical-arguments-are-model-fields.md) — **A call carries its tool class and canonical arguments, filled per kind.** A closed class vocabulary and canonical argument keys from per-kind tables; unknown names get no class and unrecorded keys stay absent. Read before adding a kind's tools or a consumer-facing tool category.
 - [0022](0022-say-whether-a-kind-records-compactions-and-sub-agents.md) — **Say whether a kind records compactions and sub-agents at all.** `compactions_recorded` and `subagents_recorded` separate "none happened" from "cannot say". Read before adding another list a kind may not record.
+- [0023](0023-each-reader-says-where-its-files-live.md) — **Each reader says where its session files live; the consumer watches.** `IncrementalReader.locations()` and `IncrementalCollector.locations()` name the directories per kind; `collect_file` ignores what it does not read, so a consumer follows every kind without knowing a layout, and OpenAIDR still watches nothing. Read before hard-coding a kind's paths in a consumer or adding a watcher here.
 
 ## Active
 

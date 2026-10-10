@@ -165,6 +165,10 @@ class DevinCliReader:
         failures.extend(self._failure(message) for message in logs.failures)
         return sessions, failures
 
+    def locations(self) -> tuple[Path, ...]:
+        """The data root: the store, its run logs and its session locks are all beneath it."""
+        return (self._root,)
+
     def collect_file(self, path: Path) -> tuple[list[Session], list[ReaderFailure]]:
         """Return every session that differs from what this reader last returned.
 

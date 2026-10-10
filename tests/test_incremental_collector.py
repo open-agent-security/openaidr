@@ -10,6 +10,8 @@ from openaidr.kinds import parse_kind_filter
 from openaidr.readers.base import Window
 from openaidr.readers.claude_code import ClaudeCodeReader
 from openaidr.readers.claude_code_mcp import MCPLogIndex
+from openaidr.readers.devin_cli import DevinCliReader
+from tests.fixtures import devin_store
 from tests.fixtures import mcp_logs as log
 from tests.fixtures.claude_jsonl import (
     assistant_response,
@@ -17,6 +19,7 @@ from tests.fixtures.claude_jsonl import (
     tool_result,
     user_text,
     write_session,
+    write_subagent_session,
 )
 
 
@@ -351,6 +354,9 @@ def test_an_incremental_reader_failure_is_reported_not_raised(tmp_path: Path) ->
         def collect_file(self, path: Path):
             raise RuntimeError("transcript changed while reading")
 
+        def locations(self) -> tuple[Path, ...]:
+            return (tmp_path,)
+
     path = tmp_path / "session.jsonl"
     path.write_text("", encoding="utf-8")
 
@@ -549,3 +555,47 @@ def test_13_a_response_is_revised_as_its_final_record_arrives(tmp_path: Path) ->
         readers=[_reader(tmp_path)],
     )
     assert incremental.collect("claude-code", path).sessions == cold.sessions
+
+
+def test_a_watcher_given_only_the_locations_finds_every_kinds_sessions(tmp_path: Path) -> None:
+    """What `locations` promises: walk them, hand every file to its kind, and
+    every session -- a sub-agent's included -- comes back, while a file the
+    kind does not read is ignored rather than failed."""
+    claude_root = tmp_path / "claude"
+    devin_root = tmp_path / "devin"
+    write_session(claude_root, "-p", [user_text("s1", "u1", "2026-09-18T10:00:00Z", "investigate")])
+    write_subagent_session(
+        claude_root, "-p", "s1", "abc", [user_text("s1", "u9", "2026-09-18T10:00:02Z", "delegated")]
+    )
+    store = devin_store.create_store(devin_root)
+    devin_store.write_session(
+        store,
+        devin_store.StoredSession(
+            id="otter",
+            nodes=[devin_store.Node(1, None, devin_store.user("x"))],
+            main_chain_id=1,
+        ),
+    )
+    (claude_root / "-p" / "notes.txt").write_text("not a transcript", encoding="utf-8")
+    (devin_root / "settings.json").write_text("{}", encoding="utf-8")
+    collector = IncrementalCollector(
+        readers=[_reader(claude_root), DevinCliReader(root=devin_root)]
+    )
+
+    found: set[str] = set()
+    for kind, directories in collector.locations().items():
+        for directory in directories:
+            for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+                collection = collector.collect(kind, path)
+                assert collection.failures == [], path
+                found |= {s.session_id for s in collection.sessions}
+
+    assert found == {"claude-code:s1", "claude-code:s1:agent-abc", "devin-cli:otter"}
+
+
+def test_each_kinds_root_reaches_its_reader(tmp_path: Path) -> None:
+    collector = IncrementalCollector(tmp_path / "claude", devin_root=tmp_path / "devin")
+    assert collector.locations() == {
+        "claude-code": (tmp_path / "claude",),
+        "devin-cli": ((tmp_path / "devin").resolve(),),
+    }
