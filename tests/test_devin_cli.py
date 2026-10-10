@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
@@ -504,6 +505,85 @@ def _calls(root: Path, calls: list[dict], results: list[dict], *, last: bool = F
         tail += 1
     _simple(root, nodes, main=tail)
     return list(_one(root).turns[1].tool_calls)
+
+
+def _declare(store: Path, session_id: str, kinds: dict[str, str]) -> None:
+    """Write the ACP kind Devin declares for each call, as `tool_call_state` holds it."""
+    db = sqlite3.connect(store)
+    db.executemany(
+        "INSERT INTO tool_call_state (session_id, tool_call_id, tool_call_json) VALUES (?, ?, ?)",
+        [
+            (session_id, call_id, json.dumps({"toolCallId": call_id, "title": "t", "kind": kind}))
+            for call_id, kind in kinds.items()
+        ],
+    )
+    db.commit()
+    db.close()
+
+
+def _declared_calls(root: Path, calls: list[dict], kinds: dict[str, str]) -> list:
+    nodes = [Node(1, None, user("go")), Node(2, 1, assistant(calls=calls, metrics=metrics()))]
+    for index, one in enumerate(calls):
+        nodes.append(Node(3 + index, 2 + index, result(one["id"], "ok", success=True)))
+    tail = 2 + len(calls)
+    nodes.append(Node(tail + 1, tail, assistant("ok", request_id="r-end", metrics=metrics())))
+    _declare(_simple(root, nodes, main=tail + 1), "brave-otter", kinds)
+    return list(_one(root).turns[1].tool_calls)
+
+
+def test_a_tool_the_table_does_not_name_takes_the_kind_devin_declared(tmp_path: Path) -> None:
+    shell, fetch, search, unknown = _declared_calls(
+        tmp_path / "cli",
+        [
+            call("c1", "shell_command", {"command": "ls"}, 0),
+            call("c2", "browser_preview", {"url": "http://x"}, 1),
+            call("c3", "semantic_search", {"query": "x"}, 2),
+            call("c4", "brand_new", {}, 3),
+        ],
+        {"c1": "execute", "c2": "fetch", "c3": "search"},
+    )
+    assert [c.tool_class for c in (shell, fetch, search, unknown)] == [
+        "shell",
+        "web_fetch",
+        "other",
+        None,
+    ]
+    # A class from the declared kind says what the call is; it does not
+    # invent where its arguments sit.
+    assert shell.canonical_arguments == {}
+
+
+def test_the_table_wins_over_the_declared_kind(tmp_path: Path) -> None:
+    [grep] = _declared_calls(
+        tmp_path / "cli", [call("c1", "grep", {"pattern": "x"})], {"c1": "search"}
+    )
+    assert grep.tool_class == "file_search"
+
+
+def test_an_mcp_call_is_mcp_whatever_kind_is_declared(tmp_path: Path) -> None:
+    [one] = _declared_calls(
+        tmp_path / "cli", [call("c1", "mcp__github__create_issue", {"title": "t"})], {"c1": "edit"}
+    )
+    assert one.tool_class == "mcp"
+
+
+def test_a_store_without_tool_call_state_reads_unnamed_tools_as_unclassed(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cli"
+    nodes = [
+        Node(1, None, user("go")),
+        Node(2, 1, assistant(calls=[call("c1", "brand_new", {})], metrics=metrics())),
+        Node(3, 2, result("c1", "ok", success=True)),
+        Node(4, 3, assistant("ok", request_id="r-end", metrics=metrics())),
+    ]
+    store = _simple(root, nodes, main=4)
+    db = sqlite3.connect(store)
+    db.execute("DROP TABLE tool_call_state")
+    db.commit()
+    db.close()
+    [one] = _one(root).turns[1].tool_calls
+    assert one.tool_class is None
 
 
 def test_a_shell_call_and_its_result(tmp_path: Path) -> None:

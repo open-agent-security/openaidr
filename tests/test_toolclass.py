@@ -7,11 +7,28 @@ import pytest
 from openaidr.toolclass import (
     _ARGUMENT_KEYS,
     _CLASS_BY_NAME,
+    ACP_KIND_CLASSES,
     CANONICAL_KEYS,
     TOOL_CLASSES,
     canonical_arguments,
+    class_of_acp_kind,
     tool_class,
 )
+
+#: The Agent Client Protocol's `ToolKind`, schema v1
+#: (agentclientprotocol/agent-client-protocol, `schema/v1/schema.json`).
+_ACP_TOOL_KINDS = {
+    "read",
+    "edit",
+    "delete",
+    "move",
+    "search",
+    "execute",
+    "think",
+    "fetch",
+    "switch_mode",
+    "other",
+}
 
 
 @pytest.mark.parametrize("kind", sorted(_CLASS_BY_NAME))
@@ -83,3 +100,24 @@ def test_claude_codes_monitor_is_a_shell_carrying_its_command() -> None:
     assert canonical_arguments("claude-code", "Monitor", None, arguments) == {
         "command": "tail -f app.log"
     }
+
+
+def test_every_acp_tool_kind_has_a_class_in_the_vocabulary() -> None:
+    assert set(ACP_KIND_CLASSES) == _ACP_TOOL_KINDS
+    assert set(ACP_KIND_CLASSES.values()) <= TOOL_CLASSES - {"mcp"}
+
+
+def test_acp_search_claims_no_capability() -> None:
+    """ACP's `search` covers searching files and searching the web."""
+    assert class_of_acp_kind("search") == "other"
+
+
+def test_anything_acp_does_not_define_has_no_class() -> None:
+    assert class_of_acp_kind("browse") is None
+    assert class_of_acp_kind(None) is None
+    assert class_of_acp_kind(3) is None
+
+
+@pytest.mark.parametrize("name", ["find_file_by_name", "code_search"])
+def test_devin_file_searches_seen_in_sessions_are_classed(name: str) -> None:
+    assert tool_class("devin", name, None) == "file_search"
