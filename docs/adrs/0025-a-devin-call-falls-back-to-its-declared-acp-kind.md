@@ -32,11 +32,15 @@ The table decides first. A call the table does not name, and that is not an
 MCP call, takes the class of the kind Devin declared for it
 (`toolclass.class_of_acp_kind`). A kind carries a capability only where ACP's
 definition names one thing: `move` ("Moving or renaming files") is
-`file_write`, `execute` ("Running commands or code") `shell`, and `fetch`
-("Retrieving external data") `web_fetch`. `read`, `edit` and `delete` are
-defined over "files or data" and `search` over information anywhere, so each
+`file_write`, `execute` ("Running commands or code") `shell`. `read`, `edit`
+and `delete` are defined over "files or data", `fetch` ("Retrieving external
+data") over no web of its own, and `search` over information anywhere, so each
 is `other`, like `think`, `switch_mode` and `other`: the call is known to be
-the agent's own, and nothing about what it touched is claimed. A call with no declared kind still gets `None`. Only
+the agent's own, and nothing about what it touched is claimed. `web_fetch` is
+this repository's own class for the URL-fetching tools (`WebFetch`,
+`webfetch`); ACP's `fetch` covers a database or artifact store the same as a
+URL, so giving it `web_fetch` would claim web access a call may never have
+made. A call with no declared kind still gets `None`. Only
 `kind` is read from `tool_call_state`; the table still gains the names seen in
 real sessions, so they keep their precise class.
 
@@ -47,9 +51,10 @@ real sessions, so they keep their precise class.
 - **Let the declared kind override the table**: rejected because ACP's kinds are
   coarser than the table's classes (`search` cannot be `file_search` or
   `web_search`), so a named tool would lose precision.
-- **Map `search` to `file_search`, or `read`, `edit` and `delete` to the file
-  classes**: rejected because ACP defines those over files *or* data, so a web
-  search or a database read would then read as a local file operation, a wrong
+- **Map `search` to `file_search`, `read`/`edit`/`delete` to the file classes,
+  or `fetch` to `web_fetch`**: rejected because ACP defines each of those over
+  more than its narrow class names, so a web search, a database read or a
+  database fetch would read as a file or web call it never made, a wrong
   answer rather than a missing one.
 
 ## Consequences

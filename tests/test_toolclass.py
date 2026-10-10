@@ -27,7 +27,7 @@ _ACP_KINDS = {
     "search": ("Searching for information.", "other"),
     "execute": ("Running commands or code.", "shell"),
     "think": ("Internal reasoning or planning.", "other"),
-    "fetch": ("Retrieving external data.", "web_fetch"),
+    "fetch": ("Retrieving external data.", "other"),
     "switch_mode": ("Switching the current session mode.", "other"),
     "other": ("Other tool types (default).", "other"),
 }
