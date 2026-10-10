@@ -576,7 +576,10 @@ def test_a_watcher_given_only_the_locations_finds_every_kinds_sessions(tmp_path:
             main_chain_id=1,
         ),
     )
-    (claude_root / "-p" / "notes.txt").write_text("not a transcript", encoding="utf-8")
+    # Non-UTF-8 and newline-terminated, so a reader that only filters by
+    # `.jsonl` suffix *after* decoding -- rather than before reading at all --
+    # would surface this as a reader failure instead of silently ignoring it.
+    (claude_root / "-p" / "notes.txt").write_bytes(b"not a transcript \xff\n")
     (devin_root / "settings.json").write_text("{}", encoding="utf-8")
     collector = IncrementalCollector(
         readers=[_reader(claude_root), DevinCliReader(root=devin_root)]
