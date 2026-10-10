@@ -307,10 +307,12 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 | `other` | `TodoWrite`, `ExitPlanMode`, `EnterPlanMode`, `AskUserQuestion`, `SlashCommand`, the MCP resource tools, `ToolSearch`, `TaskCreate`, `TaskOutput`, `TaskStop`, `SendMessage`, `ListAgents`, `SubagentHandback`, `Artifact`, `ReportFindings`, `SendUserFile` | `read_subagent`, `todo_write`, `exit_plan_mode`, `request_scope`, `mcp_list_servers`, `mcp_list_tools`, `mcp_read_resource` | — |
 
 A Devin call the table does not name takes the class of the ACP kind Devin
-declared for it in `tool_call_state` (ADR-0025): `move` is `file_write`,
-`execute` `shell` and `fetch` `web_fetch`, and every other kind is `other`.
-ACP defines `read`, `edit` and `delete` over "files or data" and `search` over
-information anywhere, so they claim no file capability.
+declared for it in `tool_call_state` (ADR-0025): `move` is `file_write` and
+`execute` `shell`, and every other kind is `other`. ACP defines `read`, `edit`
+and `delete` over "files or data" and `search` over information anywhere, so
+they claim no file capability; `fetch` is "retrieving external data" with no
+web of its own, so it does not get this repository's `web_fetch`, which names
+only the URL-fetching tools (`WebFetch`, `webfetch`).
 A name the table does not hold and Devin declared nothing for gets `None`,
 never `other`: a tool added after the table was written is unknown, not
 ordinary. Devin Desktop bundles its own copy of the agent, which can be a

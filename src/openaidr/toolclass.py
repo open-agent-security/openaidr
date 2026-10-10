@@ -166,11 +166,13 @@ def tool_class(agent_kind: str | None, tool_name: str, mcp_server: str | None) -
 #: speaking ACP declares one for each call, to the class each means. A call the
 #: table above does not name falls back to this (ADR-0025). A kind carries a class
 #: with a capability behind it only where ACP's definition names one thing:
-#: `move` ("Moving or renaming files"), `execute` ("Running commands or code")
-#: and `fetch` ("Retrieving external data"). `read`, `edit` and `delete` are
-#: defined over "files or data" and `search` over information anywhere, so each
-#: is `other`, which still says the call is the agent's own without claiming
-#: what it touched.
+#: `move` ("Moving or renaming files") and `execute` ("Running commands or
+#: code"). `read`, `edit` and `delete` are defined over "files or data",
+#: `fetch` over "external data" with no web of its own, and `search` over
+#: information anywhere, so each is `other`: `web_fetch` is this repo's own
+#: class for the URL-fetching tools (`WebFetch`, `webfetch`), and ACP's `fetch`
+#: would claim that web access when the call may have reached a database or
+#: artifact store instead.
 ACP_KIND_CLASSES: Mapping[str, str] = {
     "read": "other",
     "edit": "other",
@@ -179,7 +181,7 @@ ACP_KIND_CLASSES: Mapping[str, str] = {
     "search": "other",
     "execute": "shell",
     "think": "other",
-    "fetch": "web_fetch",
+    "fetch": "other",
     "switch_mode": "other",
     "other": "other",
 }

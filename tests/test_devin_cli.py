@@ -543,10 +543,11 @@ def test_a_tool_the_table_does_not_name_takes_the_kind_devin_declared(tmp_path: 
         ],
         {"c1": "execute", "c2": "fetch", "c3": "search", "c4": "read"},
     )
-    # ACP's `read` is "files or data", so it claims no file read.
+    # ACP's `read` is "files or data" and `fetch` is external data with no web
+    # of its own, so neither claims a file read or this repo's `web_fetch`.
     assert [c.tool_class for c in (shell, fetch, search, read, unknown)] == [
         "shell",
-        "web_fetch",
+        "other",
         "other",
         "other",
         None,
