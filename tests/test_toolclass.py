@@ -7,7 +7,7 @@ import pytest
 from openaidr.toolclass import (
     _ARGUMENT_KEYS,
     _CLASS_BY_NAME,
-    ACP_KIND_CLASSES,
+    ACP_TOOL_KINDS,
     CANONICAL_KEYS,
     TOOL_CLASSES,
     canonical_arguments,
@@ -16,20 +16,19 @@ from openaidr.toolclass import (
 )
 
 #: Every Agent Client Protocol `ToolKind` (agentclientprotocol/agent-client-protocol,
-#: `schema/v1/schema.json`), its definition there, and the class it may carry. A
-#: kind carries a capability only where its definition names one thing: "files
-#: or data" claims nothing narrower than `other`.
+#: `schema/v1/schema.json`). The schema says kinds exist so clients can "choose
+#: appropriate icons": a display hint, not a statement of what a tool touches.
 _ACP_KINDS = {
-    "read": ("Reading files or data.", "other"),
-    "edit": ("Modifying files or content.", "other"),
-    "delete": ("Removing files or data.", "other"),
-    "move": ("Moving or renaming files.", "file_write"),
-    "search": ("Searching for information.", "other"),
-    "execute": ("Running commands or code.", "shell"),
-    "think": ("Internal reasoning or planning.", "other"),
-    "fetch": ("Retrieving external data.", "other"),
-    "switch_mode": ("Switching the current session mode.", "other"),
-    "other": ("Other tool types (default).", "other"),
+    "read",
+    "edit",
+    "delete",
+    "move",
+    "search",
+    "execute",
+    "think",
+    "fetch",
+    "switch_mode",
+    "other",
 }
 
 
@@ -104,15 +103,16 @@ def test_claude_codes_monitor_is_a_shell_carrying_its_command() -> None:
     }
 
 
-def test_every_acp_tool_kind_has_a_class_in_the_vocabulary() -> None:
-    assert set(ACP_KIND_CLASSES) == set(_ACP_KINDS)
-    assert set(ACP_KIND_CLASSES.values()) <= TOOL_CLASSES - {"mcp"}
+def test_the_fallback_knows_every_acp_tool_kind() -> None:
+    assert ACP_TOOL_KINDS == _ACP_KINDS
 
 
 @pytest.mark.parametrize("kind", sorted(_ACP_KINDS))
-def test_each_acp_kind_claims_only_what_its_definition_names(kind: str) -> None:
-    definition, expected = _ACP_KINDS[kind]
-    assert class_of_acp_kind(kind) == expected, definition
+def test_an_acp_kind_says_the_call_is_the_agents_own_and_claims_no_capability(
+    kind: str,
+) -> None:
+    """A capability comes only from the name table (ADR-0025)."""
+    assert class_of_acp_kind(kind) == "other"
 
 
 def test_anything_acp_does_not_define_has_no_class() -> None:

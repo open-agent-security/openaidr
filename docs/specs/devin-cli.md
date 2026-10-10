@@ -54,7 +54,7 @@ Devin Desktop's local agent are one agent writing one store.*
 | `message_nodes` | `row_id` (autoincrement), `session_id`, `node_id` (unique per session), `parent_node_id`, `chat_message` (JSON), `created_at` (epoch seconds), `metadata` (JSON: `summarized_from`, `num_tokens_preceding`) |
 | `subagent_heads` | `session_id`, `agent_id`, `chain_node_id`, `updated_at`. Each sub-agent chain is "its own tree in the forest, unreachable from `sessions.main_chain_id`" (the migration's own comment) |
 | `prompt_history` | `content`, `timestamp`, `session_id`, `is_shell`: what a person typed, shell-mode lines marked |
-| `tool_call_state` | The final ACP `ToolCall` and `ToolCallUpdate` JSON per call, kept for resume. Only `ToolCall.kind` is read: the class a call the table does not name falls back to (ADR-0025) |
+| `tool_call_state` | The final ACP `ToolCall` and `ToolCallUpdate` JSON per call, kept for resume. Only `ToolCall.kind` is read: a call the table does not name is `other` when it has one (ADR-0025) |
 
 **`chat_message` fields**, by their names in the binary:
 
@@ -306,13 +306,11 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 | `mcp` | Any call with an `mcp_server` | Any call with an `mcp_server` | — |
 | `other` | `TodoWrite`, `ExitPlanMode`, `EnterPlanMode`, `AskUserQuestion`, `SlashCommand`, the MCP resource tools, `ToolSearch`, `TaskCreate`, `TaskOutput`, `TaskStop`, `SendMessage`, `ListAgents`, `SubagentHandback`, `Artifact`, `ReportFindings`, `SendUserFile` | `read_subagent`, `todo_write`, `exit_plan_mode`, `request_scope`, `mcp_list_servers`, `mcp_list_tools`, `mcp_read_resource` | — |
 
-A Devin call the table does not name takes the class of the ACP kind Devin
-declared for it in `tool_call_state` (ADR-0025): `move` is `file_write` and
-`execute` `shell`, and every other kind is `other`. ACP defines `read`, `edit`
-and `delete` over "files or data" and `search` over information anywhere, so
-they claim no file capability; `fetch` is "retrieving external data" with no
-web of its own, so it does not get this repository's `web_fetch`, which names
-only the URL-fetching tools (`WebFetch`, `webfetch`).
+A Devin call the table does not name is `other` when Devin declared an ACP
+kind for it in `tool_call_state` (ADR-0025): known to be Devin's own, with no
+capability claimed. ACP's kinds are icon hints whose definitions span "files or
+data", "commands or code" and "external data", so only the table gives a class
+like `file_read`, `shell` or `web_fetch`.
 A name the table does not hold and Devin declared nothing for gets `None`,
 never `other`: a tool added after the table was written is unknown, not
 ordinary. Devin Desktop bundles its own copy of the agent, which can be a
