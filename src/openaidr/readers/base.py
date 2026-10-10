@@ -52,6 +52,15 @@ class IncrementalReader(Protocol):
 
     def collect_file(self, path: Path) -> tuple[list[Session], list[ReaderFailure]]: ...
 
+    def locations(self) -> tuple[Path, ...]:
+        """The directories this kind's session files live under.
+
+        A watcher hands `collect_file` any file that changed beneath them, and
+        `collect_file` ignores one it does not read, so the caller needs no
+        knowledge of the kind's layout (ADR-0023).
+        """
+        ...
+
 
 def collect_from(
     readers: Sequence[Reader], window: Window

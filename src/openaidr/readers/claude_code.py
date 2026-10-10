@@ -569,6 +569,15 @@ class ClaudeCodeReader:
         failures.extend(self._transcript_failures)
         return sessions, failures
 
+    def locations(self) -> tuple[Path, ...]:
+        """The projects root: every transcript, a sub-agent's included, is beneath it.
+
+        The MCP connection logs are not: they are read again whenever a
+        transcript is, so a change to one alone surfaces on its session's
+        next read rather than through the watcher.
+        """
+        return (self._root,)
+
     def collect_file(self, path: Path) -> tuple[list[Session], list[ReaderFailure]]:
         """Read one growing transcript, projecting only complete appended records."""
         if not _is_transcript(path, self._root):

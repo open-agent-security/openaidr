@@ -56,9 +56,22 @@ class IncrementalCollector:
         self,
         root: Path | None = None,
         readers: Sequence[IncrementalReader] | None = None,
+        *,
+        devin_root: Path | None = None,
     ) -> None:
-        available = readers if readers is not None else default_incremental_readers(root)
+        available = (
+            readers if readers is not None else default_incremental_readers(root, devin_root)
+        )
         self._readers = {reader.agent_kind: reader for reader in available}
+
+    def locations(self) -> dict[str, tuple[Path, ...]]:
+        """Per agent kind, the directories its session files live under.
+
+        Everything a watcher needs to follow every kind this collector reads:
+        a file that changed beneath a kind's directories goes to `collect`
+        under that kind, which ignores a file the kind does not read.
+        """
+        return {kind: reader.locations() for kind, reader in self._readers.items()}
 
     def collect(self, agent_kind: str, path: Path) -> Collection:
         reader = self._readers.get(agent_kind)

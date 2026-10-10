@@ -392,6 +392,7 @@ the same per-kind rules as tool naming.
 | **In process, never through a file** | A serialize-and-reparse round trip adds latency to the path that most needs speed, and would write transcript content to disk that nothing else in this design does |
 | **Cold start: one full pass** | Held as a session map keyed by session identity |
 | **Steady state: one named file** | A long-lived `IncrementalCollector` retains an in-memory byte cursor and projection for each path a consumer reports as changed |
+| **Where to look: each reader's locations** | `IncrementalCollector.locations()` names, per kind, the directories its session files live under; a consumer watches them and reports each changed file, and a file the kind does not read is ignored. OpenAIDR watches nothing itself (ADR-0023) |
 | **Commit at newline boundaries** | A trailing partial JSON record is held until its terminating newline; truncation or inode replacement resets that file to a cold read |
 
 A full two-week pass is affordable once. Repeating it on every change is not — a
