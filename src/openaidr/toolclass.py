@@ -62,6 +62,22 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "SlashCommand": "other",
         "ListMcpResourcesTool": "other",
         "ReadMcpResourceTool": "other",
+        # Each seen in a real transcript. `Monitor` runs its `command` as a
+        # shell script and streams the output. `TaskOutput` and `TaskStop`
+        # reach a background agent as well as a shell, so they are not
+        # `shell_control`.
+        "Monitor": "shell",
+        "TaskOutput": "other",
+        "TaskStop": "other",
+        "TaskCreate": "other",
+        "ToolSearch": "other",
+        "EnterPlanMode": "other",
+        "SendMessage": "other",
+        "ListAgents": "other",
+        "SubagentHandback": "other",
+        "Artifact": "other",
+        "ReportFindings": "other",
+        "SendUserFile": "other",
     },
     # Devin CLI 3000.11.3's built-in tool names, as its binary declares them.
     "devin-cli": {
@@ -97,6 +113,7 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
 _ARGUMENT_KEYS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
     "claude-code": {
         "Bash": (("command", "command"),),
+        "Monitor": (("command", "command"),),
         "Read": (("path", "file_path"),),
         "NotebookRead": (("path", "notebook_path"),),
         "Grep": (("path", "path"),),

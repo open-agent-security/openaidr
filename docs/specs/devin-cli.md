@@ -291,7 +291,7 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 
 | Class | `claude-code` | `devin-cli` | Canonical keys (`devin-cli` source key) |
 |---|---|---|---|
-| `shell` | `Bash` | `exec` | `command` (`command`) |
+| `shell` | `Bash`, `Monitor` | `exec` | `command` (`command`) |
 | `shell_control` | `BashOutput`, `KillShell`, `KillBash` | `get_output`, `write_to_process`, `kill_shell` | — |
 | `file_read` | `Read`, `NotebookRead` | `read`, `notebook_read` | `path` (`file_path`, `notebook_path`) |
 | `file_search` | `Grep`, `Glob`, `LS` | `grep`, `glob` | — for `devin-cli` (schema keys unconfirmed) |
@@ -302,7 +302,7 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 | `delegate` | `Agent`, `Task` | `run_subagent` | `agent` for `claude-code`; none for `devin-cli` (M3) |
 | `skill` | `Skill` | `skill` | `skill` (`skill` or `name`) |
 | `mcp` | Any call with an `mcp_server` | Any call with an `mcp_server` | — |
-| `other` | `TodoWrite`, `ExitPlanMode`, `AskUserQuestion`, `SlashCommand`, the MCP resource tools | `read_subagent`, `todo_write`, `exit_plan_mode`, `request_scope`, `mcp_list_servers`, `mcp_list_tools`, `mcp_read_resource` | — |
+| `other` | `TodoWrite`, `ExitPlanMode`, `EnterPlanMode`, `AskUserQuestion`, `SlashCommand`, the MCP resource tools, `ToolSearch`, `TaskCreate`, `TaskOutput`, `TaskStop`, `SendMessage`, `ListAgents`, `SubagentHandback`, `Artifact`, `ReportFindings`, `SendUserFile` | `read_subagent`, `todo_write`, `exit_plan_mode`, `request_scope`, `mcp_list_servers`, `mcp_list_tools`, `mcp_read_resource` | — |
 
 A name in neither table gets `None`, never `other`: a tool added after the
 table was written is unknown, not ordinary.
