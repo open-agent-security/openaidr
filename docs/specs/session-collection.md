@@ -21,7 +21,7 @@ kind](#one-contract-per-agent-kind)).
 | **Agent formats** | Seven kinds parsed, of which this package instantiates **one** ([Agent kind coverage](#agent-kind-coverage)) | Nothing — this is why the dependency exists |
 | **Discovery** | A whole-tree pass keyed on the `sessionId` field | Which files exist, and which session each one *is* — the per-file call that keeps a subagent distinct from its parent |
 | **Span identity** | No identifier on a tool call | Derived from session, turn key and the call's index within that turn |
-| **Status** | `success` / `unknown`, per parser | `pending` from a missing result, `rejected` inferred from the refusal wording that survives in the result body |
+| **Status** | `success` / `unknown`, per parser | `pending` from a missing result, `rejected` from the record's `toolDenialKind` |
 | **MCP server** | Populated by some parsers, not all | Per-kind `(server, tool)` normalisation — the join key |
 | **Vocabulary** | Each agent's own name for itself | A mapping to this package's own agent kinds, with the agent's own name retained alongside it |
 
@@ -113,8 +113,8 @@ discards is stated rather than implied.
 | This model wants | Survives `adr-sensor` | What this package does |
 |---|---|---|
 | Per-turn time | No — one session-level timestamp, the earliest | **Modelled**, from each record's own timestamp, recovered in this package's own pass. Absent where a record carried no timestamp, or no identity for the join to land on. See ADR-0010 |
-| `rejected` | No — `toolDenialKind` and `is_error` are both dropped | **Inferred** from the refusal wording left in the result body: 88% of denials recovered at 97% precision, measured over real transcripts |
-| `error` | Only where a parser sets it; the Claude one does not | **Taken only from an explicit upstream status.** Inferring it from result text scored 70% recall at poor precision, and a false `error` maligns a tool that worked |
+| `rejected` | No — `toolDenialKind` and `is_error` are both dropped | **Read** from the record's `toolDenialKind` |
+| `error` | Only where a parser sets it; the Claude one does not | **Read** from `is_error` on the result block. Upstream's status is not a success signal |
 | `interrupted` | No | **Not emitted.** The `Status` type carries it for kinds that can supply it |
 | Span identity | No call id — but `sequence_id` carries the record's own key | **Derived** from session, turn key and index within the turn |
 | Sidechain marker | No | **Derived from the file's path**: a transcript under a `subagents` directory is a subagent's, and every turn in it is marked. *Proposed*: an `agent-<id>.jsonl` at any depth below it, which takes in a workflow's agents under `subagents/workflows/<run>/`; see [Token usage](token-usage.md#sub-agents-and-workflow-agents) |
@@ -165,43 +165,15 @@ package sees an event. Measured across 60 recent transcripts — 4,159 tool call
 | ~~**`project_path`**~~ — *closed* | The field exists in the shared schema and was simply left empty: upstream fixes it from whichever record first bore the session's id, and a transcript opening with a `queue-operation` carries none. 44 of 333 sessions lost a directory their later records stated — one of them 93 times | `cwd`, on every substantive record. **Recovered here; 44 sessions with no directory became 0** |
 | **A record's identity through projection** | Upstream builds `chat_history` from a strict subset of the file — a `system` boundary, an `attachment` and a `user` record carrying a tool result are all dropped — and carries nothing that says which records survived. Occurrence is a *position in a sequence*, so a recovery pass counting over every record and a turn counting over `chat_history` disagree the moment a uuid repeats, and the turn reads a key holding another record's call id, result, permission mode, directory and attribution | Nothing: the file cannot answer it, only upstream can. **Carried, not closed.** `_projects_to_message` restates upstream's own filter so both sides count the same population (ADR-0004). It is the one place this reader depends on upstream's *filtering* rather than its output, and an upstream change to it desynchronises the counters silently — a parser that carried the raw record identity through projection would let the restatement go |
 
-**Two rows are closed, and the first set the precedent.** `project_path` is reread from
-the transcript when upstream leaves it empty: one key, keyed by session id so a
-file holding two sessions cannot lend one's directory to the other, and read only
-for sessions upstream returned empty. What it recovers is the transcript's own
-recorded `cwd`, not an inference from it.
+`project_path` is reread from the transcript when upstream leaves it empty: one
+key, keyed by session id so a file holding two sessions cannot lend one's
+directory to the other, and read only for sessions upstream returned empty. What
+it recovers is the transcript's own recorded `cwd`, not an inference from it.
 
-`toolDenialKind` followed, for a stronger reason. That one was not a gap but a
-*wrong answer*: six English phrases stood in for a fact the record states
-outright, and matching them classified any document discussing approvals as a
-human refusal. Reading the field is exact where the phrases were 80% precise, and
-it recovers something the phrases could never express — `user-rejected`,
-`automode-blocked` and `permission-rule` are three different events, and a person
-declining is not an automated classifier blocking.
-
-Association is by whole result text, keyed within one transcript, because
-upstream drops the tool-use id that would otherwise match a refusal to its call.
-That is sound rather than convenient: across 21,874 results, 134 distinct refusal
-bodies and 17,604 clean ones share not one value, since a refusal body is
-generated boilerplate and not a tool's output. A refusal whose body upstream
-abridged cannot be matched — one of 433 on one machine — and is reported
-`unknown` rather than guessed at.
-
-**The remaining four rows are an open decision, not a settled plan.** What argues for
-closing them: `unknown` on every returned call is the single largest quality gap
-in this package's output, and `rejected` currently rests on six English phrases
-where the file states the fact outright. What argues against: reading these
-fields means holding per-format knowledge about Claude Code's JSONL inside a
-package whose whole shape came from delegating that, and a second reading of a
-file the dependency has already parsed can misjoin against the first.
-
-The cost is bounded and worth stating plainly, because "we cannot change
-upstream" is not the same as "we cannot have this". Both readings walk the same
-file; joining them on `tool_use.id` — carried on 100% of calls — is exactly the
-identity that makes a misjoin detectable rather than silent.
-
-Until that is decided this package reports what it can support and says `unknown`
-where it cannot, rather than filling a gap with a plausible value.
+`toolDenialKind` is read from the record. Six English phrases used to stand in
+for that fact, and matching them classified any document discussing approvals as
+a human refusal. The field is exact where the phrases were 80% precise, and it
+keeps `user-rejected`, `automode-blocked` and `permission-rule` apart.
 
 A recovered directory is not a live one. A session names where it *ran*, and a
 project can be renamed or deleted afterwards — 44 sessions on one machine name
