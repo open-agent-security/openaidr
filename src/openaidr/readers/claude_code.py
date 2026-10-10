@@ -123,14 +123,18 @@ def _is_subagent(path: Path, root: Path) -> bool:
 
 
 def _is_transcript(path: Path, root: Path) -> bool:
-    """Under `subagents/`, only `agent-<id>.jsonl` is a transcript.
+    """A transcript is a `.jsonl` file; under `subagents/`, only `agent-<id>.jsonl` is.
+
+    `_discover_transcripts` already filters to `*.jsonl` before calling this,
+    but `collect_file` takes any path a watcher hands it (ADR-0023), so the
+    suffix check has to live here too rather than being assumed.
 
     A workflow run also keeps a `journal.jsonl` there, which records the run,
     not a conversation.
     """
-    return not _is_subagent(path, root) or (
-        path.name.startswith("agent-") and path.suffix == ".jsonl"
-    )
+    if path.suffix != ".jsonl":
+        return False
+    return not _is_subagent(path, root) or path.name.startswith("agent-")
 
 
 #: What `toolDenialKind` says, mapped onto this package's vocabulary.
