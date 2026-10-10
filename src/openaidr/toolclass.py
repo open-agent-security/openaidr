@@ -80,7 +80,7 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "SendUserFile": "other",
     },
     # Devin CLI 3000.11.3's built-in tool names, as its binary declares them.
-    "devin-cli": {
+    "devin": {
         "exec": "shell",
         "get_output": "shell_control",
         "write_to_process": "shell_control",
@@ -127,7 +127,7 @@ _ARGUMENT_KEYS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "Task": (("agent", "subagent_type"),),
         "Skill": (("skill", "skill"),),
     },
-    "devin-cli": {
+    "devin": {
         "exec": (("command", "command"),),
         "read": (("path", "file_path"),),
         "notebook_read": (("path", "notebook_path"),),

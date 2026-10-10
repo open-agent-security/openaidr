@@ -1815,7 +1815,7 @@ def test_a_transcript_whose_mtime_cannot_be_converted_does_not_lose_the_others(
 
 
 def test_a_claude_code_call_carries_its_class_and_canonical_arguments(tmp_path: Path) -> None:
-    """The same vocabulary a `devin-cli` call carries, so a consumer reads one."""
+    """The same vocabulary a `devin` call carries, so a consumer reads one."""
     write_session(
         tmp_path,
         "-p",

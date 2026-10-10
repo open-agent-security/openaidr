@@ -593,12 +593,12 @@ def test_a_watcher_given_only_the_locations_finds_every_kinds_sessions(tmp_path:
                 assert collection.failures == [], path
                 found |= {s.session_id for s in collection.sessions}
 
-    assert found == {"claude-code:s1", "claude-code:s1:agent-abc", "devin-cli:otter"}
+    assert found == {"claude-code:s1", "claude-code:s1:agent-abc", "devin:otter"}
 
 
 def test_each_kinds_root_reaches_its_reader(tmp_path: Path) -> None:
     collector = IncrementalCollector(tmp_path / "claude", devin_root=tmp_path / "devin")
     assert collector.locations() == {
         "claude-code": (tmp_path / "claude",),
-        "devin-cli": ((tmp_path / "devin").resolve(),),
+        "devin": ((tmp_path / "devin").resolve(),),
     }

@@ -31,7 +31,7 @@ and results before OpenAIDR sees them.
 
 ## Agent kind coverage
 
-**Two kinds today: `claude-code` and `devin-cli`.** `default_readers()` returns
+**Two kinds today: `claude-code` and `devin`.** `default_readers()` returns
 one reader per kind, and `AGENT_KIND_BY_SOURCE` holds one row per kind. Devin
 CLI is read by an OpenAIDR-owned reader, not through the dependency; its design
 is [Devin CLI](devin-cli.md). Every other agent kind is **not read at all** —
