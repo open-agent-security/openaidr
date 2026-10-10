@@ -317,6 +317,10 @@ ordinary. Devin Desktop bundles its own copy of the agent, which can be a
 different version from the CLI writing the same store, so the two can use tool
 names the other does not; the declared kind covers both.
 
+A `mcp_call_tool` whose arguments do not recover a `server_name` and
+`tool_name` is still known to be MCP, just not which call; it keeps `None`
+rather than the declared kind's `other`, the wrong kind of unknown.
+
 ## Coverage by agent kind
 
 **Recorded** means a confirmed source; **Partial**, a source with a named

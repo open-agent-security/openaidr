@@ -551,8 +551,10 @@ class DevinCliReader:
                 )
                 arguments = {}
             server, tool = split_tool_name(self.agent_kind, name)
+            unresolved_mcp = False
             if server is None and name == _GENERIC_MCP:
                 server, tool = _generic_mcp(arguments, name)
+                unresolved_mcp = server is None
             outcome = results.get(call_id) if call_id else None
             meta = _result_meta(outcome) if outcome is not None else {}
             body = _text(outcome.message.get("content")) if outcome is not None else None
@@ -572,7 +574,12 @@ class DevinCliReader:
                     denial_kind=denial,
                     working_directory=_string(meta.get("cwd")),
                     transport=transports.get(server) if server is not None else None,
-                    tool_class=tool_class(self.agent_kind, tool, server)
+                    # An unresolved mcp_call_tool is known to be an MCP call, just not
+                    # which one; an ACP kind would call it `other`, the wrong kind of
+                    # unknown, so it stays unclassified like any other missing name.
+                    tool_class=None
+                    if unresolved_mcp
+                    else tool_class(self.agent_kind, tool, server)
                     or (class_of_acp_kind(acp_kinds.get(call_id)) if call_id else None),
                     canonical_arguments=canonical_arguments(
                         self.agent_kind, tool, server, arguments

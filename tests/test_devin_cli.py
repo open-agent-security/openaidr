@@ -717,6 +717,16 @@ def test_the_generic_mcp_tool_recovers_its_server_and_tool(tmp_path: Path) -> No
     assert one.arguments == arguments
 
 
+def test_an_unresolved_generic_mcp_call_stays_unclassified(tmp_path: Path) -> None:
+    """A malformed `mcp_call_tool` is known to be MCP; a declared ACP kind must not
+    relabel it `other`, the wrong kind of unknown."""
+    arguments = {"arguments": {"q": "x"}}
+    [one] = _declared_calls(
+        tmp_path / "cli", [call("c1", "mcp_call_tool", arguments)], {"c1": "execute"}
+    )
+    assert (one.mcp_server, one.tool_name, one.tool_class) == (None, "mcp_call_tool", None)
+
+
 @pytest.mark.parametrize(
     ("name", "arguments", "tool_class", "canonical"),
     [
