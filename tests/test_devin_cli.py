@@ -532,19 +532,22 @@ def _declared_calls(root: Path, calls: list[dict], kinds: dict[str, str]) -> lis
 
 
 def test_a_tool_the_table_does_not_name_takes_the_kind_devin_declared(tmp_path: Path) -> None:
-    shell, fetch, search, unknown = _declared_calls(
+    shell, fetch, search, read, unknown = _declared_calls(
         tmp_path / "cli",
         [
             call("c1", "shell_command", {"command": "ls"}, 0),
             call("c2", "browser_preview", {"url": "http://x"}, 1),
             call("c3", "semantic_search", {"query": "x"}, 2),
-            call("c4", "brand_new", {}, 3),
+            call("c4", "query_table", {"table": "t"}, 3),
+            call("c5", "brand_new", {}, 4),
         ],
-        {"c1": "execute", "c2": "fetch", "c3": "search"},
+        {"c1": "execute", "c2": "fetch", "c3": "search", "c4": "read"},
     )
-    assert [c.tool_class for c in (shell, fetch, search, unknown)] == [
+    # ACP's `read` is "files or data", so it claims no file read.
+    assert [c.tool_class for c in (shell, fetch, search, read, unknown)] == [
         "shell",
         "web_fetch",
+        "other",
         "other",
         None,
     ]

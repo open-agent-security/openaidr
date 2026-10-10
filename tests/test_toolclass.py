@@ -15,19 +15,21 @@ from openaidr.toolclass import (
     tool_class,
 )
 
-#: The Agent Client Protocol's `ToolKind`, schema v1
-#: (agentclientprotocol/agent-client-protocol, `schema/v1/schema.json`).
-_ACP_TOOL_KINDS = {
-    "read",
-    "edit",
-    "delete",
-    "move",
-    "search",
-    "execute",
-    "think",
-    "fetch",
-    "switch_mode",
-    "other",
+#: Every Agent Client Protocol `ToolKind` (agentclientprotocol/agent-client-protocol,
+#: `schema/v1/schema.json`), its definition there, and the class it may carry. A
+#: kind carries a capability only where its definition names one thing: "files
+#: or data" claims nothing narrower than `other`.
+_ACP_KINDS = {
+    "read": ("Reading files or data.", "other"),
+    "edit": ("Modifying files or content.", "other"),
+    "delete": ("Removing files or data.", "other"),
+    "move": ("Moving or renaming files.", "file_write"),
+    "search": ("Searching for information.", "other"),
+    "execute": ("Running commands or code.", "shell"),
+    "think": ("Internal reasoning or planning.", "other"),
+    "fetch": ("Retrieving external data.", "web_fetch"),
+    "switch_mode": ("Switching the current session mode.", "other"),
+    "other": ("Other tool types (default).", "other"),
 }
 
 
@@ -103,13 +105,14 @@ def test_claude_codes_monitor_is_a_shell_carrying_its_command() -> None:
 
 
 def test_every_acp_tool_kind_has_a_class_in_the_vocabulary() -> None:
-    assert set(ACP_KIND_CLASSES) == _ACP_TOOL_KINDS
+    assert set(ACP_KIND_CLASSES) == set(_ACP_KINDS)
     assert set(ACP_KIND_CLASSES.values()) <= TOOL_CLASSES - {"mcp"}
 
 
-def test_acp_search_claims_no_capability() -> None:
-    """ACP's `search` covers searching files and searching the web."""
-    assert class_of_acp_kind("search") == "other"
+@pytest.mark.parametrize("kind", sorted(_ACP_KINDS))
+def test_each_acp_kind_claims_only_what_its_definition_names(kind: str) -> None:
+    definition, expected = _ACP_KINDS[kind]
+    assert class_of_acp_kind(kind) == expected, definition
 
 
 def test_anything_acp_does_not_define_has_no_class() -> None:

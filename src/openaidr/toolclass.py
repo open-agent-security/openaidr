@@ -164,14 +164,17 @@ def tool_class(agent_kind: str | None, tool_name: str, mcp_server: str | None) -
 
 #: The Agent Client Protocol's tool kinds (`ToolKind`, schema v1), as an agent
 #: speaking ACP declares one for each call, to the class each means. A call the
-#: table above does not name falls back to this (ADR-0025). Only a kind that says
-#: one thing carries a class with a capability behind it: `search` is ACP's word
-#: for searching files *and* the web, so it is `other`, which still says the call
-#: is the agent's own without claiming where it reached.
+#: table above does not name falls back to this (ADR-0025). A kind carries a class
+#: with a capability behind it only where ACP's definition names one thing:
+#: `move` ("Moving or renaming files"), `execute` ("Running commands or code")
+#: and `fetch` ("Retrieving external data"). `read`, `edit` and `delete` are
+#: defined over "files or data" and `search` over information anywhere, so each
+#: is `other`, which still says the call is the agent's own without claiming
+#: what it touched.
 ACP_KIND_CLASSES: Mapping[str, str] = {
-    "read": "file_read",
-    "edit": "file_edit",
-    "delete": "file_write",
+    "read": "other",
+    "edit": "other",
+    "delete": "other",
     "move": "file_write",
     "search": "other",
     "execute": "shell",
