@@ -1,9 +1,11 @@
 # OpenAIDR — Devin CLI
 
-*Implemented (2026-10-09). A second agent kind, `devin-cli`, with an
+*Implemented (2026-10-09). A second agent kind, `devin`, with an
 OpenAIDR-owned reader (`readers/devin_cli.py`, `readers/devin_cli_log.py`).
 Extends [Session collection](session-collection.md) and
-[Token usage](token-usage.md). Decisions: ADR-0018 to ADR-0022.*
+[Token usage](token-usage.md). Decisions: ADR-0018 to ADR-0022, and ADR-0024
+for the kind's name: `devin` rather than `devin-cli`, because Devin CLI and
+Devin Desktop's local agent are one agent writing one store.*
 
 ## At a glance
 
@@ -85,8 +87,8 @@ Extends [Session collection](session-collection.md) and
 
 | Level | Identity |
 |---|---|
-| Main session | `devin-cli:<sessions.id>`. The slug is unique in the store |
-| Sub-agent session | `devin-cli:<sessions.id>:<subagent_heads.agent_id>` (ADR-0001's `<kind>:<parent>:<stem>`). All its turns and responses are `is_sidechain` |
+| Main session | `devin:<sessions.id>`. The slug is unique in the store |
+| Sub-agent session | `devin:<sessions.id>:<subagent_heads.agent_id>` (ADR-0001's `<kind>:<parent>:<stem>`). All its turns and responses are `is_sidechain` |
 | Turn | `key` is the `node_id`; `position` is the index among turns along the chain |
 | Span | `span_id(session_id, node_id, call_index)`, the index being the call's position in its node's `tool_calls` |
 
@@ -271,7 +273,7 @@ ADR-0011's discipline, applied to a database (ADR-0018):
 | `collect_file(path)` | Any path under the data root that can change a session: `sessions.db`, `sessions.db-wal` (a WAL commit changes only `-wal`), a run log, a session lock. Every session is rebuilt; those whose digest differs are returned. Any other path: nothing |
 | The invariant | After any event, a consumer that replaced the sessions returned holds exactly what a cold read returns. One session's lock changes another's placement, so outputs are compared rather than inputs traced (ADR-0018) |
 | Replaced store | Needs no special case: content that differs is returned, identical content is not |
-| Between reads | Responses replace by `(session, response_id)`. **Turns can disappear on regeneration**, so a consumer replaces a `devin-cli` session's turns wholesale |
+| Between reads | Responses replace by `(session, response_id)`. **Turns can disappear on regeneration**, so a consumer replaces a `devin` session's turns wholesale |
 
 ## Model additions
 
@@ -289,17 +291,17 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 
 **`tool_class` and canonical keys:**
 
-| Class | `claude-code` | `devin-cli` | Canonical keys (`devin-cli` source key) |
+| Class | `claude-code` | `devin` | Canonical keys (`devin` source key) |
 |---|---|---|---|
 | `shell` | `Bash`, `Monitor` | `exec` | `command` (`command`) |
 | `shell_control` | `BashOutput`, `KillShell`, `KillBash` | `get_output`, `write_to_process`, `kill_shell` | — |
 | `file_read` | `Read`, `NotebookRead` | `read`, `notebook_read` | `path` (`file_path`, `notebook_path`) |
-| `file_search` | `Grep`, `Glob`, `LS` | `grep`, `glob` | — for `devin-cli` (schema keys unconfirmed) |
+| `file_search` | `Grep`, `Glob`, `LS` | `grep`, `glob` | — for `devin` (schema keys unconfirmed) |
 | `file_write` | `Write` | `write` | `path`, `content` (`file_path`, `content`) |
 | `file_edit` | `Edit`, `MultiEdit`, `NotebookEdit` | `edit`, `apply_patch`, `notebook_edit` | `path`, `new_text` (`file_path`, `new_string`); none for `apply_patch` (M3) |
 | `web_fetch` | `WebFetch` | `webfetch` | `url` (`url`) |
 | `web_search` | `WebSearch` | — | — |
-| `delegate` | `Agent`, `Task` | `run_subagent` | `agent` for `claude-code`; none for `devin-cli` (M3) |
+| `delegate` | `Agent`, `Task` | `run_subagent` | `agent` for `claude-code`; none for `devin` (M3) |
 | `skill` | `Skill` | `skill` | `skill` (`skill` or `name`) |
 | `mcp` | Any call with an `mcp_server` | Any call with an `mcp_server` | — |
 | `other` | `TodoWrite`, `ExitPlanMode`, `EnterPlanMode`, `AskUserQuestion`, `SlashCommand`, the MCP resource tools, `ToolSearch`, `TaskCreate`, `TaskOutput`, `TaskStop`, `SendMessage`, `ListAgents`, `SubagentHandback`, `Artifact`, `ReportFindings`, `SendUserFile` | `read_subagent`, `todo_write`, `exit_plan_mode`, `request_scope`, `mcp_list_servers`, `mcp_list_tools`, `mcp_read_resource` | — |
@@ -313,7 +315,7 @@ table was written is unknown, not ordinary.
 loss; **Unconfirmed**, a source in the binary not yet seen in a signed-in
 session; **Absent**, no source.
 
-| Field | `claude-code` | `devin-cli` |
+| Field | `claude-code` | `devin` |
 |---|---|---|
 | Session identity, start, last activity | Recorded | Recorded (seconds) |
 | Model, per response | Recorded | Recorded |

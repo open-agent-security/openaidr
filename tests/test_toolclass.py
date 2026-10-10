@@ -27,16 +27,14 @@ def test_every_canonical_key_is_in_the_vocabulary_and_its_tool_is_classed(kind: 
 
 
 def test_both_kinds_class_their_shell_alike() -> None:
-    assert (
-        tool_class("claude-code", "Bash", None) == tool_class("devin-cli", "exec", None) == "shell"
-    )
+    assert tool_class("claude-code", "Bash", None) == tool_class("devin", "exec", None) == "shell"
     assert canonical_arguments("claude-code", "Bash", None, {"command": "ls"}) == {"command": "ls"}
-    assert canonical_arguments("devin-cli", "exec", None, {"command": "ls"}) == {"command": "ls"}
+    assert canonical_arguments("devin", "exec", None, {"command": "ls"}) == {"command": "ls"}
 
 
 def test_a_file_write_carries_path_and_content_for_both_kinds() -> None:
     claude = canonical_arguments("claude-code", "Write", None, {"file_path": "/a", "content": "x"})
-    devin = canonical_arguments("devin-cli", "write", None, {"file_path": "/a", "content": "x"})
+    devin = canonical_arguments("devin", "write", None, {"file_path": "/a", "content": "x"})
     assert claude == devin == {"path": "/a", "content": "x"}
 
 
@@ -47,12 +45,12 @@ def test_any_call_with_a_server_is_mcp_and_has_no_canonical_arguments() -> None:
 
 def test_an_unknown_name_or_kind_is_unclassed_never_other() -> None:
     assert tool_class("claude-code", "BrandNewTool", None) is None
-    assert tool_class("devin-cli", "Bash", None) is None
+    assert tool_class("devin", "Bash", None) is None
     assert tool_class(None, "Bash", None) is None
 
 
 def test_a_key_the_call_did_not_record_is_absent() -> None:
-    assert canonical_arguments("devin-cli", "edit", None, {"file_path": "/a"}) == {"path": "/a"}
+    assert canonical_arguments("devin", "edit", None, {"file_path": "/a"}) == {"path": "/a"}
 
 
 #: Claude Code built-ins seen in real transcripts after the table was first

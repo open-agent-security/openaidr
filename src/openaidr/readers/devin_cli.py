@@ -136,7 +136,7 @@ class _Store:
 class DevinCliReader:
     """Reads Devin CLI sessions from `sessions.db` and places run-log facts on them."""
 
-    agent_kind = "devin-cli"
+    agent_kind = "devin"
 
     def __init__(self, root: Path | None = None) -> None:
         self._root = (root if root is not None else default_root()).resolve()
