@@ -12,29 +12,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Skip the gates on chore/setup PRs that don't have Python sources yet.
-      # Without this, `uv sync --frozen` fails on a clean repo because there's
-      # no pyproject.toml/uv.lock to install from. Once the first pyproject.toml
-      # lands, the rest of the workflow runs.
-      # Runs unconditionally, before the project gate below: the rule it
-      # enforces ("OpenAIDR installs and runs correctly for someone who has
-      # never heard of any consumer of it") applies to docs and config just as
-      # much as to Python sources, and those exist even on a chore PR.
+      # The rule this enforces ("OpenAIDR installs and runs correctly for
+      # someone who has never heard of any consumer of it") applies to docs
+      # and config just as much as to Python sources, so it runs before the
+      # Python gates and does not depend on a synced environment.
       - name: No proprietary references
         run: bash scripts/check-no-proprietary.sh
 
-      - id: project_check
-        name: Detect Python project files
-        run: |
-          if [ -f pyproject.toml ] && [ -f uv.lock ]; then
-            echo "have_project=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "have_project=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No pyproject.toml + uv.lock yet — skipping lint/test gates."
-          fi
-
       - name: Install uv
-        if: steps.project_check.outputs.have_project == 'true'
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -45,7 +30,6 @@ jobs:
           python-version: "3.11"
 
       - name: Sync deps
-        if: steps.project_check.outputs.have_project == 'true'
         # `--frozen` forbids re-resolution: CI installs exactly what's in the
         # committed uv.lock instead of silently picking up newer transitive
         # versions. If uv.lock is missing or stale vs. pyproject.toml, this
@@ -53,17 +37,13 @@ jobs:
         run: uv sync --frozen
 
       - name: Lint (ruff check)
-        if: steps.project_check.outputs.have_project == 'true'
         run: uv run ruff check .
 
       - name: Format check (ruff format)
-        if: steps.project_check.outputs.have_project == 'true'
         run: uv run ruff format --check .
 
       - name: Type check (pyright)
-        if: steps.project_check.outputs.have_project == 'true'
         run: uv run pyright
 
       - name: Tests (pytest)
-        if: steps.project_check.outputs.have_project == 'true'
         run: uv run pytest -q
