@@ -48,7 +48,7 @@ from openaidr.model import (
 )
 from openaidr.readers.base import ReaderFailure, Window
 from openaidr.readers.devin_cli_log import LOCKS, LOGS, Placement, RunLogs
-from openaidr.toolclass import canonical_arguments, tool_class
+from openaidr.toolclass import canonical_arguments, class_of_acp_kind, tool_class
 from openaidr.toolnames import split_tool_name
 
 SOURCE = "devin"
@@ -131,6 +131,10 @@ class _Store:
     prompts: dict[str, str]
     subagents_recorded: bool
     failures: list[str] = field(default_factory=list)
+    #: The ACP tool kind Devin declared for each call, by session and call id
+    #: (`tool_call_state`). The class a call the table does not name falls
+    #: back to (ADR-0025).
+    acp_kinds: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 class DevinCliReader:
@@ -327,6 +331,16 @@ class DevinCliReader:
                 "SELECT session_id, content FROM prompt_history WHERE is_shell = 0 ORDER BY id"
             ):
                 prompts.setdefault(session_id, content)
+        # Only the declared `kind` is read: the rest of the record is the
+        # client's view of the call, kept by Devin for resuming a session.
+        acp_kinds: dict[str, dict[str, str]] = {}
+        if {"session_id", "tool_call_id", "tool_call_json"} <= tables.get("tool_call_state", set()):
+            for session_id, call_id, raw in db.execute(
+                "SELECT session_id, tool_call_id, tool_call_json FROM tool_call_state"
+            ):
+                declared = _json_object(raw).get("kind")
+                if isinstance(declared, str):
+                    acp_kinds.setdefault(session_id, {})[call_id] = declared
         return _Store(
             rows=rows,
             nodes=nodes,
@@ -334,6 +348,7 @@ class DevinCliReader:
             prompts=prompts,
             subagents_recorded="subagent_heads" in tables,
             failures=failures,
+            acp_kinds=acp_kinds,
         )
 
     # --- sessions ------------------------------------------------------------
@@ -472,6 +487,7 @@ class DevinCliReader:
                         # on, so an unmatched sibling is still pending.
                         at_tip=all(n.role == "tool" for n in chain[position + 1 :]),
                         transports=transports,
+                        acp_kinds=store.acp_kinds.get(row.id, {}),
                         failures=failures,
                     ),
                     occurred_at=node.at,
@@ -514,6 +530,7 @@ class DevinCliReader:
         *,
         at_tip: bool,
         transports: Mapping[str, str | None],
+        acp_kinds: Mapping[str, str],
         failures: list[ReaderFailure],
     ) -> tuple[ToolCall, ...]:
         raw_calls = node.message.get("tool_calls")
@@ -555,7 +572,8 @@ class DevinCliReader:
                     denial_kind=denial,
                     working_directory=_string(meta.get("cwd")),
                     transport=transports.get(server) if server is not None else None,
-                    tool_class=tool_class(self.agent_kind, tool, server),
+                    tool_class=tool_class(self.agent_kind, tool, server)
+                    or (class_of_acp_kind(acp_kinds.get(call_id)) if call_id else None),
                     canonical_arguments=canonical_arguments(
                         self.agent_kind, tool, server, arguments
                     ),
