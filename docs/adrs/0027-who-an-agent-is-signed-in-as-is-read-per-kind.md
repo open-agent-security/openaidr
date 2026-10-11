@@ -46,7 +46,11 @@ learns Claude Code's first and the others never.
    - The suffix is `-custom-oauth` when `CLAUDE_CODE_CUSTOM_OAUTH_URL` is
      set, else empty. Claude Code's staging and local suffixes are not
      reachable in a shipped build, whose environment is fixed to `prod`.
-   - A legacy `.config.json` in the directory wins over either.
+   - A legacy `.config.json` in the directory wins over either whenever
+     anything is there, as Node's `existsSync` tests it: a directory counts,
+     a broken symlink does not, and a path that cannot be told does not. A
+     chosen legacy path that is not a readable record is no account, never
+     a fallback to the other file.
    - The legacy file is looked for in the configuration directory normalised
      to NFC, and the other file in the directory as given, exactly as Claude
      Code does.

@@ -205,7 +205,7 @@ def _claude_record(config_dir: Path | None, home: Path) -> Path:
     named, by `CLAUDE_CONFIG_DIR` or by the caller, even when it names
     `~/.claude`; else `~/.claude.json`."""
     legacy, modern = _claude_paths(config_dir, home)
-    return legacy if _is_file(legacy) else modern
+    return legacy if _exists(legacy) else modern
 
 
 def _claude_paths(config_dir: Path | None, home: Path) -> tuple[Path, Path]:
@@ -234,6 +234,17 @@ def _is_file(path: Path) -> bool:
     `existsSync`, answers false there too."""
     try:
         return path.is_file()
+    except OSError:
+        return False
+
+
+def _exists(path: Path) -> bool:
+    """Node's `existsSync`: anything at `path`, a directory included, through
+    symlinks; False where it cannot be told. Claude Code chooses its legacy
+    file this way, so a directory there is chosen too, and reads as no
+    account."""
+    try:
+        return path.exists()
     except OSError:
         return False
 
