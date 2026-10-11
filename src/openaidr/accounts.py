@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -220,7 +221,10 @@ def _claude_paths(config_dir: Path | None, home: Path) -> tuple[Path, Path]:
     # every shipped build otherwise (ADR-0027 clause 3).
     suffix = "-custom-oauth" if os.environ.get("CLAUDE_CODE_CUSTOM_OAUTH_URL") else ""
     modern = (named if named is not None else home) / f".claude{suffix}.json"
-    return root / ".config.json", modern
+    # Claude Code looks for the legacy file in its configuration directory
+    # normalised to NFC, and for the other file in the directory as given.
+    legacy = Path(unicodedata.normalize("NFC", str(root))) / ".config.json"
+    return legacy, modern
 
 
 def _named_dir(variable: str) -> Path | None:
