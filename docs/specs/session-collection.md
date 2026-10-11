@@ -464,25 +464,25 @@ a gap.
 ## Who is signed in
 
 No transcript records who an agent was signed in as, so a consumer that ties work
-or spend to a person asks while the work runs: `openaidr.accounts.signed_in(kind)`
-reads the kind's own sign-in record, once, and returns an `Account` or None
-(ADR-0027).
+or spend to a person asks while the work runs. `openaidr.accounts.signed_in(kind)`
+reads the kind's own sign-in record once and returns an `Account` or None
+(ADR-0027). It answers for the kinds whose sessions this package reads, and
+for no other.
 
 | Kind | Read from | Answer |
 |---|---|---|
-| `claude-code` | `oauthAccount` in `~/.claude.json` (inside `CLAUDE_CONFIG_DIR` when set; a legacy `.config.json` wins) | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
-| `codex` | the identity token's payload in `~/.codex/auth.json` (or `CODEX_HOME`); nothing else in the file. Only where Codex's configured store keeps the sign-in there: ADR-0027 clause 5 holds the boundary | `chatgpt_user_id`, else `user_id` (neither is no account); `name`; `email`, else the profile claim's; `chatgpt_plan_type`; None when signed in with an API key, or when the store keeps the sign-in off disk |
-| `devin` | nothing on disk names the person | None. `sign_in_query("devin")` gives Devin's own `devin auth status`, which asks Devin's server, found under `$XDG_DATA_HOME/devin/cli`, else on `PATH`, else in Devin Desktop. Its `read` returns `User ID`, `Name`, `Email` and `Plan`, or None offline or signed out. This package never runs it, and never opens `credentials.toml` |
+| `claude-code` | `oauthAccount` in `.claude.json`: inside the configuration directory when `CLAUDE_CONFIG_DIR` (or the caller) names one, else `~/.claude.json`; a legacy `.config.json` in the directory wins | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
+| `devin` | nothing on disk names the person | None. `sign_in_query("devin")` gives Devin's own `devin auth status` (binary under `$XDG_DATA_HOME/devin/cli`, else on `PATH`, else in Devin Desktop), which asks Devin's server. Its `read` returns `User ID`, `Name`, `Email` and `Plan`, or None when no `User ID` is printed. This package never runs it and never opens `credentials.toml` |
+| any other | — | None |
 
-`display_name` and `email` are `LOCAL_ONLY`. Reading a kind's sign-in record adds
-no session coverage: `codex` is answered here before its sessions are read.
+`display_name` and `email` are `LOCAL_ONLY`. Reading a sign-in adds no session
+coverage.
 
 `openaidr.accounts.sign_in_records(kind)` names every file whose change can
-change the answer, existing or not: Claude Code's legacy `.config.json` and
-the file it falls back to; Codex's `config.toml` and `auth.json`, whatever
-the store; and Devin's `credentials.toml` (ADR-0027 clause 7). A consumer
-asks again when any of them changes, so a consumer that
-asks Devin does so once per sign-in, not on every pass.
+change the answer, existing or not: Claude Code's legacy `.config.json` and its
+`.claude.json`, and Devin's `credentials.toml` (ADR-0027 clause 5). A consumer
+asks again when any of them changes, so a consumer that asks Devin does so once
+per sign-in, not on every pass.
 
 ## What this component does not know
 
