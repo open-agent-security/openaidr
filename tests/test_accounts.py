@@ -175,17 +175,6 @@ def test_codex_signed_in_with_chatgpt_names_the_person_from_its_identity_token(
     )
 
 
-def test_codex_falls_back_to_the_tokens_subject_for_its_account_id(tmp_path: Path) -> None:
-    home = _home(tmp_path)
-    (home / ".codex").mkdir()
-    claims: dict[str, object] = {"sub": "auth0|abc", "email": "jane.doe@example.com"}
-    (home / ".codex" / "auth.json").write_text(json.dumps(_codex_auth(claims)), "utf-8")
-
-    found = signed_in("codex", home=home)
-
-    assert found is not None and (found.account_id, found.plan) == ("auth0|abc", None)
-
-
 def test_codex_reads_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = _home(tmp_path)
     moved = tmp_path / "codex-home"
@@ -586,11 +575,19 @@ def test_a_profile_choosing_a_store_is_outside_the_boundary(
             "a@x.com",
         ),
         ({"sub": "s", _AUTH: {"user_id": "u"}}, "u", None),
-        ({"sub": "s", _AUTH: {}}, "s", None),
-        ({"sub": "s", _PROFILE: {"email": "p@x.com"}}, "s", "p@x.com"),
-        ({"sub": "s", "email": "a@x.com", _PROFILE: {"email": "p@x.com"}}, "s", "a@x.com"),
+        ({"sub": "s", _AUTH: {"user_id": "u"}, _PROFILE: {"email": "p@x.com"}}, "u", "p@x.com"),
+        (
+            {
+                "sub": "s",
+                "email": "a@x.com",
+                _AUTH: {"user_id": "u"},
+                _PROFILE: {"email": "p@x.com"},
+            },
+            "u",
+            "a@x.com",
+        ),
     ],
-    ids=["chatgpt-user-id", "user-id", "sub", "profile-email", "top-level-email-wins"],
+    ids=["chatgpt-user-id", "user-id", "profile-email", "top-level-email-wins"],
 )
 def test_codex_is_read_as_codex_reads_its_own_token(
     tmp_path: Path,
@@ -687,3 +684,101 @@ def test_codex_names_a_person_only_when_it_signs_in_with_chatgpt(
 
     assert (found is not None) == named
     assert "SECRET" not in repr(found)
+
+
+# --- the codex reader reads only what codex defines --------------------------
+
+#: Every key Codex's own code reads from the files this reader reads, as of
+#: Codex `main` on 2026-10-11: `config.toml`'s `cli_auth_credentials_store`;
+#: `AuthDotJson` (`login/src/auth/manager.rs`, with `resolved_mode`'s fields);
+#: and `IdClaims`, `AuthClaims` and `ProfileClaims`
+#: (`login/src/token_data.rs`, `parse_chatgpt_jwt_claims`).
+_CODEX_DEFINES = frozenset(
+    {
+        "cli_auth_credentials_store",
+        "auth_mode",
+        "tokens",
+        "id_token",
+        "OPENAI_API_KEY",
+        "personal_access_token",
+        "bedrock_api_key",
+        "bedrock_access_keys",
+        "chatgpt_user_id",
+        "user_id",
+        "chatgpt_plan_type",
+        "email",
+    }
+)
+
+#: Read beyond what Codex defines, each with why it cannot split or invent an
+#: identity.
+_READ_FOR_DISPLAY_ONLY = {
+    "name": "The OpenID `name` claim the token carries. A display name only; "
+    "it never identifies the account.",
+}
+
+
+def _codex_keys_read() -> set[str]:
+    """Every string key the Codex reader passes to `.get`, or lists as a field
+    it checks, in `accounts.py`."""
+    import ast
+
+    tree = ast.parse(Path(accounts.__file__).read_text(encoding="utf-8"))
+    keys: set[str] = set()
+    for node in tree.body:
+        named = getattr(node, "name", None) or next(
+            (t.id for t in getattr(node, "targets", []) if isinstance(t, ast.Name)), ""
+        )
+        if not named.lower().startswith(("_codex", "codex")):
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr == "get"
+                and inner.args
+                and isinstance(inner.args[0], ast.Constant)
+                and isinstance(inner.args[0].value, str)
+            ):
+                keys.add(inner.args[0].value)
+        if named == "_CODEX_NON_CHATGPT_FIELDS":
+            keys |= {
+                c.value
+                for c in ast.walk(node)
+                if isinstance(c, ast.Constant) and isinstance(c.value, str)
+            }
+    return keys
+
+
+def test_the_codex_reader_reads_only_what_codex_itself_defines() -> None:
+    """Four review rounds found one class: this reader taking a Codex field
+    Codex does not read (`sub` as the account), or reading one Codex reads in
+    another order. Mirroring Codex's own types (ADR-0027 clause 5) is held
+    here for every key at once: a key Codex does not define fails, unless it
+    is for display only and says why."""
+    unexplained = _codex_keys_read() - _CODEX_DEFINES - set(_READ_FOR_DISPLAY_ONLY)
+
+    assert not unexplained, (
+        f"the Codex reader reads {sorted(unexplained)}, which Codex itself does "
+        "not; mirror Codex's own reading, or list it as display only with why"
+    )
+
+
+def test_the_codex_key_scan_sees_the_reader() -> None:
+    """The scan above passes vacuously if it finds nothing."""
+    assert {"chatgpt_user_id", "auth_mode", "cli_auth_credentials_store"} <= _codex_keys_read()
+
+
+def test_a_codex_token_with_no_user_claim_names_no_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex reads no user claim but `chatgpt_user_id` and `user_id`. A token
+    with only `sub` names no account Codex would recognise."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text(
+        json.dumps(_codex_auth({"sub": "s", "email": "a@x.com", _AUTH: {}})), "utf-8"
+    )
+
+    assert signed_in("codex", home=home) is None
