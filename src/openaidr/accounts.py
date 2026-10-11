@@ -88,7 +88,9 @@ def _codex(config_dir: Path | None, home: Path) -> Account | None:
     if record is None:
         return None
     document = _json(record)
-    tokens = document.get("tokens") if isinstance(document, dict) else None
+    if not isinstance(document, dict) or not _codex_signs_in_with_chatgpt(document):
+        return None
+    tokens = document.get("tokens")
     id_token = tokens.get("id_token") if isinstance(tokens, dict) else None
     claims = _token_claims(id_token)
     auth = _strings(claims.get(_OPENAI_AUTH_CLAIM))
@@ -108,6 +110,28 @@ def _codex(config_dir: Path | None, home: Path) -> Account | None:
         email=names.get("email") or profile.get("email"),
         plan=auth.get("chatgpt_plan_type"),
     )
+
+
+#: Fields of Codex's `auth.json` that, present without an explicit
+#: `auth_mode`, make Codex sign in with something other than ChatGPT, in
+#: Codex's own order (`resolved_mode`).
+_CODEX_NON_CHATGPT_FIELDS = (
+    "personal_access_token",
+    "bedrock_api_key",
+    "bedrock_access_keys",
+    "OPENAI_API_KEY",
+)
+
+
+def _codex_signs_in_with_chatgpt(document: Mapping[str, object]) -> bool:
+    """Whether Codex uses the file's ChatGPT tokens, as its `resolved_mode`
+    decides: an explicit `auth_mode` wins, else any key field present means a
+    key, else ChatGPT. Only the ChatGPT modes carry a person. A key field is
+    asked whether it is set, never what it holds."""
+    mode = document.get("auth_mode")
+    if isinstance(mode, str):
+        return mode.lower().startswith("chatgpt")
+    return not any(document.get(name) is not None for name in _CODEX_NON_CHATGPT_FIELDS)
 
 
 #: Where Devin Desktop ships its copy of the CLI. A machine with Desktop alone
