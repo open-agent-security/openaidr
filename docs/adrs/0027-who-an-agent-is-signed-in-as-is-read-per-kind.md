@@ -40,7 +40,10 @@ learns them for Claude Code first and the others never.
    holds the access token, the refresh token and any API key, and none of them
    is read into what this returns. The signature is not checked: this reports
    what Codex holds on this machine, not a proof of who the person is. Signed
-   in with an API key there is no person, and the answer is None.
+   in with an API key there is no person, and the answer is None. The payload
+   is decoded strictly: a character outside the base64 alphabet is a
+   malformed token, as Codex's own decoder treats it, never dropped by a
+   lenient one that reads the rest anyway.
 5. **Codex is read where its configured store keeps the sign-in.** This was
    checked against Codex's own auth storage. The boundary:
    - `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.
