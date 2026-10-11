@@ -487,14 +487,11 @@ def test_a_codex_sign_in_kept_off_disk_is_not_read_from_a_stale_file(
     assert signed_in("codex", home=home) is None
 
 
-@pytest.mark.parametrize(
-    "config", ['cli_auth_credentials_store = "file"\n', 'model = "o3"\n', "not = [toml"]
-)
+@pytest.mark.parametrize("config", ['cli_auth_credentials_store = "file"\n', 'model = "o3"\n'])
 def test_codex_reads_auth_json_when_that_is_its_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str
 ) -> None:
-    """`file` is Codex's default, and a `config.toml` that does not parse
-    leaves the default."""
+    """`file` is Codex's default."""
     monkeypatch.delenv("CODEX_HOME", raising=False)
     home = _home(tmp_path)
     (home / ".codex").mkdir()
@@ -504,6 +501,30 @@ def test_codex_reads_auth_json_when_that_is_its_store(
     found = signed_in("codex", home=home)
 
     assert found is not None and found.kind == "codex"
+
+
+def test_a_missing_codex_config_defaults_to_the_file_store(tmp_path: Path) -> None:
+    """Codex's own loader treats a missing `config.toml` as `Ok(None)` and
+    falls back to its defaults, `file` among them."""
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text(json.dumps(_codex_auth(_CODEX_CLAIMS)), "utf-8")
+
+    found = signed_in("codex", home=home)
+
+    assert found is not None and found.kind == "codex"
+
+
+def test_an_existing_but_malformed_codex_config_is_not_defaulted(tmp_path: Path) -> None:
+    """Codex's own loader errors on an existing `config.toml` it cannot parse
+    rather than falling back to its defaults; it never gets far enough to use
+    `auth.json` either, so this reads as no sign-in, not a guessed store."""
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text(json.dumps(_codex_auth(_CODEX_CLAIMS)), "utf-8")
+    (home / ".codex" / "config.toml").write_text("not = [toml", "utf-8")
+
+    assert signed_in("codex", home=home) is None
 
 
 # --- what to watch -----------------------------------------------------------
