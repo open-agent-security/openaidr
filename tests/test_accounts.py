@@ -26,6 +26,10 @@ _CLAUDE = {
 _SECRETS = ("ACCESS-SECRET", "REFRESH-SECRET", "sk-API-SECRET")
 
 
+_AUTH = "https://api.openai.com/auth"
+_PROFILE = "https://api.openai.com/profile"
+
+
 def _home(tmp_path: Path) -> Path:
     home = tmp_path / "home"
     home.mkdir()
@@ -571,3 +575,40 @@ def test_a_profile_choosing_a_store_is_outside_the_boundary(
     _codex_signed_in_on_disk(home, '[profiles.work]\ncli_auth_credentials_store = "keyring"\n')
 
     assert signed_in("codex", home=home) is not None
+
+
+@pytest.mark.parametrize(
+    ("claims", "account_id", "email"),
+    [
+        (
+            {"sub": "s", "email": "a@x.com", _AUTH: {"chatgpt_user_id": "cu", "user_id": "u"}},
+            "cu",
+            "a@x.com",
+        ),
+        ({"sub": "s", _AUTH: {"user_id": "u"}}, "u", None),
+        ({"sub": "s", _AUTH: {}}, "s", None),
+        ({"sub": "s", _PROFILE: {"email": "p@x.com"}}, "s", "p@x.com"),
+        ({"sub": "s", "email": "a@x.com", _PROFILE: {"email": "p@x.com"}}, "s", "a@x.com"),
+    ],
+    ids=["chatgpt-user-id", "user-id", "sub", "profile-email", "top-level-email-wins"],
+)
+def test_codex_is_read_as_codex_reads_its_own_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    claims: dict[str, object],
+    account_id: str,
+    email: str | None,
+) -> None:
+    """Codex's `parse_chatgpt_jwt_claims` takes the user from
+    `chatgpt_user_id`, else `user_id`, and the email from the top level, else
+    the profile claim. Read any other way, one person's sessions split across
+    two ids, or their email goes missing."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text(json.dumps(_codex_auth(claims)), "utf-8")
+
+    found = signed_in("codex", home=home)
+
+    assert found is not None
+    assert (found.account_id, found.email) == (account_id, email)

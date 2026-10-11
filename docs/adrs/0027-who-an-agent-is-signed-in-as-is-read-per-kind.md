@@ -18,7 +18,7 @@ except Devin, which keeps none on disk and reports one through its own command:
 | Kind | Record | Account id | Name | Plan |
 |---|---|---|---|---|
 | `claude-code` | `oauthAccount` in `~/.claude.json`, or inside `CLAUDE_CONFIG_DIR`; a legacy `.config.json` wins | `accountUuid` | `displayName`, `emailAddress` | `billingType` |
-| `codex` | the identity token in `~/.codex/auth.json` (or `CODEX_HOME`), when signed in with ChatGPT and `cli_auth_credentials_store` keeps the sign-in in that file | `chatgpt_user_id`, else `sub` | `name`, `email` | `chatgpt_plan_type` |
+| `codex` | the identity token in `~/.codex/auth.json` (or `CODEX_HOME`), when signed in with ChatGPT and `cli_auth_credentials_store` keeps the sign-in in that file | `chatgpt_user_id`, else `user_id`, else `sub`, as Codex reads its own token | `name`, `email` (else the profile claim's) | `chatgpt_plan_type` |
 | `devin` | none on disk: `config.json` names only `org_id`, and `credentials.toml` holds the API key alone. `devin auth status` asks Devin's server with that key and prints the user | `User ID` (`user-…`) | `Name`, `Email` | `Plan` |
 
 Without a shared reader every consumer learns each of these files itself, and
