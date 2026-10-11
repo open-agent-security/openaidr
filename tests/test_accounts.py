@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from openaidr.accounts import signed_in
+from openaidr import accounts
+from openaidr.accounts import sign_in_record, signed_in
 from openaidr.model import LOCAL_ONLY, Account
 
 _CLAUDE = {
@@ -228,9 +229,166 @@ def test_no_codex_secret_reaches_the_account(tmp_path: Path) -> None:
 # --- every kind --------------------------------------------------------------
 
 
-def test_devin_keeps_no_record_of_the_person(tmp_path: Path) -> None:
-    """Its configuration names the organization and its session store has no
-    user column: nothing to report."""
+# --- devin -------------------------------------------------------------------
+
+#: `devin auth status` as Devin 3000.11.3 prints it, the values invented.
+_DEVIN_STATUS = """Logged in (via Devin).
+
+Credentials:
+  File:              {home}/.local/share/devin/credentials.toml
+  API server:        https://server.codeium.com
+
+User:
+  Name:              Jane Doe
+  Email:             jane.doe@example.com
+  User ID:           user-0123456789abcdef0123456789abcdef
+
+Account:
+  Tier:              Devin Teams
+  Plan:              Teams
+  Team ID:           devin-team$account-0123456789abcdef0123456789abcdef
+"""
+
+
+def _fake_devin(
+    home: Path, output: str, *, exit_code: int = 0, sleep: float = 0, data: Path | None = None
+) -> Path:
+    """A `devin` where the CLI installs itself, recording how it was called."""
+    root = data if data is not None else home / ".local" / "share"
+    binary = root / "devin" / "cli" / "_versions" / "current" / "bin" / "devin"
+    binary.parent.mkdir(parents=True)
+    printed = home / "printed.txt"
+    printed.write_text(output.format(home=home), "utf-8")
+    binary.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> "{home}/argv.txt"\n'
+        f"sleep {sleep}\n"
+        f'cat "{printed}"\n'
+        f"exit {exit_code}\n",
+        "utf-8",
+    )
+    binary.chmod(0o755)
+    return binary
+
+
+@pytest.fixture
+def no_other_devin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the fake in the test's home may answer: not one on PATH, not the
+    machine's own Devin.app."""
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setattr(accounts, "_DEVIN_APP_BINARIES", ())
+
+
+@pytest.mark.usefixtures("no_other_devin")
+def test_devin_is_asked_who_is_signed_in(tmp_path: Path) -> None:
+    """Devin keeps no record of the person on disk; its own `auth status`
+    command reports one, asking its server with its own credential."""
+    home = _home(tmp_path)
+    _fake_devin(home, _DEVIN_STATUS)
+
+    found = signed_in("devin", home=home)
+
+    assert found == Account(
+        kind="devin",
+        account_id="user-0123456789abcdef0123456789abcdef",
+        display_name="Jane Doe",
+        email="jane.doe@example.com",
+        plan="Teams",
+    )
+    assert (home / "argv.txt").read_text("utf-8").split() == ["auth", "status"]
+
+
+@pytest.mark.usefixtures("no_other_devin")
+def test_devin_is_found_under_xdg_data_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _home(tmp_path)
+    data = tmp_path / "data"
+    _fake_devin(home, _DEVIN_STATUS, data=data)
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+
+    found = signed_in("devin", home=home)
+
+    assert found is not None and found.account_id.startswith("user-")
+
+
+@pytest.mark.usefixtures("no_other_devin")
+def test_devin_never_needs_its_credentials_file(tmp_path: Path) -> None:
+    """The credential is Devin's to use. Unreadable to everyone, the answer is
+    the same, because nothing here opens it."""
+    home = _home(tmp_path)
+    _fake_devin(home, _DEVIN_STATUS)
+    credentials = home / ".local" / "share" / "devin" / "credentials.toml"
+    credentials.write_text('windsurf_api_key = "sk-API-SECRET"\n', "utf-8")
+    credentials.chmod(0)
+    try:
+        found = signed_in("devin", home=home)
+    finally:
+        credentials.chmod(0o600)
+
+    assert found is not None
+    assert "sk-API-SECRET" not in repr(found)
+
+
+@pytest.mark.usefixtures("no_other_devin")
+def test_devin_colours_are_not_part_of_the_answer(tmp_path: Path) -> None:
+    home = _home(tmp_path)
+    coloured = _DEVIN_STATUS.replace("Jane Doe", "\x1b[1mJane Doe\x1b[0m")
+    _fake_devin(home, coloured)
+
+    found = signed_in("devin", home=home)
+
+    assert found is not None and found.display_name == "Jane Doe"
+
+
+@pytest.mark.usefixtures("no_other_devin")
+@pytest.mark.parametrize(
+    ("output", "exit_code"),
+    [
+        ("Not logged in. Run `devin auth login`.\n", 0),
+        (_DEVIN_STATUS, 1),
+        (
+            _DEVIN_STATUS.replace(
+                "  User ID:           user-0123456789abcdef0123456789abcdef\n", ""
+            ),
+            0,
+        ),
+        (
+            (
+                "Logged in (via Devin).\n\nUser / team info:\n"
+                "  Failed to fetch from server: Connection failed\n"
+            ),
+            0,
+        ),
+        ("", 0),
+    ],
+    ids=["signed-out", "failed", "no-user-id", "offline", "silent"],
+)
+def test_devin_without_a_user_id_is_signed_in_as_no_one(
+    tmp_path: Path, output: str, exit_code: int
+) -> None:
+    """Offline, Devin cannot say who: it asks its server. That is no account,
+    never a guess, and a consumer keeps whatever it last knew."""
+    home = _home(tmp_path)
+    _fake_devin(home, output, exit_code=exit_code)
+
+    assert signed_in("devin", home=home) is None
+
+
+@pytest.mark.usefixtures("no_other_devin")
+def test_devin_that_does_not_answer_in_time_is_no_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _home(tmp_path)
+    _fake_devin(home, _DEVIN_STATUS, sleep=5)
+    monkeypatch.setattr(accounts, "_DEVIN_TIMEOUT_SECONDS", 0.5)
+
+    assert signed_in("devin", home=home) is None
+
+
+@pytest.mark.usefixtures("no_other_devin")
+def test_no_devin_installed_is_no_one(tmp_path: Path) -> None:
     home = _home(tmp_path)
     (home / ".config" / "devin").mkdir(parents=True)
     (home / ".config" / "devin" / "config.json").write_text(
@@ -238,6 +396,33 @@ def test_devin_keeps_no_record_of_the_person(tmp_path: Path) -> None:
     )
 
     assert signed_in("devin", home=home) is None
+
+
+# --- what to watch -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kind", "relative"),
+    [
+        ("claude-code", ".claude.json"),
+        ("codex", ".codex/auth.json"),
+        ("devin", ".local/share/devin/credentials.toml"),
+    ],
+)
+def test_each_kind_names_the_file_a_new_sign_in_rewrites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, relative: str
+) -> None:
+    """A consumer re-asks when this file changes. Devin's is a network call,
+    so asking only then is the difference between once and on every pass."""
+    for variable in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_DATA_HOME"):
+        monkeypatch.delenv(variable, raising=False)
+    home = _home(tmp_path)
+
+    assert sign_in_record(kind, home=home) == home / relative
+
+
+def test_a_kind_with_no_reader_names_no_file(tmp_path: Path) -> None:
+    assert sign_in_record("cursor", home=_home(tmp_path)) is None
 
 
 def test_a_kind_with_no_reader_is_signed_in_as_no_one(tmp_path: Path) -> None:

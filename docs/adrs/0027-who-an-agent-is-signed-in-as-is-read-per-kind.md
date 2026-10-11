@@ -12,13 +12,14 @@ superseded-by: null
 A consumer that attributes work or spend to a person needs to know who an agent
 was signed in as. No transcript records it. Claude Code's session files carry no
 account, Devin's store has no user column, and Codex's rollouts carry none.
-Each agent keeps its sign-in record in its own configuration, in its own shape:
+Each agent keeps its sign-in record in its own configuration, in its own shape,
+except Devin, which keeps none on disk and reports one through its own command:
 
 | Kind | Record | Account id | Name | Plan |
 |---|---|---|---|---|
 | `claude-code` | `oauthAccount` in `~/.claude.json`, or inside `CLAUDE_CONFIG_DIR`; a legacy `.config.json` wins | `accountUuid` | `displayName`, `emailAddress` | `billingType` |
 | `codex` | the identity token in `~/.codex/auth.json` (or `CODEX_HOME`), when signed in with ChatGPT | `chatgpt_user_id`, else `sub` | `name`, `email` | `chatgpt_plan_type` |
-| `devin` | none: `~/.config/devin/config.json` names only `org_id` | — | — | — |
+| `devin` | none on disk: `config.json` names only `org_id`, and `credentials.toml` holds the API key alone. `devin auth status` asks Devin's server with that key and prints the user | `User ID` (`user-…`) | `Name`, `Email` | `Plan` |
 
 Without a shared reader every consumer learns each of these files itself, and
 learns them for Claude Code first and the others never.
@@ -40,9 +41,19 @@ learns them for Claude Code first and the others never.
    is read into what this returns. The signature is not checked: this reports
    what Codex holds on this machine, not a proof of who the person is. Signed
    in with an API key there is no person, and the answer is None.
-5. **A kind with no local record answers None, never a guess.** Devin today.
-   An unknown kind answers None too.
-6. **Reading a sign-in record is not reading sessions.** `codex` is read here
+5. **Devin is asked, through its own `devin auth status`.** The binary is
+   found where the CLI installs itself (`$XDG_DATA_HOME/devin/cli`), else on
+   `PATH`, else in Devin Desktop's bundle. It is run with a timeout, and its
+   `User` and `Account` sections are read. Devin uses its own credential;
+   this package never opens `credentials.toml`. The call reaches Devin's
+   server, so offline, signed out, slow or failing, the answer is None.
+6. **`sign_in_record(kind)` names the file a new sign-in rewrites.** A
+   consumer asks again when it changes. For Devin, that keeps one call to its
+   server per sign-in rather than one per pass. Only the file's existence and
+   time are a consumer's business; Devin's holds the credential.
+7. **A kind that cannot say answers None, never a guess.** An unknown kind
+   answers None too.
+8. **Reading a sign-in record is not reading sessions.** `codex` is read here
    ahead of a Codex session reader. This adds no session coverage: the package
    still reads sessions for `claude-code` and `devin` only.
 
@@ -57,6 +68,13 @@ learns them for Claude Code first and the others never.
 - **Verify Codex's token, or read the access token for a fuller answer.**
   Rejected: verification proves nothing a local reader needs, and the access
   token is a credential this package has no reason to hold.
+- **Read Devin's identity from disk.** Rejected. Its CLI keeps none. Devin
+  Desktop caches the server's answer in an undocumented binary format, in the
+  same record as the API key. Decoding the API key's own token would mean
+  reading the credential.
+- **Ask Devin's server directly.** Rejected. That means holding Devin's
+  credential. `auth status` is Devin's own supported way to say who is signed
+  in.
 - **Treat this as identity resolution.** It is not: nothing is matched across
   kinds or looked up elsewhere. It reports the record the agent wrote, as a
   session is.
@@ -65,6 +83,9 @@ learns them for Claude Code first and the others never.
 
 - A consumer attributes Codex work to a person the moment Codex sessions are
   read, with no change of its own.
-- Devin work names no person until Devin keeps a local record of one.
+- Devin work names its person whenever Devin could reach its server since the
+  last sign-in. A consumer keeps the last answer it got.
+- `devin auth status` prints text, with no machine-readable form. A changed
+  layout reads as no account, never as an error.
 - Each kind's file format is a dependency on that agent. A changed shape reads
   as no account, never as an error.

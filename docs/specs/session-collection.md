@@ -472,10 +472,15 @@ reads the kind's own sign-in record, once, and returns an `Account` or None
 |---|---|---|
 | `claude-code` | `oauthAccount` in `~/.claude.json` (inside `CLAUDE_CONFIG_DIR` when set; a legacy `.config.json` wins) | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
 | `codex` | the identity token's payload in `~/.codex/auth.json` (or `CODEX_HOME`); nothing else in the file | `chatgpt_user_id` or `sub`, `name`, `email`, `chatgpt_plan_type`; None when signed in with an API key |
-| `devin` | — | None: Devin keeps only the organization locally |
+| `devin` | `devin auth status`, Devin's own command: it asks Devin's server with Devin's credential. The binary is found under `$XDG_DATA_HOME/devin/cli`, else on `PATH`, else in Devin Desktop. `credentials.toml` is never opened | `User ID`, `Name`, `Email`, `Plan`; None offline, signed out, or after the timeout |
 
 `display_name` and `email` are `LOCAL_ONLY`. Reading a kind's sign-in record adds
 no session coverage: `codex` is answered here before its sessions are read.
+
+`openaidr.accounts.sign_in_record(kind)` names the file a new sign-in rewrites:
+`.claude.json`, Codex's `auth.json`, and Devin's `credentials.toml`. A consumer
+asks `signed_in` again when that file changes, so Devin's server is asked once
+per sign-in, not on every pass.
 
 ## What this component does not know
 
