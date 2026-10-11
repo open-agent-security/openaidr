@@ -41,23 +41,24 @@ learns them for Claude Code first and the others never.
    is read into what this returns. The signature is not checked: this reports
    what Codex holds on this machine, not a proof of who the person is. Signed
    in with an API key there is no person, and the answer is None.
-5. **Codex is read only where it keeps the sign-in it uses.** This was
-   checked against Codex's own auth loader and storage. The boundary:
-   - `CODEX_API_KEY` set in the environment this package runs in: `codex
-     exec` started there signs in with that key, ahead of any stored login,
-     and a key names no person. The answer is None.
+5. **Codex is read where its configured store keeps the sign-in.** This was
+   checked against Codex's own auth storage. The boundary:
    - `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.
-     `file`, the default, reads `auth.json`. `auto` tries the keyring, then
-     `auth.json`, and Codex deletes the file on every keyring save, so under
-     `auto` a file that is present is the store in use and is read.
-     `keyring`, `ephemeral` and any other value keep the sign-in off disk,
+     `file`, the default, and `auto` use `auth.json`. `auto` tries the
+     keyring, then the file, and deletes the file on every keyring save, so
+     a file that is there is the one in use. `sign_in_record` names
+     `auth.json` under both, whether or not it exists yet, so a sign-in
+     that creates it is seen.
+   - `keyring`, `ephemeral` and any other value keep the sign-in off disk,
      and a file left behind is an earlier one, so the answer is None. A
      `config.toml` that does not parse leaves the default.
-   - Not seen, deliberately: another process's environment, `-c` overrides
-     and profiles, managed configuration layers, and the rare `auto` case
-     of an older keyring entry outranking a newer fallback file. Each means
-     guessing at state this package cannot read, or reading the keyring,
-     which holds the credential.
+   - Not seen, deliberately: how any one Codex process was started. `codex
+     exec` prefers a `CODEX_API_KEY` in its environment and the interactive
+     Codex ignores one; `-c` overrides and profiles choose per run. That is
+     per-process state no file on the machine records. Also not seen:
+     managed configuration layers, and the rare `auto` case of an older
+     keyring entry outranking a newer fallback file, which needs the
+     keyring, which holds the credential.
 6. **Devin is never run here; `sign_in_query("devin")` says how to ask it.**
    Sensing in this package is read-only, and only Devin's own `devin auth
    status` can say who is signed in, by asking Devin's server with Devin's
