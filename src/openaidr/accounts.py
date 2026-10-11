@@ -260,12 +260,15 @@ def sign_in_records(
     their existence and times are a consumer's business: some hold the
     credential.
 
+    Claude Code's are the legacy `.config.json` and the file it falls back to:
+    the legacy file winning is a change the fallback file need not show.
     Codex's are its `config.toml` and `auth.json` whatever the store: the
     store setting can move the sign-in on or off `auth.json` without the file
     changing (ADR-0027 clause 7)."""
     home = Path.home() if home is None else home
     if kind == "claude-code":
-        return (_claude_record(config_dir, home),)
+        legacy, modern = _claude_paths(config_dir, home)
+        return (legacy, modern)
     if kind == "codex":
         root = _codex_root(config_dir, home)
         return (root / "config.toml", root / "auth.json")
@@ -275,18 +278,25 @@ def sign_in_records(
 
 
 def _claude_record(config_dir: Path | None, home: Path) -> Path:
-    """Claude Code's configuration file, where Claude Code itself looks: inside
-    the configuration directory whenever one is named, by `CLAUDE_CONFIG_DIR`
-    or by the caller, even when it names `~/.claude`; else `~/.claude.json`.
-    A legacy `.config.json` in the directory wins, as Claude Code reads it
-    first. Named or not is the test, never whether the path equals the
-    default."""
+    """Claude Code's configuration file, where Claude Code itself looks: the
+    legacy `.config.json` in the configuration directory when it is there, as
+    Claude Code reads it first; else inside that directory whenever one is
+    named, by `CLAUDE_CONFIG_DIR` or by the caller, even when it names
+    `~/.claude`; else `~/.claude.json`."""
+    legacy, modern = _claude_paths(config_dir, home)
+    return legacy if legacy.is_file() else modern
+
+
+def _claude_paths(config_dir: Path | None, home: Path) -> tuple[Path, Path]:
+    """`(legacy, modern)`: the legacy `.config.json` Claude Code reads first
+    when it is there, and the file it reads otherwise. Both are named
+    whether or not each exists, so a consumer sees the legacy file appear.
+    Named or not is the test for the directory, never whether its path
+    equals the default."""
     named = config_dir if config_dir is not None else _named_dir("CLAUDE_CONFIG_DIR")
     root = named if named is not None else home / ".claude"
-    legacy = root / ".config.json"
-    if legacy.is_file():
-        return legacy
-    return root / ".claude.json" if named is not None else home / ".claude.json"
+    modern = root / ".claude.json" if named is not None else home / ".claude.json"
+    return root / ".config.json", modern
 
 
 def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
