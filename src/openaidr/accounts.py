@@ -29,9 +29,10 @@ from pathlib import Path
 
 from .model import Account
 
-#: Codex's claims about the ChatGPT account live under this one key of its
-#: identity token.
+#: Codex's claims about the ChatGPT account, and its profile, live under these
+#: keys of its identity token.
 _OPENAI_AUTH_CLAIM = "https://api.openai.com/auth"
+_OPENAI_PROFILE_CLAIM = "https://api.openai.com/profile"
 
 
 def signed_in(
@@ -91,15 +92,20 @@ def _codex(config_dir: Path | None, home: Path) -> Account | None:
     id_token = tokens.get("id_token") if isinstance(tokens, dict) else None
     claims = _token_claims(id_token)
     auth = _strings(claims.get(_OPENAI_AUTH_CLAIM))
+    profile = _strings(claims.get(_OPENAI_PROFILE_CLAIM))
     names = _strings(claims)
-    account_id = auth.get("chatgpt_user_id") or names.get("sub")
+    # Codex's own reading of the same token (`parse_chatgpt_jwt_claims`): the
+    # user is `chatgpt_user_id`, else `user_id`, and the email is the
+    # top-level claim, else the profile's. `sub` is the last resort, for a
+    # token with neither user claim.
+    account_id = auth.get("chatgpt_user_id") or auth.get("user_id") or names.get("sub")
     if account_id is None:
         return None
     return Account(
         kind="codex",
         account_id=account_id,
         display_name=names.get("name"),
-        email=names.get("email"),
+        email=names.get("email") or profile.get("email"),
         plan=auth.get("chatgpt_plan_type"),
     )
 
