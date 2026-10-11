@@ -123,14 +123,20 @@ _CODEX_NON_CHATGPT_FIELDS = (
 )
 
 
+#: Codex's `AuthMode` values that sign in with ChatGPT tokens, spelled exactly
+#: as it serialises them. Codex refuses any value it does not define, so an
+#: unknown one is no sign-in.
+_CODEX_CHATGPT_MODES = frozenset({"chatgpt", "chatgptAuthTokens"})
+
+
 def _codex_signs_in_with_chatgpt(document: Mapping[str, object]) -> bool:
     """Whether Codex uses the file's ChatGPT tokens, as its `resolved_mode`
     decides: an explicit `auth_mode` wins, else any key field present means a
     key, else ChatGPT. Only the ChatGPT modes carry a person. A key field is
     asked whether it is set, never what it holds."""
     mode = document.get("auth_mode")
-    if isinstance(mode, str):
-        return mode.lower().startswith("chatgpt")
+    if mode is not None:
+        return mode in _CODEX_CHATGPT_MODES
     return not any(document.get(name) is not None for name in _CODEX_NON_CHATGPT_FIELDS)
 
 

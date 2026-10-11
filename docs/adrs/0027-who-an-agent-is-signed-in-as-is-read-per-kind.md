@@ -51,12 +51,17 @@ learns them for Claude Code first and the others never.
      that creates it is seen.
    - Within `auth.json`, the tokens name a person only when Codex signs in
      with ChatGPT, as its `resolved_mode` decides. An explicit `auth_mode`
-     wins. Without one, a key field that is set (an API key, a personal
+     wins, and only Codex's exact `chatgpt` and `chatgptAuthTokens` sign in
+     with ChatGPT. Codex refuses a value its `AuthMode` does not define, so
+     any other value, an unknown or misspelt one included, is no person. Without one, a key field that is set (an API key, a personal
      access token, a Bedrock key) means a key, and the answer is None. A
      key field is checked for presence, never read.
    - `keyring`, `ephemeral` and any other value keep the sign-in off disk,
      and a file left behind is an earlier one, so the answer is None. A
      `config.toml` that does not parse leaves the default.
+   - The reader mirrors Codex's own code (`resolved_mode`, `AuthMode`,
+     `parse_chatgpt_jwt_claims`) and its closed vocabularies. A value Codex
+     would refuse reads as no sign-in, never as the nearest known one.
    - Not seen, deliberately: how any one Codex process was started. `codex
      exec` prefers a `CODEX_API_KEY` in its environment and the interactive
      Codex ignores one; `-c` overrides and profiles choose per run. That is
