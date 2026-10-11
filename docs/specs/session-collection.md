@@ -461,6 +461,22 @@ the *wrong* one — which then resolves to the wrong component and attributes a
 finding to a package that was never involved. A silent wrong answer is worse than
 a gap.
 
+## Who is signed in
+
+No transcript records who an agent was signed in as, so a consumer that ties work
+or spend to a person asks while the work runs: `openaidr.accounts.signed_in(kind)`
+reads the kind's own sign-in record, once, and returns an `Account` or None
+(ADR-0027).
+
+| Kind | Read from | Answer |
+|---|---|---|
+| `claude-code` | `oauthAccount` in `~/.claude.json` (inside `CLAUDE_CONFIG_DIR` when set; a legacy `.config.json` wins) | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
+| `codex` | the identity token's payload in `~/.codex/auth.json` (or `CODEX_HOME`); nothing else in the file | `chatgpt_user_id` or `sub`, `name`, `email`, `chatgpt_plan_type`; None when signed in with an API key |
+| `devin` | — | None: Devin keeps only the organization locally |
+
+`display_name` and `email` are `LOCAL_ONLY`. Reading a kind's sign-in record adds
+no session coverage: `codex` is answered here before its sessions are read.
+
 ## What this component does not know
 
 | Gap | Answered by |
