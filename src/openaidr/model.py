@@ -569,5 +569,5 @@ class Account:
     #: The address the person signs in with. `LOCAL_ONLY`.
     email: str | None = None
     #: The agent's own word for the plan the account is on, verbatim:
-    #: Claude Code's `billingType`, Codex's `chatgpt_plan_type`.
+    #: Claude Code's `billingType`, Devin's `Plan`.
     plan: str | None = None
