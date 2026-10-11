@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from openaidr import accounts
-from openaidr.accounts import SignInQuery, sign_in_query, sign_in_record, signed_in
+from openaidr.accounts import SignInQuery, sign_in_query, sign_in_records, signed_in
 from openaidr.model import LOCAL_ONLY, Account
 
 _CLAUDE = {
@@ -439,7 +439,6 @@ def test_a_codex_sign_in_kept_off_disk_is_not_read_from_a_stale_file(
     )
 
     assert signed_in("codex", home=home) is None
-    assert sign_in_record("codex", home=home) is None
 
 
 @pytest.mark.parametrize(
@@ -465,27 +464,48 @@ def test_codex_reads_auth_json_when_that_is_its_store(
 
 
 @pytest.mark.parametrize(
-    ("kind", "relative"),
+    ("kind", "relatives"),
     [
-        ("claude-code", ".claude.json"),
-        ("codex", ".codex/auth.json"),
-        ("devin", ".local/share/devin/credentials.toml"),
+        ("claude-code", (".claude.json",)),
+        ("codex", (".codex/config.toml", ".codex/auth.json")),
+        ("devin", (".local/share/devin/credentials.toml",)),
     ],
 )
-def test_each_kind_names_the_file_a_new_sign_in_rewrites(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, relative: str
+def test_each_kind_names_every_file_its_sign_in_depends_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, relatives: tuple[str, ...]
 ) -> None:
-    """A consumer re-asks when this file changes. Devin's is a network call,
-    so asking only then is the difference between once and on every pass."""
+    """A consumer asks again when any of these changes. Devin's is a network
+    call, so asking only then is the difference between once and on every
+    pass. Named whether or not each exists yet."""
     for variable in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_DATA_HOME"):
         monkeypatch.delenv(variable, raising=False)
     home = _home(tmp_path)
 
-    assert sign_in_record(kind, home=home) == home / relative
+    assert sign_in_records(kind, home=home) == tuple(home / r for r in relatives)
+
+
+@pytest.mark.parametrize("store", ["file", "keyring", "ephemeral", "auto"])
+def test_codexs_store_selector_is_watched_whatever_it_selects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: str
+) -> None:
+    """Switching `cli_auth_credentials_store` moves the sign-in on or off
+    `auth.json` without that file changing, either way, so both files are
+    always named."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    (home / ".codex" / "config.toml").write_text(
+        f'cli_auth_credentials_store = "{store}"\n', "utf-8"
+    )
+
+    assert sign_in_records("codex", home=home) == (
+        home / ".codex" / "config.toml",
+        home / ".codex" / "auth.json",
+    )
 
 
 def test_a_kind_with_no_reader_names_no_file(tmp_path: Path) -> None:
-    assert sign_in_record("cursor", home=_home(tmp_path)) is None
+    assert sign_in_records("cursor", home=_home(tmp_path)) == ()
 
 
 def test_a_kind_with_no_reader_is_signed_in_as_no_one(tmp_path: Path) -> None:
@@ -551,7 +571,7 @@ def test_codex_auto_reads_the_file_it_fell_back_to(
     (home / ".codex" / "auth.json").unlink()
     assert signed_in("codex", home=home) is None
     # Still watched: a later sign-in the keyring refuses creates it.
-    assert sign_in_record("codex", home=home) == home / ".codex" / "auth.json"
+    assert home / ".codex" / "auth.json" in sign_in_records("codex", home=home)
 
 
 def test_an_api_key_in_the_environment_is_outside_the_boundary(
@@ -646,13 +666,13 @@ def test_claude_config_dir_named_as_the_default_is_still_named(
     if how == "environment":
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(directory))
         found = signed_in("claude-code", home=home)
-        record = sign_in_record("claude-code", home=home)
+        records = sign_in_records("claude-code", home=home)
     else:
         found = signed_in("claude-code", config_dir=directory, home=home)
-        record = sign_in_record("claude-code", config_dir=directory, home=home)
+        records = sign_in_records("claude-code", config_dir=directory, home=home)
 
     assert found is not None and found.account_id == _CLAUDE["accountUuid"]
-    assert record == directory / ".claude.json"
+    assert records == (directory / ".claude.json",)
 
 
 @pytest.mark.parametrize(

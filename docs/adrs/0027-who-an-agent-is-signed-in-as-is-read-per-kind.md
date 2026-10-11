@@ -49,9 +49,7 @@ learns them for Claude Code first and the others never.
    - `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.
      `file`, the default, and `auto` use `auth.json`. `auto` tries the
      keyring, then the file, and deletes the file on every keyring save, so
-     a file that is there is the one in use. `sign_in_record` names
-     `auth.json` under both, whether or not it exists yet, so a sign-in
-     that creates it is seen.
+     a file that is there is the one in use.
    - Within `auth.json`, the tokens name a person only when Codex signs in
      with ChatGPT, as its `resolved_mode` decides. An explicit `auth_mode`
      wins, and only Codex's exact `chatgpt` and `chatgptAuthTokens` sign in
@@ -81,10 +79,18 @@ learns them for Claude Code first and the others never.
    bundle, with `auth status`. Its `read` turns what the command printed into
    an `Account`. A consumer that chooses to ask runs it, bounded by its own
    timeout. This package never opens `credentials.toml`.
-7. **`sign_in_record(kind)` names the file a new sign-in rewrites.** A
-   consumer asks again when it changes. For Devin, that keeps one call to its
-   server per sign-in rather than one per pass. Only the file's existence and
-   time are a consumer's business; Devin's holds the credential.
+7. **`sign_in_records(kind)` names every file whose change can change the
+   answer**, whether or not each exists yet. A consumer asks again when any
+   of them is created, changed or removed. For Devin, that keeps one call to
+   its server per sign-in rather than one per pass.
+   - Claude Code: its `.claude.json`, found as clause 2 finds it.
+   - Codex: `config.toml` and `auth.json`, whatever the store. The store
+     setting can move the sign-in on or off `auth.json` without that file
+     changing, in either direction, and a sign-in under `auto` can create
+     the file.
+   - Devin: `credentials.toml`.
+   Only the files' existence and times are a consumer's business; some hold
+   the credential.
 8. **A kind that cannot say answers None, never a guess.** An unknown kind
    answers None too.
 9. **The answer is the agent's record of its sign-in, never a check of the
