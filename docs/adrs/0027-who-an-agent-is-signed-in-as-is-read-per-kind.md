@@ -41,9 +41,12 @@ learns them for Claude Code first and the others never.
    is read into what this returns. The signature is not checked: this reports
    what Codex holds on this machine, not a proof of who the person is. Signed
    in with an API key there is no person, and the answer is None. The payload
-   is decoded strictly: a character outside the base64 alphabet is a
-   malformed token, as Codex's own decoder treats it, never dropped by a
-   lenient one that reads the rest anyway.
+   is decoded exactly as Codex's own decoder (`URL_SAFE_NO_PAD`'s default
+   config) would: no character outside the base64 alphabet, never dropped by
+   a lenient decoder that reads the rest anyway; no embedded padding, since
+   base64url-no-pad never has any; and no non-canonical final symbol, whose
+   unused bits a lenient decoder discards instead of rejecting, so two
+   different tokens would read as the same account.
 5. **Codex is read where its configured store keeps the sign-in.** This was
    checked against Codex's own auth storage. The boundary:
    - `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.

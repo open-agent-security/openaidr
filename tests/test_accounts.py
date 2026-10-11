@@ -226,6 +226,38 @@ def test_a_character_outside_the_base64_alphabet_is_a_malformed_token(
     assert signed_in("codex", home=home) is None
 
 
+def test_a_noncanonical_final_symbol_is_a_malformed_token(tmp_path: Path) -> None:
+    """Codex's decoder (`URL_SAFE_NO_PAD`'s default config) rejects a final
+    base64 symbol whose unused bits are not zero. A lenient decoder discards
+    those bits and decodes anyway, so two different tokens would read as the
+    same account — one of them a credential Codex itself cannot load."""
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    header, payload, signature = _jwt(_CODEX_CLAIMS).split(".")
+    last = payload[-1]
+    tampered_last = "B" if last != "B" else "C"
+    tampered = f"{header}.{payload[:-1]}{tampered_last}.{signature}"
+    (home / ".codex" / "auth.json").write_text(
+        json.dumps(_codex_auth(None) | {"tokens": {"id_token": tampered}}), "utf-8"
+    )
+
+    assert signed_in("codex", home=home) is None
+
+
+def test_a_token_payload_with_embedded_padding_is_malformed(tmp_path: Path) -> None:
+    """Codex's `URL_SAFE_NO_PAD` never has padding; a payload that already
+    carries `=` is not the canonical encoding it would load."""
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    header, payload, signature = _jwt(_CODEX_CLAIMS).split(".")
+    tampered = f"{header}.{payload}=.{signature}"
+    (home / ".codex" / "auth.json").write_text(
+        json.dumps(_codex_auth(None) | {"tokens": {"id_token": tampered}}), "utf-8"
+    )
+
+    assert signed_in("codex", home=home) is None
+
+
 def test_no_codex_secret_reaches_the_account(tmp_path: Path) -> None:
     """The file holds the access token, the refresh token and any API key
     beside the identity token. None of them is in what comes back."""
