@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -442,3 +443,19 @@ def test_claude_with_a_custom_oauth_endpoint_reads_its_own_file(
         directory / ".config.json",
         where / ".claude-custom-oauth.json",
     )
+
+
+def test_claudes_legacy_file_is_looked_for_in_the_nfc_spelling_of_its_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Claude Code 2.1.283 looks for `.config.json` in its configuration
+    directory normalised to NFC, and for `.claude.json` in the directory as
+    given. On a filesystem that keeps both spellings apart, those are two
+    places. Asserted on the paths, since this one may not keep them apart."""
+    decomposed = str(tmp_path / "cafe\u0301")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", decomposed)
+
+    legacy, modern = sign_in_records("claude-code", home=_home(tmp_path))
+
+    assert str(legacy) == unicodedata.normalize("NFC", decomposed) + "/.config.json"
+    assert str(modern) == decomposed + "/.claude.json"

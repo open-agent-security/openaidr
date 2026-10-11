@@ -47,9 +47,16 @@ learns Claude Code's first and the others never.
      set, else empty. Claude Code's staging and local suffixes are not
      reachable in a shipped build, whose environment is fixed to `prod`.
    - A legacy `.config.json` in the directory wins over either.
+   - The legacy file is looked for in the configuration directory normalised
+     to NFC, and the other file in the directory as given, exactly as Claude
+     Code does.
    - `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_CUSTOM_OAUTH_URL` are read from the
      environment this package runs in. A Claude Code process started with
      different values is not seen (clause 6).
+   - Where this stops: these are the whole of `getGlobalClaudeFile` in a
+     shipped build. An empty `CLAUDE_CONFIG_DIR` reads as unset. Claude Code
+     would look for its legacy file relative to the working directory, which
+     names no configuration a person set.
    - Whether a directory is named is the test, never whether its path equals
      the default.
 4. **Devin is never run here. `sign_in_query("devin")` says how to ask it.**
