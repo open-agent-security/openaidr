@@ -32,6 +32,7 @@ def _home(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def _no_agent_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_CUSTOM_OAUTH_URL", raising=False)
 
 
 # --- Claude Code -------------------------------------------------------------
@@ -412,3 +413,32 @@ def test_claude_config_dir_named_as_the_default_is_still_named(
 
     assert found is not None and found.account_id == _CLAUDE["accountUuid"]
     assert records == (directory / ".config.json", directory / ".claude.json")
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_claude_with_a_custom_oauth_endpoint_reads_its_own_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, named: bool
+) -> None:
+    """With `CLAUDE_CODE_CUSTOM_OAUTH_URL` set, Claude Code 2.1.283 keeps its
+    configuration in `.claude-custom-oauth.json`, beside the default directory
+    or inside a named one. The production `.claude.json` then names another
+    account and is not the one in use."""
+    home = _home(tmp_path)
+    directory = home / ".claude"
+    directory.mkdir()
+    where = directory if named else home
+    if named:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(directory))
+    monkeypatch.setenv("CLAUDE_CODE_CUSTOM_OAUTH_URL", "https://auth.example.test")
+    (where / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {**_CLAUDE, "accountUuid": "production"}}), "utf-8"
+    )
+    (where / ".claude-custom-oauth.json").write_text(json.dumps({"oauthAccount": _CLAUDE}), "utf-8")
+
+    found = signed_in("claude-code", home=home)
+
+    assert found is not None and found.account_id == _CLAUDE["accountUuid"]
+    assert sign_in_records("claude-code", home=home) == (
+        directory / ".config.json",
+        where / ".claude-custom-oauth.json",
+    )

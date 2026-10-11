@@ -471,7 +471,7 @@ for no other.
 
 | Kind | Read from | Answer |
 |---|---|---|
-| `claude-code` | `oauthAccount` in `.claude.json`: inside the configuration directory when `CLAUDE_CONFIG_DIR` (or the caller) names one, else `~/.claude.json`; a legacy `.config.json` in the directory wins | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
+| `claude-code` | `oauthAccount` in `.claude.json` (`.claude-custom-oauth.json` with `CLAUDE_CODE_CUSTOM_OAUTH_URL` set): inside the configuration directory when `CLAUDE_CONFIG_DIR` (or the caller) names one, else in the home directory; a legacy `.config.json` in the directory wins | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
 | `devin` | nothing on disk names the person | None. `sign_in_query("devin")` gives Devin's own `devin auth status` (binary under `$XDG_DATA_HOME/devin/cli`, else on `PATH`, else in Devin Desktop), which asks Devin's server. Its `read` returns `User ID`, `Name`, `Email` and `Plan`, or None when no `User ID` is printed. This package never runs it and never opens `credentials.toml` |
 | any other | — | None |
 

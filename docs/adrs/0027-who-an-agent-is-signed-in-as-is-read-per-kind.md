@@ -36,13 +36,20 @@ learns Claude Code's first and the others never.
    `display_name` and `email` are `LOCAL_ONLY`. It never raises: a missing,
    unreadable or malformed record is no account.
 3. **Claude Code is read from `oauthAccount`, where Claude Code itself looks.**
-   This was checked against Claude Code 2.1.283's own locator,
-   `join(CLAUDE_CONFIG_DIR || homedir(), ".claude.json")`.
+   This was checked against Claude Code 2.1.283's own `getGlobalClaudeFile`.
+   It returns the legacy `.config.json` in the configuration directory when
+   that exists, else `join(CLAUDE_CONFIG_DIR || homedir(), `.claude${suffix}.json`)`.
    - When a configuration directory is named, by `CLAUDE_CONFIG_DIR` or by
-     the caller, the file is `.claude.json` inside it. That holds even when it
-     names `~/.claude`.
-   - With none named, the file is `~/.claude.json`.
+     the caller, the file is inside it. That holds even when it names
+     `~/.claude`.
+   - With none named, the file is in the home directory.
+   - The suffix is `-custom-oauth` when `CLAUDE_CODE_CUSTOM_OAUTH_URL` is
+     set, else empty. Claude Code's staging and local suffixes are not
+     reachable in a shipped build, whose environment is fixed to `prod`.
    - A legacy `.config.json` in the directory wins over either.
+   - `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_CUSTOM_OAUTH_URL` are read from the
+     environment this package runs in. A Claude Code process started with
+     different values is not seen (clause 6).
    - Whether a directory is named is the test, never whether its path equals
      the default.
 4. **Devin is never run here. `sign_in_query("devin")` says how to ask it.**
@@ -64,8 +71,8 @@ learns Claude Code's first and the others never.
    of them is created, changed or removed. For Devin that keeps one call to
    its server per sign-in, not one per pass. Only the files' existence and
    times are a consumer's business, because some hold the credential.
-   - `claude-code`: the legacy `.config.json` and `.claude.json`, found as
-     clause 3 finds them. The legacy file appearing changes the answer
+   - `claude-code`: the legacy `.config.json` and the `.claude${suffix}.json`
+     file, found as clause 3 finds them. The legacy file appearing changes the answer
      without `.claude.json` changing.
    - `devin`: `credentials.toml` under `$XDG_DATA_HOME/devin`.
 6. **The answer is the agent's record of its sign-in, never a check of the
@@ -75,9 +82,9 @@ learns Claude Code's first and the others never.
      `.credentials.json` and Devin's `credentials.toml` hold the secret. A
      record left after its credential was removed or switched therefore
      still names its account.
-   - How one process authenticated is not seen: for example an API key in
-     its environment. That is per process, and no file on the machine
-     records it.
+   - How one process authenticated is not seen: for example an API key, or
+     a configuration variable, set in its environment and not in this
+     package's. That is per process, and no file on the machine records it.
 7. **Reading a sign-in adds no session coverage.**
 
 ## Alternatives considered
