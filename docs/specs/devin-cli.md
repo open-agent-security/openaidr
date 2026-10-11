@@ -301,7 +301,7 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 | `file_edit` | `Edit`, `MultiEdit`, `NotebookEdit` | `edit`, `apply_patch`, `notebook_edit` | `path`, `new_text` (`file_path`, `new_string`); none for `apply_patch` (M3) |
 | `web_fetch` | `WebFetch` | `webfetch` | `url` (`url`) |
 | `web_search` | `WebSearch` | `web_search` | — |
-| `delegate` | `Agent`, `Task` | `run_subagent` | `agent` for `claude-code`; none for `devin` (M3) |
+| `delegate` | `Agent`, `Task` | `run_subagent` | `agent` (`profile`) |
 | `skill` | `Skill` | `skill` | `skill` (`skill` or `name`) |
 | `mcp` | Any call with an `mcp_server` | Any call with an `mcp_server` | — |
 | `other` | `TodoWrite`, `ExitPlanMode`, `EnterPlanMode`, `AskUserQuestion`, `SlashCommand`, the MCP resource tools, `ToolSearch`, `TaskCreate`, `TaskOutput`, `TaskStop`, `SendMessage`, `ListAgents`, `SubagentHandback`, `Artifact`, `ReportFindings`, `SendUserFile` | `read_subagent`, `todo_write`, `exit_plan_mode`, `request_scope`, `mcp_list_servers`, `mcp_list_tools`, `mcp_read_resource` | — |
@@ -368,7 +368,7 @@ asks for Codex. Fixtures are synthetic. **Real stores are never committed.**
 |---|---|---|
 | M1 | That `failure_reason`, `exit_code` and `cwd` sit in `chisel/tool_result_meta`; what `Rejected` carries | Status, denial, exit code, working directory |
 | M2 | Where `PermissionResolution {decision_source, resolution, …}` is stored, and whether it names a person, a rule, an organisation or the `smart` classifier | `denial_kind`, including `automode-blocked` |
-| M3 | Argument keys of `grep`, `glob`, `apply_patch` and `run_subagent` (`SubagentInput` has five fields) | `canonical_arguments` |
+| M3 | Argument keys of `grep`, `glob` and `apply_patch`. A recorded 3000.11.3 `run_subagent` call settled its own: `title`, `task`, `profile`, `is_background` | `canonical_arguments` |
 | M4 | That the compaction node carries `summarized_from`, and whether a trigger is stated | `compactions` |
 | M5 | That `subagent_heads` holds every sub-agent, and that its requests never also sit on the parent's tree | Sub-agent sessions; no double count |
 | M6 | That `is_user_input` separates a person from the harness in every build | Turns, `initial_prompt`, context items |
