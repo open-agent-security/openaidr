@@ -459,3 +459,40 @@ def test_claudes_legacy_file_is_looked_for_in_the_nfc_spelling_of_its_directory(
 
     assert str(legacy) == unicodedata.normalize("NFC", decomposed) + "/.config.json"
     assert str(modern) == decomposed + "/.claude.json"
+
+
+def test_an_untraversable_claude_directory_is_no_legacy_file(tmp_path: Path) -> None:
+    """Before Python 3.14, probing a file under a directory that cannot be
+    traversed raises. Claude Code's own probe answers false and reads
+    `~/.claude.json`, and so must this, which promises never to raise."""
+    home = _home(tmp_path)
+    (home / ".claude.json").write_text(json.dumps({"oauthAccount": _CLAUDE}), "utf-8")
+    locked = home / ".claude"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        found = signed_in("claude-code", home=home)
+    finally:
+        locked.chmod(0o700)
+
+    assert found is not None and found.account_id == _CLAUDE["accountUuid"]
+
+
+def test_no_filesystem_probe_can_raise_out_of_the_reader() -> None:
+    """Every existence probe in `accounts.py` goes through `_is_file`, which
+    answers False where it cannot tell. A bare `.is_file()`, `.exists()` or
+    `.is_dir()` elsewhere is how an unreadable directory became an exception."""
+    import ast
+
+    tree = ast.parse(Path(accounts.__file__).read_text(encoding="utf-8"))
+    bare = [
+        node.lineno
+        for function in ast.walk(tree)
+        if isinstance(function, ast.FunctionDef) and function.name != "_is_file"
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"is_file", "exists", "is_dir"}
+    ]
+
+    assert bare == [], f"bare filesystem probes at lines {bare}; use `_is_file`"
