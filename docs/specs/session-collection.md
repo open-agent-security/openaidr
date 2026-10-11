@@ -471,7 +471,7 @@ reads the kind's own sign-in record, once, and returns an `Account` or None
 | Kind | Read from | Answer |
 |---|---|---|
 | `claude-code` | `oauthAccount` in `~/.claude.json` (inside `CLAUDE_CONFIG_DIR` when set; a legacy `.config.json` wins) | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
-| `codex` | the identity token's payload in `~/.codex/auth.json` (or `CODEX_HOME`); nothing else in the file. Only where Codex's configured store keeps the sign-in there: ADR-0027 clause 5 holds the boundary | `chatgpt_user_id`, else `user_id`, else `sub`; `name`; `email`, else the profile claim's; `chatgpt_plan_type`; None when signed in with an API key, or when the store keeps the sign-in off disk |
+| `codex` | the identity token's payload in `~/.codex/auth.json` (or `CODEX_HOME`); nothing else in the file. Only where Codex's configured store keeps the sign-in there: ADR-0027 clause 5 holds the boundary | `chatgpt_user_id`, else `user_id` (neither is no account); `name`; `email`, else the profile claim's; `chatgpt_plan_type`; None when signed in with an API key, or when the store keeps the sign-in off disk |
 | `devin` | nothing on disk names the person | None. `sign_in_query("devin")` gives Devin's own `devin auth status`, which asks Devin's server, found under `$XDG_DATA_HOME/devin/cli`, else on `PATH`, else in Devin Desktop. Its `read` returns `User ID`, `Name`, `Email` and `Plan`, or None offline or signed out. This package never runs it, and never opens `credentials.toml` |
 
 `display_name` and `email` are `LOCAL_ONLY`. Reading a kind's sign-in record adds

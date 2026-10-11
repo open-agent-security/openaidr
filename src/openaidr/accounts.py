@@ -98,9 +98,9 @@ def _codex(config_dir: Path | None, home: Path) -> Account | None:
     names = _strings(claims)
     # Codex's own reading of the same token (`parse_chatgpt_jwt_claims`): the
     # user is `chatgpt_user_id`, else `user_id`, and the email is the
-    # top-level claim, else the profile's. `sub` is the last resort, for a
-    # token with neither user claim.
-    account_id = auth.get("chatgpt_user_id") or auth.get("user_id") or names.get("sub")
+    # top-level claim, else the profile's. Codex reads no other user claim, so
+    # a token with neither names no account Codex would recognise.
+    account_id = auth.get("chatgpt_user_id") or auth.get("user_id")
     if account_id is None:
         return None
     return Account(
