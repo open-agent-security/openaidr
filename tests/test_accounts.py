@@ -870,3 +870,47 @@ def test_a_codex_token_with_no_user_claim_names_no_account(
     )
 
     assert signed_in("codex", home=home) is None
+
+
+def _payload_ending_in(remainder: int) -> tuple[str, str, str]:
+    """A token's header, payload and signature, the payload's length leaving
+    `remainder` after division by 4, so it ends in a symbol with unused bits,
+    and holding a URL-safe `-` or `_` (`~~~` encodes as `fn5-`)."""
+    for pad in range(16):
+        claims = {**_CODEX_CLAIMS, "pad": "~~~" + "x" * pad}
+        header, payload, signature = _jwt(claims).split(".")
+        if len(payload) % 4 == remainder and set("-_") & set(payload):
+            return header, payload, signature
+    raise AssertionError("no such payload found")
+
+
+@pytest.mark.parametrize("remainder", [2, 3])
+@pytest.mark.parametrize(
+    "spoil",
+    ["canonical padding", "a non-canonical final symbol", "the standard alphabet"],
+)
+def test_a_payload_codex_would_refuse_names_no_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remainder: int, spoil: str
+) -> None:
+    """Codex decodes the payload with Rust's `URL_SAFE_NO_PAD`, which refuses
+    padding, the standard alphabet's `+` and `/`, and a final symbol whose
+    unused bits are set. Python accepts all three, so each must be refused
+    here, or an account comes from a token Codex cannot load."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    header, payload, signature = _payload_ending_in(remainder)
+    if spoil == "canonical padding":
+        spoiled = payload + "=" * (-len(payload) % 4)
+    elif spoil == "a non-canonical final symbol":
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        spoiled = payload[:-1] + alphabet[alphabet.index(payload[-1]) ^ 1]
+    else:
+        spoiled = payload.replace("-", "+").replace("_", "/")
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    for token, named in (
+        (f"{header}.{payload}.{signature}", True),
+        (f"{header}.{spoiled}.{signature}", False),
+    ):
+        document = {"auth_mode": "chatgpt", "tokens": {"id_token": token}}
+        (home / ".codex" / "auth.json").write_text(json.dumps(document), "utf-8")
+        assert (signed_in("codex", home=home) is not None) == named, token
