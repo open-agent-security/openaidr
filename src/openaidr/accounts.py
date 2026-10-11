@@ -372,10 +372,17 @@ def _token_claims(token: object) -> dict[str, object]:
     lenient decoder discards instead of rejecting, so two different strings
     would decode to the same claims. Reading past any of these would mean an
     account from a credential Codex itself cannot load.
+
+    The three segments must each be non-empty, as Codex's own
+    `decode_jwt_payload` requires: a header, payload or signature missing
+    entirely is a shape Codex itself refuses, not one lacking only a payload.
     """
-    if not isinstance(token, str) or token.count(".") != 2:
+    if not isinstance(token, str):
         return {}
-    payload = token.split(".")[1]
+    segments = token.split(".")
+    if len(segments) != 3 or not all(segments):
+        return {}
+    payload = segments[1]
     if "=" in payload:
         return {}
     padded = payload + "=" * (-len(payload) % 4)

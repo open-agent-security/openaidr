@@ -210,6 +210,8 @@ def test_codex_reads_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         {"tokens": {"id_token": "not-a-jwt"}},
         {"tokens": {"id_token": "a.!!!.c"}},
         {"tokens": {"id_token": _jwt({"email": "jane.doe@example.com"})}},
+        {"tokens": {"id_token": f".{_jwt(_CODEX_CLAIMS).split('.')[1]}.sig"}},
+        {"tokens": {"id_token": f"header.{_jwt(_CODEX_CLAIMS).split('.')[1]}."}},
     ],
 )
 def test_codex_without_an_identity_is_signed_in_as_no_one(
