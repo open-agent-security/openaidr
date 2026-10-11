@@ -479,8 +479,8 @@ def test_an_untraversable_claude_directory_is_no_legacy_file(tmp_path: Path) -> 
 
 
 def test_no_filesystem_probe_can_raise_out_of_the_reader() -> None:
-    """Every existence probe in `accounts.py` goes through `_is_file`, which
-    answers False where it cannot tell. A bare `.is_file()`, `.exists()` or
+    """Every existence probe in `accounts.py` goes through `_is_file` or
+    `_exists`, which answer False where they cannot tell. A bare `.is_file()`, `.exists()` or
     `.is_dir()` elsewhere is how an unreadable directory became an exception."""
     import ast
 
@@ -488,14 +488,14 @@ def test_no_filesystem_probe_can_raise_out_of_the_reader() -> None:
     bare = [
         node.lineno
         for function in ast.walk(tree)
-        if isinstance(function, ast.FunctionDef) and function.name != "_is_file"
+        if isinstance(function, ast.FunctionDef) and function.name not in {"_is_file", "_exists"}
         for node in ast.walk(function)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr in {"is_file", "exists", "is_dir"}
     ]
 
-    assert bare == [], f"bare filesystem probes at lines {bare}; use `_is_file`"
+    assert bare == [], f"bare filesystem probes at lines {bare}; use `_is_file` or `_exists`"
 
 
 #: Records nothing should have written, each a way reading one could raise.
@@ -560,3 +560,60 @@ def test_a_hostile_devin_answer_never_raises(output: str) -> None:
     found = query.read(output)
 
     assert found is None or isinstance(found, Account)
+
+
+@pytest.mark.parametrize("named", [False, True], ids=["default-dir", "named-dir"])
+@pytest.mark.parametrize("custom_oauth", [False, True], ids=["prod", "custom-oauth"])
+@pytest.mark.parametrize(
+    "legacy", ["absent", "file", "directory", "broken-symlink", "untraversable-dir"]
+)
+def test_the_claude_record_is_chosen_as_getglobalclaudefile_chooses_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    named: bool,
+    custom_oauth: bool,
+    legacy: str,
+) -> None:
+    """Claude Code 2.1.283's `getGlobalClaudeFile`, as a table:
+    `existsSync(NFC(dir)/.config.json)` chooses the legacy file, a directory
+    or anything else there included, else `.claude${suffix}.json` beside or
+    inside the directory. `existsSync` follows symlinks and answers false
+    where it cannot tell. The reader must choose the same file in every case
+    (ADR-0027 clause 3); a chosen file that is not a readable record is no
+    account."""
+    home = _home(tmp_path)
+    directory = home / ".claude"
+    directory.mkdir()
+    if named:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(directory))
+    if custom_oauth:
+        monkeypatch.setenv("CLAUDE_CODE_CUSTOM_OAUTH_URL", "https://auth.example.test")
+    modern = (directory if named else home) / (
+        ".claude-custom-oauth.json" if custom_oauth else ".claude.json"
+    )
+    modern.write_text(json.dumps({"oauthAccount": {**_CLAUDE, "accountUuid": "modern"}}), "utf-8")
+    config = directory / ".config.json"
+    if legacy == "file":
+        config.write_text(
+            json.dumps({"oauthAccount": {**_CLAUDE, "accountUuid": "legacy"}}), "utf-8"
+        )
+    elif legacy == "directory":
+        config.mkdir()
+    elif legacy == "broken-symlink":
+        config.symlink_to(directory / "nowhere")
+    elif legacy == "untraversable-dir":
+        directory.chmod(0o600)
+    expected = {
+        "absent": "modern",
+        "file": "legacy",
+        "directory": None,
+        "broken-symlink": "modern",
+        # Inside a named directory the other file is untraversable too.
+        "untraversable-dir": None if named else "modern",
+    }[legacy]
+    try:
+        found = signed_in("claude-code", home=home)
+    finally:
+        directory.chmod(0o700)
+
+    assert (found.account_id if found else None) == expected
