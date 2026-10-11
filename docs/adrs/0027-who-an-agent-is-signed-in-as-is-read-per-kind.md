@@ -46,7 +46,10 @@ learns them for Claude Code first and the others never.
    a lenient decoder that reads the rest anyway; no embedded padding, since
    base64url-no-pad never has any; and no non-canonical final symbol, whose
    unused bits a lenient decoder discards instead of rejecting, so two
-   different tokens would read as the same account.
+   different tokens would read as the same account. The token's shape is
+   checked the same way Codex's own `decode_jwt_payload` checks it: three
+   segments, each non-empty, not merely two dots — a header or signature
+   missing entirely is a shape Codex itself refuses.
 5. **Codex is read where its configured store keeps the sign-in.** This was
    checked against Codex's own auth storage. The boundary:
    - `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.
