@@ -208,6 +208,24 @@ def test_codex_without_an_identity_is_signed_in_as_no_one(
     assert signed_in("codex", home=home) is None
 
 
+def test_a_character_outside_the_base64_alphabet_is_a_malformed_token(
+    tmp_path: Path,
+) -> None:
+    """Codex's own decoder (Rust's `URL_SAFE_NO_PAD`) refuses a payload with a
+    character outside the base64 alphabet. Python's lenient decoder would
+    silently drop a handful of them and decode the token anyway, naming an
+    account from a credential Codex itself cannot load."""
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    header, payload, signature = _jwt(_CODEX_CLAIMS).split(".")
+    tampered = f"{header}.{payload}!!!.{signature}"
+    (home / ".codex" / "auth.json").write_text(
+        json.dumps(_codex_auth(None) | {"tokens": {"id_token": tampered}}), "utf-8"
+    )
+
+    assert signed_in("codex", home=home) is None
+
+
 def test_no_codex_secret_reaches_the_account(tmp_path: Path) -> None:
     """The file holds the access token, the refresh token and any API key
     beside the identity token. None of them is in what comes back."""
