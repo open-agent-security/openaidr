@@ -26,14 +26,6 @@ _CLAUDE = {
 _SECRETS = ("ACCESS-SECRET", "REFRESH-SECRET", "sk-API-SECRET")
 
 
-@pytest.fixture(autouse=True)
-def no_codex_key_here(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A `CODEX_API_KEY` in the environment running the tests would outrank
-    every stored Codex login (ADR-0027 clause 5). Only the test that is about
-    it sets one."""
-    monkeypatch.delenv("CODEX_API_KEY", raising=False)
-
-
 def _home(tmp_path: Path) -> Path:
     home = tmp_path / "home"
     home.mkdir()
@@ -540,31 +532,31 @@ def test_codex_auto_reads_the_file_it_fell_back_to(
     """Under `auto` Codex tries the keyring, then `auth.json`, and deletes the
     file on every keyring save: a file that is there is the store in use."""
     monkeypatch.delenv("CODEX_HOME", raising=False)
-    monkeypatch.delenv("CODEX_API_KEY", raising=False)
     home = _home(tmp_path)
     _codex_signed_in_on_disk(home, 'cli_auth_credentials_store = "auto"\n')
 
     assert signed_in("codex", home=home) is not None
-    assert sign_in_record("codex", home=home) == home / ".codex" / "auth.json"
 
     (home / ".codex" / "auth.json").unlink()
     assert signed_in("codex", home=home) is None
+    # Still watched: a later sign-in the keyring refuses creates it.
+    assert sign_in_record("codex", home=home) == home / ".codex" / "auth.json"
 
 
-def test_an_api_key_in_codexs_environment_outranks_the_stored_login(
+def test_an_api_key_in_the_environment_is_outside_the_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`codex exec` signs in with `CODEX_API_KEY` ahead of any stored login,
-    and a key names no person."""
+    """`codex exec` prefers `CODEX_API_KEY` and the interactive Codex ignores
+    it, per process. Which process ran a session is not on disk, so the
+    stored login is the answer (ADR-0027 clause 5)."""
     monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.setenv("CODEX_API_KEY", "sk-API-SECRET")
     home = _home(tmp_path)
     _codex_signed_in_on_disk(home, None)
 
-    monkeypatch.setenv("CODEX_API_KEY", "sk-API-SECRET")
-    assert signed_in("codex", home=home) is None
+    found = signed_in("codex", home=home)
 
-    monkeypatch.setenv("CODEX_API_KEY", "  ")
-    assert signed_in("codex", home=home) is not None
+    assert found is not None and "sk-API-SECRET" not in repr(found)
 
 
 def test_a_profile_choosing_a_store_is_outside_the_boundary(

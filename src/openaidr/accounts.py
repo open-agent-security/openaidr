@@ -244,37 +244,24 @@ def _claude_record(config_dir: Path | None, home: Path) -> Path:
 
 
 def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
-    """`auth.json`, where it is the sign-in Codex uses, else None.
+    """`auth.json`, where Codex's configured store can keep the sign-in, else
+    None (ADR-0027 clause 5, checked against Codex's auth storage).
 
-    The boundary is ADR-0027 clause 5, checked against Codex's own auth
-    loader and storage:
-
-    - `CODEX_API_KEY` set in this environment: Codex started here with
-      `codex exec` signs in with that key, ahead of any stored login, and a
-      key names no person.
-    - `cli_auth_credentials_store` in Codex's `config.toml`: `file`, the
-      default, reads `auth.json`. `auto` reads it when present: Codex deletes
-      the file on every save to the keyring, so a file that is there is the
-      store it fell back to. `keyring`, `ephemeral` and any other value keep
-      the sign-in off disk, and a file left from before is an earlier one.
-      A `config.toml` that does not parse leaves the default.
-
-    Not seen: another process's environment, `-c` overrides and profiles,
-    and managed configuration layers. Each would mean guessing at state this
-    package cannot read.
+    `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.
+    `file`, the default, and `auto` use `auth.json`: `auto` tries the keyring
+    first, falls back to the file, and deletes the file on every keyring
+    save, so a file that is there is the one in use. The path is returned
+    whether or not the file exists yet, so a sign-in that creates it is seen.
+    `keyring`, `ephemeral` and any other value keep the sign-in off disk. A
+    `config.toml` that does not parse leaves the default.
     """
-    if os.environ.get("CODEX_API_KEY", "").strip():
-        return None
     root = config_dir if config_dir is not None else _env_dir("CODEX_HOME", home / ".codex")
-    record = root / "auth.json"
     try:
         config = tomllib.loads((root / "config.toml").read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         config = {}
     store = config.get("cli_auth_credentials_store", "file")
-    if store == "file" or (store == "auto" and record.is_file()):
-        return record
-    return None
+    return root / "auth.json" if store in ("file", "auto") else None
 
 
 def _env_dir(variable: str, default: Path) -> Path:
