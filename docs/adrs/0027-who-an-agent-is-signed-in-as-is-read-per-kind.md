@@ -41,12 +41,23 @@ learns them for Claude Code first and the others never.
    is read into what this returns. The signature is not checked: this reports
    what Codex holds on this machine, not a proof of who the person is. Signed
    in with an API key there is no person, and the answer is None.
-5. **Codex is read only where it keeps the sign-in.** Its `config.toml`
-   `cli_auth_credentials_store` chooses `file` (the default), `keyring`,
-   `auto` (the keyring when the OS has one) or `ephemeral`. Under any but
-   `file`, `auth.json` is not the store and may hold an earlier sign-in, so
-   the answer is None, never a possibly stale account. The keyring is never
-   read: it holds the credential.
+5. **Codex is read only where it keeps the sign-in it uses.** This was
+   checked against Codex's own auth loader and storage. The boundary:
+   - `CODEX_API_KEY` set in the environment this package runs in: `codex
+     exec` started there signs in with that key, ahead of any stored login,
+     and a key names no person. The answer is None.
+   - `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.
+     `file`, the default, reads `auth.json`. `auto` tries the keyring, then
+     `auth.json`, and Codex deletes the file on every keyring save, so under
+     `auto` a file that is present is the store in use and is read.
+     `keyring`, `ephemeral` and any other value keep the sign-in off disk,
+     and a file left behind is an earlier one, so the answer is None. A
+     `config.toml` that does not parse leaves the default.
+   - Not seen, deliberately: another process's environment, `-c` overrides
+     and profiles, managed configuration layers, and the rare `auto` case
+     of an older keyring entry outranking a newer fallback file. Each means
+     guessing at state this package cannot read, or reading the keyring,
+     which holds the credential.
 6. **Devin is never run here; `sign_in_query("devin")` says how to ask it.**
    Sensing in this package is read-only, and only Devin's own `devin auth
    status` can say who is signed in, by asking Devin's server with Devin's

@@ -26,6 +26,14 @@ _CLAUDE = {
 _SECRETS = ("ACCESS-SECRET", "REFRESH-SECRET", "sk-API-SECRET")
 
 
+@pytest.fixture(autouse=True)
+def no_codex_key_here(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `CODEX_API_KEY` in the environment running the tests would outrank
+    every stored Codex login (ADR-0027 clause 5). Only the test that is about
+    it sets one."""
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+
+
 def _home(tmp_path: Path) -> Path:
     home = tmp_path / "home"
     home.mkdir()
@@ -412,13 +420,13 @@ def test_a_kind_read_from_disk_has_no_query(tmp_path: Path, kind: str) -> None:
 # --- codex's credential store ------------------------------------------------
 
 
-@pytest.mark.parametrize("store", ["keyring", "auto", "ephemeral", "something-new"])
+@pytest.mark.parametrize("store", ["keyring", "ephemeral", "something-new"])
 def test_a_codex_sign_in_kept_off_disk_is_not_read_from_a_stale_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: str
 ) -> None:
     """`cli_auth_credentials_store` may keep the sign-in in the OS keyring or
-    in memory. `auth.json` is then not where it lives, and may be an earlier
-    one: no account, never a stale one."""
+    in memory. Codex deletes `auth.json` on every save to the keyring, so one
+    left behind is an earlier sign-in: no account, never a stale one."""
     monkeypatch.delenv("CODEX_HOME", raising=False)
     home = _home(tmp_path)
     (home / ".codex").mkdir()
@@ -517,3 +525,57 @@ def test_one_call_is_one_read_of_the_record(
 
 def test_a_persons_name_and_address_are_local_only() -> None:
     assert {"display_name", "email"} <= LOCAL_ONLY
+
+
+def _codex_signed_in_on_disk(home: Path, config: str | None) -> None:
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text(json.dumps(_codex_auth(_CODEX_CLAIMS)), "utf-8")
+    if config is not None:
+        (home / ".codex" / "config.toml").write_text(config, "utf-8")
+
+
+def test_codex_auto_reads_the_file_it_fell_back_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under `auto` Codex tries the keyring, then `auth.json`, and deletes the
+    file on every keyring save: a file that is there is the store in use."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+    home = _home(tmp_path)
+    _codex_signed_in_on_disk(home, 'cli_auth_credentials_store = "auto"\n')
+
+    assert signed_in("codex", home=home) is not None
+    assert sign_in_record("codex", home=home) == home / ".codex" / "auth.json"
+
+    (home / ".codex" / "auth.json").unlink()
+    assert signed_in("codex", home=home) is None
+
+
+def test_an_api_key_in_codexs_environment_outranks_the_stored_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`codex exec` signs in with `CODEX_API_KEY` ahead of any stored login,
+    and a key names no person."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    home = _home(tmp_path)
+    _codex_signed_in_on_disk(home, None)
+
+    monkeypatch.setenv("CODEX_API_KEY", "sk-API-SECRET")
+    assert signed_in("codex", home=home) is None
+
+    monkeypatch.setenv("CODEX_API_KEY", "  ")
+    assert signed_in("codex", home=home) is not None
+
+
+def test_a_profile_choosing_a_store_is_outside_the_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0027 clause 5 reads the top-level store only. A profile's choice is
+    applied when Codex runs with that profile, which this package cannot see,
+    so the documented path is the top-level answer."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+    home = _home(tmp_path)
+    _codex_signed_in_on_disk(home, '[profiles.work]\ncli_auth_credentials_store = "keyring"\n')
+
+    assert signed_in("codex", home=home) is not None

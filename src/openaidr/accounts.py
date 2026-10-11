@@ -79,9 +79,9 @@ def _codex(config_dir: Path | None, home: Path) -> Account | None:
     The same file holds the access token, the refresh token and any API key;
     none of them is read into anything this returns. The signature is not
     checked: this reports what Codex holds on this machine, not a proof of who
-    the person is. Signed in with an API key there is no person to name. Kept
-    in the OS keyring or in memory (`cli_auth_credentials_store`), the sign-in
-    is not in `auth.json`, so there is none to read here.
+    the person is. Signed in with an API key there is no person to name, and
+    where Codex keeps the sign-in off `auth.json` there is none to read here
+    (`_codex_record`).
     """
     record = _codex_record(config_dir, home)
     if record is None:
@@ -244,21 +244,37 @@ def _claude_record(config_dir: Path | None, home: Path) -> Path:
 
 
 def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
-    """`auth.json`, unless Codex is set to keep its sign-in elsewhere.
+    """`auth.json`, where it is the sign-in Codex uses, else None.
 
-    `cli_auth_credentials_store` in Codex's `config.toml` chooses `file` (the
-    default), `keyring`, `auto` (the keyring when the OS has one) or
-    `ephemeral`. Under any but `file`, `auth.json` is not where the sign-in
-    lives and may be an earlier one, so there is no record to read. A
-    `config.toml` that does not parse leaves the default.
+    The boundary is ADR-0027 clause 5, checked against Codex's own auth
+    loader and storage:
+
+    - `CODEX_API_KEY` set in this environment: Codex started here with
+      `codex exec` signs in with that key, ahead of any stored login, and a
+      key names no person.
+    - `cli_auth_credentials_store` in Codex's `config.toml`: `file`, the
+      default, reads `auth.json`. `auto` reads it when present: Codex deletes
+      the file on every save to the keyring, so a file that is there is the
+      store it fell back to. `keyring`, `ephemeral` and any other value keep
+      the sign-in off disk, and a file left from before is an earlier one.
+      A `config.toml` that does not parse leaves the default.
+
+    Not seen: another process's environment, `-c` overrides and profiles,
+    and managed configuration layers. Each would mean guessing at state this
+    package cannot read.
     """
+    if os.environ.get("CODEX_API_KEY", "").strip():
+        return None
     root = config_dir if config_dir is not None else _env_dir("CODEX_HOME", home / ".codex")
+    record = root / "auth.json"
     try:
         config = tomllib.loads((root / "config.toml").read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         config = {}
     store = config.get("cli_auth_credentials_store", "file")
-    return root / "auth.json" if store == "file" else None
+    if store == "file" or (store == "auto" and record.is_file()):
+        return record
+    return None
 
 
 def _env_dir(variable: str, default: Path) -> Path:
