@@ -296,8 +296,9 @@ def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
     `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.
     `file`, the default, and `auto` use `auth.json`: `auto` tries the keyring
     first, falls back to the file, and deletes the file on every keyring
-    save, so a file that is there is the one in use.     `keyring`, `ephemeral` and any other value keep the sign-in off disk. A
-    `config.toml` that does not parse leaves the default.
+    save, so a file that is there is the one in use. `keyring`, `ephemeral`
+    and any other value keep the sign-in off disk. A `config.toml` that does
+    not parse leaves the default.
     """
     root = _codex_root(config_dir, home)
     try:
