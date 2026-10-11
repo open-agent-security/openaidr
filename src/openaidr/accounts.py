@@ -346,18 +346,25 @@ _URLSAFE_TO_STANDARD = bytes.maketrans(b"-_", b"+/")
 def _token_claims(token: object) -> dict[str, object]:
     """The payload of a JWT, decoded but not verified; empty when malformed.
 
-    Decoded strictly: Python's lenient decoder silently drops a character
-    outside the base64 alphabet, where Codex's own decoder (Rust's
-    `URL_SAFE_NO_PAD`) refuses the token outright. Reading past that would
-    mean an account from a credential Codex itself cannot load.
+    Decoded exactly as Codex's own decoder (Rust's `URL_SAFE_NO_PAD`) would:
+    no embedded padding, since base64url-no-pad never has any; no character
+    outside the base64 alphabet, which Python's own decoder would otherwise
+    silently drop; and no non-canonical final symbol, whose unused bits a
+    lenient decoder discards instead of rejecting, so two different strings
+    would decode to the same claims. Reading past any of these would mean an
+    account from a credential Codex itself cannot load.
     """
     if not isinstance(token, str) or token.count(".") != 2:
         return {}
     payload = token.split(".")[1]
+    if "=" in payload:
+        return {}
     padded = payload + "=" * (-len(payload) % 4)
     try:
         standard = padded.encode("ascii").translate(_URLSAFE_TO_STANDARD)
         decoded = base64.b64decode(standard, validate=True)
+        if base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != payload:
+            return {}
         claims = json.loads(decoded)
     except (binascii.Error, ValueError):
         return {}
