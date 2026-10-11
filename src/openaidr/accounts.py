@@ -239,14 +239,18 @@ def sign_in_record(
 
 
 def _claude_record(config_dir: Path | None, home: Path) -> Path:
-    """Claude Code's configuration file: `~/.claude.json` beside the default
-    directory, inside `CLAUDE_CONFIG_DIR` when set, and a legacy `.config.json`
-    in the directory over either, as Claude Code reads it first."""
-    root = config_dir if config_dir is not None else _env_dir("CLAUDE_CONFIG_DIR", home / ".claude")
+    """Claude Code's configuration file, where Claude Code itself looks: inside
+    the configuration directory whenever one is named, by `CLAUDE_CONFIG_DIR`
+    or by the caller, even when it names `~/.claude`; else `~/.claude.json`.
+    A legacy `.config.json` in the directory wins, as Claude Code reads it
+    first. Named or not is the test, never whether the path equals the
+    default."""
+    named = config_dir if config_dir is not None else _named_dir("CLAUDE_CONFIG_DIR")
+    root = named if named is not None else home / ".claude"
     legacy = root / ".config.json"
     if legacy.is_file():
         return legacy
-    return home / ".claude.json" if root == home / ".claude" else root / ".claude.json"
+    return root / ".claude.json" if named is not None else home / ".claude.json"
 
 
 def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
@@ -268,6 +272,11 @@ def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
         config = {}
     store = config.get("cli_auth_credentials_store", "file")
     return root / "auth.json" if store in ("file", "auto") else None
+
+
+def _named_dir(variable: str) -> Path | None:
+    value = os.environ.get(variable)
+    return Path(value) if value else None
 
 
 def _env_dir(variable: str, default: Path) -> Path:

@@ -74,7 +74,21 @@ learns them for Claude Code first and the others never.
    time are a consumer's business; Devin's holds the credential.
 8. **A kind that cannot say answers None, never a guess.** An unknown kind
    answers None too.
-9. **Reading a sign-in record is not reading sessions.** `codex` is read here
+9. **The answer is the agent's record of its sign-in, never a check of the
+   credential.** This holds for every kind. What is returned is what the
+   agent's own record says, read where the agent itself keeps it, which for
+   Claude Code is inside `CLAUDE_CONFIG_DIR` whenever it is set.
+   - The credential is never opened: the macOS Keychain, Claude Code's
+     `.credentials.json`, Codex's keyring and Devin's `credentials.toml`
+     hold the secret. So a record left after the credential was removed or
+     switched still names its account, and a consumer reads "the account
+     this agent last signed in as", not "proved signed in now".
+   - How one process authenticated is not seen either: an API key in its
+     environment, or a `-c` override. That is per process, and no file on
+     the machine records it.
+   - What the record itself says about where the sign-in lives is honoured,
+     because it is on disk: Codex's credential store (clause 5).
+10. **Reading a sign-in record is not reading sessions.** `codex` is read here
    ahead of a Codex session reader. This adds no session coverage: the package
    still reads sessions for `claude-code` and `devin` only.
 
@@ -100,6 +114,12 @@ learns them for Claude Code first and the others never.
   read-only and ships nothing anywhere, and the command asks Devin's server.
   Whether to make that call is the consumer's decision. The per-kind
   knowledge of where the binary lives and how its answer reads stays here.
+- **Check the record against the credential**, for example by confirming
+  that Claude Code's Keychain item or `.credentials.json` exists. Rejected.
+  On macOS that is a Keychain query, and on every platform it touches the
+  store that holds the secret, which read-only sensing refuses. A
+  platform-dependent half check would make the same record answer
+  differently on two machines.
 - **Read Codex's keyring, or `auth.json` whatever the store.** Rejected. The
   keyring holds the credential. A file the store does not use can name the
   account signed in before, and a wrong account is worse than none.
@@ -115,6 +135,8 @@ learns them for Claude Code first and the others never.
   whenever Devin could reach its server since the last sign-in. A consumer
   keeps the last answer it got.
 - A Codex user who keeps the sign-in in the keyring names no person.
+- A record that outlives its credential still names its account. A consumer
+  that needs proof of a live credential has to get it another way.
 - `devin auth status` prints text, with no machine-readable form. A changed
   layout reads as no account, never as an error.
 - Each kind's file format is a dependency on that agent. A changed shape reads
