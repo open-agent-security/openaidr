@@ -344,7 +344,7 @@ MCPLogState = Literal[
 ]
 """Whether this session's MCP connection log could be read, and why not.
 
-Nine states rather than a boolean, because they call for different responses.
+Ten states rather than a boolean, because they call for different responses.
 A missing cache root is very likely an unsupported platform and is a property
 of the machine; an unreadable one is a permission or transient filesystem
 failure on a root that does exist, and must not read the same as a platform
