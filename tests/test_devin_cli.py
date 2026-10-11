@@ -747,6 +747,12 @@ def test_an_unresolved_generic_mcp_call_stays_unclassified(tmp_path: Path) -> No
             {"path": "/a", "new_text": "n"},
         ),
         ("webfetch", {"url": "https://x.test"}, "web_fetch", {"url": "https://x.test"}),
+        (
+            "run_subagent",
+            {"title": "t", "task": "t", "profile": "subagent_explore", "is_background": False},
+            "delegate",
+            {"agent": "subagent_explore"},
+        ),
         ("run_subagent", {"task": "t"}, "delegate", {}),
         ("skill", {"name": "deploy"}, "skill", {"skill": "deploy"}),
         ("todo_write", {"todos": []}, "other", {}),

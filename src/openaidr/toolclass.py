@@ -144,6 +144,9 @@ _ARGUMENT_KEYS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "write": (("path", "file_path"), ("content", "content")),
         "edit": (("path", "file_path"), ("new_text", "new_string")),
         "webfetch": (("url", "url"),),
+        # The profile a sub-agent runs with, as a recorded 3000.11.3 call holds
+        # it: `{"title", "task", "profile", "is_background"}`.
+        "run_subagent": (("agent", "profile"),),
         # The skill tool's one input is the skill's name; the binary does not
         # say which of these two spellings it serialises, and under this tool
         # either one can only hold that name.
