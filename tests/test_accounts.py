@@ -110,6 +110,20 @@ def test_a_legacy_claude_config_file_wins(tmp_path: Path) -> None:
     assert account is not None and account.account_id == "legacy"
 
 
+def test_sign_in_records_names_the_legacy_file_before_it_exists(tmp_path: Path) -> None:
+    """A consumer following the watch contract needs the legacy path to watch
+    even before Claude Code has written it, or it has no way to notice the
+    legacy file appear and take over."""
+    home = _home(tmp_path)
+    (home / ".claude").mkdir()
+    (home / ".claude.json").write_text(json.dumps({"oauthAccount": _CLAUDE}), "utf-8")
+
+    assert sign_in_records("claude-code", home=home) == (
+        home / ".claude" / ".config.json",
+        home / ".claude.json",
+    )
+
+
 @pytest.mark.parametrize(
     "document",
     [
@@ -498,7 +512,7 @@ def test_codex_reads_auth_json_when_that_is_its_store(
 @pytest.mark.parametrize(
     ("kind", "relatives"),
     [
-        ("claude-code", (".claude.json",)),
+        ("claude-code", (".claude/.config.json", ".claude.json")),
         ("codex", (".codex/config.toml", ".codex/auth.json")),
         ("devin", (".local/share/devin/credentials.toml",)),
     ],
@@ -704,7 +718,7 @@ def test_claude_config_dir_named_as_the_default_is_still_named(
         records = sign_in_records("claude-code", config_dir=directory, home=home)
 
     assert found is not None and found.account_id == _CLAUDE["accountUuid"]
-    assert records == (directory / ".claude.json",)
+    assert records == (directory / ".config.json", directory / ".claude.json")
 
 
 @pytest.mark.parametrize(

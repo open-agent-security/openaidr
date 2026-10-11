@@ -86,7 +86,9 @@ learns them for Claude Code first and the others never.
    answer**, whether or not each exists yet. A consumer asks again when any
    of them is created, changed or removed. For Devin, that keeps one call to
    its server per sign-in rather than one per pass.
-   - Claude Code: its `.claude.json`, found as clause 2 finds it.
+   - Claude Code: the legacy `.config.json` and the file it falls back to,
+     found as clause 2 finds them. The legacy file winning is itself a
+     change the fallback file need not show.
    - Codex: `config.toml` and `auth.json`, whatever the store. The store
      setting can move the sign-in on or off `auth.json` without that file
      changing, in either direction, and a sign-in under `auto` can create
