@@ -612,3 +612,29 @@ def test_codex_is_read_as_codex_reads_its_own_token(
 
     assert found is not None
     assert (found.account_id, found.email) == (account_id, email)
+
+
+@pytest.mark.parametrize("how", ["environment", "argument"])
+def test_claude_config_dir_named_as_the_default_is_still_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    """Claude Code puts `.claude.json` inside `CLAUDE_CONFIG_DIR` whenever it
+    is set, even to `~/.claude`. Telling named from unnamed by comparing the
+    path with the default read the home directory's file instead."""
+    home = _home(tmp_path)
+    directory = home / ".claude"
+    directory.mkdir()
+    (home / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {**_CLAUDE, "accountUuid": "the-home-file"}}), "utf-8"
+    )
+    (directory / ".claude.json").write_text(json.dumps({"oauthAccount": _CLAUDE}), "utf-8")
+    if how == "environment":
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(directory))
+        found = signed_in("claude-code", home=home)
+        record = sign_in_record("claude-code", home=home)
+    else:
+        found = signed_in("claude-code", config_dir=directory, home=home)
+        record = sign_in_record("claude-code", config_dir=directory, home=home)
+
+    assert found is not None and found.account_id == _CLAUDE["accountUuid"]
+    assert record == directory / ".claude.json"
