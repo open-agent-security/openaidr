@@ -250,10 +250,13 @@ def _env_dir(variable: str, default: Path) -> Path:
 
 def _json(path: Path) -> object:
     """One read of `path` as JSON, or None. One read, so fields used together
-    come from the same account even while the agent rewrites the file."""
+    come from the same account even while the agent rewrites the file. None
+    for anything that is not readable JSON: an unreadable path, bytes that
+    are not UTF-8, text that does not parse, and nesting deep enough to
+    exhaust the decoder."""
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
 
 
