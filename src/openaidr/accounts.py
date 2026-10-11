@@ -250,22 +250,28 @@ _READERS: dict[str, Callable[[Path | None, Path], Account | None]] = {
 }
 
 
-def sign_in_record(
+def sign_in_records(
     kind: str, *, config_dir: Path | None = None, home: Path | None = None
-) -> Path | None:
-    """The file a new sign-in rewrites for `kind`, or None for a kind with no
-    reader or a sign-in kept off disk. A consumer asks again when it changes,
-    which for Devin's `sign_in_query` is the difference between one call to
-    its server and one per pass. Only the file's existence and time are a
-    consumer's business: for Devin it holds the credential."""
+) -> tuple[Path, ...]:
+    """Every file whose change can change who `kind` is signed in as, existing
+    or not; empty for a kind with no reader. A consumer asks again when any
+    of them is created, changed or removed, which for Devin's `sign_in_query`
+    is the difference between one call to its server and one per pass. Only
+    their existence and times are a consumer's business: some hold the
+    credential.
+
+    Codex's are its `config.toml` and `auth.json` whatever the store: the
+    store setting can move the sign-in on or off `auth.json` without the file
+    changing (ADR-0027 clause 7)."""
     home = Path.home() if home is None else home
     if kind == "claude-code":
-        return _claude_record(config_dir, home)
+        return (_claude_record(config_dir, home),)
     if kind == "codex":
-        return _codex_record(config_dir, home)
+        root = _codex_root(config_dir, home)
+        return (root / "config.toml", root / "auth.json")
     if kind == "devin":
-        return _devin_data_root(home) / "credentials.toml"
-    return None
+        return (_devin_data_root(home) / "credentials.toml",)
+    return ()
 
 
 def _claude_record(config_dir: Path | None, home: Path) -> Path:
@@ -290,18 +296,20 @@ def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
     `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.
     `file`, the default, and `auto` use `auth.json`: `auto` tries the keyring
     first, falls back to the file, and deletes the file on every keyring
-    save, so a file that is there is the one in use. The path is returned
-    whether or not the file exists yet, so a sign-in that creates it is seen.
-    `keyring`, `ephemeral` and any other value keep the sign-in off disk. A
+    save, so a file that is there is the one in use.     `keyring`, `ephemeral` and any other value keep the sign-in off disk. A
     `config.toml` that does not parse leaves the default.
     """
-    root = config_dir if config_dir is not None else _env_dir("CODEX_HOME", home / ".codex")
+    root = _codex_root(config_dir, home)
     try:
         config = tomllib.loads((root / "config.toml").read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         config = {}
     store = config.get("cli_auth_credentials_store", "file")
     return root / "auth.json" if store in ("file", "auto") else None
+
+
+def _codex_root(config_dir: Path | None, home: Path) -> Path:
+    return config_dir if config_dir is not None else _env_dir("CODEX_HOME", home / ".codex")
 
 
 def _named_dir(variable: str) -> Path | None:

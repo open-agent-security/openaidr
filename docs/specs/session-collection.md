@@ -477,10 +477,11 @@ reads the kind's own sign-in record, once, and returns an `Account` or None
 `display_name` and `email` are `LOCAL_ONLY`. Reading a kind's sign-in record adds
 no session coverage: `codex` is answered here before its sessions are read.
 
-`openaidr.accounts.sign_in_record(kind)` names the file a new sign-in rewrites:
-`.claude.json`, Codex's `auth.json` (as ADR-0027 clause 5 decides), and
-Devin's `credentials.toml`. A consumer asks again when that file changes, so a
-consumer that asks Devin does so once per sign-in, not on every pass.
+`openaidr.accounts.sign_in_records(kind)` names every file whose change can
+change the answer, existing or not: `.claude.json`; Codex's `config.toml` and
+`auth.json`, whatever the store; and Devin's `credentials.toml` (ADR-0027
+clause 7). A consumer asks again when any of them changes, so a consumer that
+asks Devin does so once per sign-in, not on every pass.
 
 ## What this component does not know
 
