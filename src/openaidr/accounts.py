@@ -151,7 +151,7 @@ def _devin_binary(home: Path) -> Path | None:
     installed = _devin_data_root(home) / "cli" / "_versions" / "current" / "bin" / "devin"
     on_path = shutil.which("devin")
     for candidate in (installed, Path(on_path) if on_path else None, *_DEVIN_APP_BINARIES):
-        if candidate is not None and candidate.is_file() and os.access(candidate, os.X_OK):
+        if candidate is not None and _is_file(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return None
 
@@ -205,7 +205,7 @@ def _claude_record(config_dir: Path | None, home: Path) -> Path:
     named, by `CLAUDE_CONFIG_DIR` or by the caller, even when it names
     `~/.claude`; else `~/.claude.json`."""
     legacy, modern = _claude_paths(config_dir, home)
-    return legacy if legacy.is_file() else modern
+    return legacy if _is_file(legacy) else modern
 
 
 def _claude_paths(config_dir: Path | None, home: Path) -> tuple[Path, Path]:
@@ -225,6 +225,17 @@ def _claude_paths(config_dir: Path | None, home: Path) -> tuple[Path, Path]:
     # normalised to NFC, and for the other file in the directory as given.
     legacy = Path(unicodedata.normalize("NFC", str(root))) / ".config.json"
     return legacy, modern
+
+
+def _is_file(path: Path) -> bool:
+    """Whether `path` is a file, False where it cannot be told. Before Python
+    3.14 `Path.is_file` raises on an untraversable directory, and a probe that
+    raises would break `signed_in`'s promise never to. Claude Code's own probe,
+    `existsSync`, answers false there too."""
+    try:
+        return path.is_file()
+    except OSError:
+        return False
 
 
 def _named_dir(variable: str) -> Path | None:
