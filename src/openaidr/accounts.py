@@ -215,7 +215,11 @@ def _claude_paths(config_dir: Path | None, home: Path) -> tuple[Path, Path]:
     equals the default."""
     named = config_dir if config_dir is not None else _named_dir("CLAUDE_CONFIG_DIR")
     root = named if named is not None else home / ".claude"
-    modern = root / ".claude.json" if named is not None else home / ".claude.json"
+    # Claude Code names the file `.claude${suffix}.json`, the suffix
+    # `-custom-oauth` when `CLAUDE_CODE_CUSTOM_OAUTH_URL` is set and empty in
+    # every shipped build otherwise (ADR-0027 clause 3).
+    suffix = "-custom-oauth" if os.environ.get("CLAUDE_CODE_CUSTOM_OAUTH_URL") else ""
+    modern = (named if named is not None else home) / f".claude{suffix}.json"
     return root / ".config.json", modern
 
 
