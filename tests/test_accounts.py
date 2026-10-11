@@ -638,3 +638,46 @@ def test_claude_config_dir_named_as_the_default_is_still_named(
 
     assert found is not None and found.account_id == _CLAUDE["accountUuid"]
     assert record == directory / ".claude.json"
+
+
+@pytest.mark.parametrize(
+    ("fields", "named"),
+    [
+        ({"auth_mode": "chatgpt", "OPENAI_API_KEY": "sk-API-SECRET"}, True),
+        ({"auth_mode": "chatgptAuthTokens"}, True),
+        ({"auth_mode": "apikey"}, False),
+        ({"auth_mode": "agentIdentity"}, False),
+        ({"OPENAI_API_KEY": None}, True),
+        ({"OPENAI_API_KEY": "sk-API-SECRET"}, False),
+        ({"personal_access_token": "pat-SECRET"}, False),
+        ({"bedrock_api_key": {"key": "SECRET"}}, False),
+        ({}, True),
+    ],
+    ids=[
+        "explicit-chatgpt-wins",
+        "chatgpt-tokens",
+        "explicit-apikey",
+        "other-explicit-mode",
+        "null-key-is-chatgpt",
+        "older-file-with-a-key",
+        "personal-access-token",
+        "bedrock-key",
+        "nothing-but-tokens",
+    ],
+)
+def test_codex_names_a_person_only_when_it_signs_in_with_chatgpt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fields: dict[str, object], named: bool
+) -> None:
+    """Codex's `resolved_mode`: an explicit `auth_mode` wins, else a key field
+    that is set means a key, else ChatGPT. Tokens left in a file that signs in
+    with a key belong to no one signed in now."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    document = {"tokens": {"id_token": _jwt(_CODEX_CLAIMS)}, **fields}
+    (home / ".codex" / "auth.json").write_text(json.dumps(document), "utf-8")
+
+    found = signed_in("codex", home=home)
+
+    assert (found is not None) == named
+    assert "SECRET" not in repr(found)

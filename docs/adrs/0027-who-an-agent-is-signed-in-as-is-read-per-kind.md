@@ -49,6 +49,11 @@ learns them for Claude Code first and the others never.
      a file that is there is the one in use. `sign_in_record` names
      `auth.json` under both, whether or not it exists yet, so a sign-in
      that creates it is seen.
+   - Within `auth.json`, the tokens name a person only when Codex signs in
+     with ChatGPT, as its `resolved_mode` decides. An explicit `auth_mode`
+     wins. Without one, a key field that is set (an API key, a personal
+     access token, a Bedrock key) means a key, and the answer is None. A
+     key field is checked for presence, never read.
    - `keyring`, `ephemeral` and any other value keep the sign-in off disk,
      and a file left behind is an earlier one, so the answer is None. A
      `config.toml` that does not parse leaves the default.
