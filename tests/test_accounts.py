@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from openaidr import accounts
-from openaidr.accounts import sign_in_record, signed_in
+from openaidr.accounts import SignInQuery, sign_in_query, sign_in_record, signed_in
 from openaidr.model import LOCAL_ONLY, Account
 
 _CLAUDE = {
@@ -280,16 +282,44 @@ def no_other_devin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(accounts, "_DEVIN_APP_BINARIES", ())
 
 
+def _asked(query: SignInQuery) -> str:
+    """What a consumer that chooses to ask does: run the query, bounded."""
+    finished = subprocess.run(
+        list(query.argv),
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={**os.environ, **query.environment},
+        check=False,
+    )
+    return finished.stdout if finished.returncode == 0 else ""
+
+
 @pytest.mark.usefixtures("no_other_devin")
-def test_devin_is_asked_who_is_signed_in(tmp_path: Path) -> None:
-    """Devin keeps no record of the person on disk; its own `auth status`
-    command reports one, asking its server with its own credential."""
+def test_devin_is_never_run_by_signed_in(tmp_path: Path) -> None:
+    """Sensing here is read-only (AGENTS.md). Devin's answer comes from its
+    server, so `signed_in` reports what is on disk, which for Devin is no one,
+    and the binary is never started."""
     home = _home(tmp_path)
     _fake_devin(home, _DEVIN_STATUS)
 
-    found = signed_in("devin", home=home)
+    assert signed_in("devin", home=home) is None
+    assert not (home / "argv.txt").exists()
 
-    assert found == Account(
+
+@pytest.mark.usefixtures("no_other_devin")
+def test_devin_says_how_to_ask_and_reads_the_answer(tmp_path: Path) -> None:
+    """Devin's own `auth status` asks its server with its own credential and
+    prints the user. A consumer runs it; this package reads what it printed."""
+    home = _home(tmp_path)
+    binary = _fake_devin(home, _DEVIN_STATUS)
+
+    query = sign_in_query("devin", home=home)
+
+    assert query is not None
+    assert query.argv == (str(binary), "auth", "status")
+    assert query.environment["NO_COLOR"] == "1"
+    assert query.read(_asked(query)) == Account(
         kind="devin",
         account_id="user-0123456789abcdef0123456789abcdef",
         display_name="Jane Doe",
@@ -305,97 +335,119 @@ def test_devin_is_found_under_xdg_data_home(
 ) -> None:
     home = _home(tmp_path)
     data = tmp_path / "data"
-    _fake_devin(home, _DEVIN_STATUS, data=data)
+    binary = _fake_devin(home, _DEVIN_STATUS, data=data)
     monkeypatch.setenv("XDG_DATA_HOME", str(data))
 
-    found = signed_in("devin", home=home)
+    query = sign_in_query("devin", home=home)
 
-    assert found is not None and found.account_id.startswith("user-")
+    assert query is not None and query.argv[0] == str(binary)
 
 
 @pytest.mark.usefixtures("no_other_devin")
-def test_devin_never_needs_its_credentials_file(tmp_path: Path) -> None:
-    """The credential is Devin's to use. Unreadable to everyone, the answer is
-    the same, because nothing here opens it."""
+def test_asking_devin_never_needs_its_credentials_file(tmp_path: Path) -> None:
+    """The credential is Devin's to use. Unreadable to everyone, the query and
+    its answer are the same, because nothing here opens it."""
     home = _home(tmp_path)
     _fake_devin(home, _DEVIN_STATUS)
     credentials = home / ".local" / "share" / "devin" / "credentials.toml"
     credentials.write_text('windsurf_api_key = "sk-API-SECRET"\n', "utf-8")
     credentials.chmod(0)
     try:
-        found = signed_in("devin", home=home)
+        query = sign_in_query("devin", home=home)
+        assert query is not None
+        found = query.read(_asked(query))
     finally:
         credentials.chmod(0o600)
 
     assert found is not None
-    assert "sk-API-SECRET" not in repr(found)
+    assert "sk-API-SECRET" not in repr(found) + repr(query)
 
 
-@pytest.mark.usefixtures("no_other_devin")
-def test_devin_colours_are_not_part_of_the_answer(tmp_path: Path) -> None:
-    home = _home(tmp_path)
-    coloured = _DEVIN_STATUS.replace("Jane Doe", "\x1b[1mJane Doe\x1b[0m")
-    _fake_devin(home, coloured)
+def test_devin_colours_are_not_part_of_the_answer() -> None:
+    query = SignInQuery(kind="devin", argv=("devin", "auth", "status"))
+    coloured = _DEVIN_STATUS.format(home="/h").replace("Jane Doe", "\x1b[1mJane Doe\x1b[0m")
 
-    found = signed_in("devin", home=home)
+    found = query.read(coloured)
 
     assert found is not None and found.display_name == "Jane Doe"
 
 
-@pytest.mark.usefixtures("no_other_devin")
 @pytest.mark.parametrize(
-    ("output", "exit_code"),
+    "output",
     [
-        ("Not logged in. Run `devin auth login`.\n", 0),
-        (_DEVIN_STATUS, 1),
+        "Not logged in. Run `devin auth login`.\n",
+        _DEVIN_STATUS.replace("  User ID:           user-0123456789abcdef0123456789abcdef\n", ""),
         (
-            _DEVIN_STATUS.replace(
-                "  User ID:           user-0123456789abcdef0123456789abcdef\n", ""
-            ),
-            0,
+            "Logged in (via Devin).\n\nUser / team info:\n"
+            "  Failed to fetch from server: Connection failed\n"
         ),
-        (
-            (
-                "Logged in (via Devin).\n\nUser / team info:\n"
-                "  Failed to fetch from server: Connection failed\n"
-            ),
-            0,
-        ),
-        ("", 0),
+        "",
     ],
-    ids=["signed-out", "failed", "no-user-id", "offline", "silent"],
+    ids=["signed-out", "no-user-id", "offline", "silent"],
 )
-def test_devin_without_a_user_id_is_signed_in_as_no_one(
-    tmp_path: Path, output: str, exit_code: int
-) -> None:
+def test_an_answer_naming_no_user_id_is_no_one(output: str) -> None:
     """Offline, Devin cannot say who: it asks its server. That is no account,
     never a guess, and a consumer keeps whatever it last knew."""
-    home = _home(tmp_path)
-    _fake_devin(home, output, exit_code=exit_code)
+    query = SignInQuery(kind="devin", argv=("devin", "auth", "status"))
 
-    assert signed_in("devin", home=home) is None
-
-
-@pytest.mark.usefixtures("no_other_devin")
-def test_devin_that_does_not_answer_in_time_is_no_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = _home(tmp_path)
-    _fake_devin(home, _DEVIN_STATUS, sleep=5)
-    monkeypatch.setattr(accounts, "_DEVIN_TIMEOUT_SECONDS", 0.5)
-
-    assert signed_in("devin", home=home) is None
+    assert query.read(output.format(home="/h")) is None
 
 
 @pytest.mark.usefixtures("no_other_devin")
-def test_no_devin_installed_is_no_one(tmp_path: Path) -> None:
+def test_no_devin_installed_cannot_be_asked(tmp_path: Path) -> None:
     home = _home(tmp_path)
     (home / ".config" / "devin").mkdir(parents=True)
     (home / ".config" / "devin" / "config.json").write_text(
         json.dumps({"devin": {"org_id": "org-1"}}), "utf-8"
     )
 
-    assert signed_in("devin", home=home) is None
+    assert sign_in_query("devin", home=home) is None
+
+
+@pytest.mark.parametrize("kind", ["claude-code", "codex", "cursor"])
+def test_a_kind_read_from_disk_has_no_query(tmp_path: Path, kind: str) -> None:
+    assert sign_in_query(kind, home=_home(tmp_path)) is None
+
+
+# --- codex's credential store ------------------------------------------------
+
+
+@pytest.mark.parametrize("store", ["keyring", "auto", "ephemeral", "something-new"])
+def test_a_codex_sign_in_kept_off_disk_is_not_read_from_a_stale_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: str
+) -> None:
+    """`cli_auth_credentials_store` may keep the sign-in in the OS keyring or
+    in memory. `auth.json` is then not where it lives, and may be an earlier
+    one: no account, never a stale one."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text(json.dumps(_codex_auth(_CODEX_CLAIMS)), "utf-8")
+    (home / ".codex" / "config.toml").write_text(
+        f'cli_auth_credentials_store = "{store}"\n', "utf-8"
+    )
+
+    assert signed_in("codex", home=home) is None
+    assert sign_in_record("codex", home=home) is None
+
+
+@pytest.mark.parametrize(
+    "config", ['cli_auth_credentials_store = "file"\n', 'model = "o3"\n', "not = [toml"]
+)
+def test_codex_reads_auth_json_when_that_is_its_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, config: str
+) -> None:
+    """`file` is Codex's default, and a `config.toml` that does not parse
+    leaves the default."""
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text(json.dumps(_codex_auth(_CODEX_CLAIMS)), "utf-8")
+    (home / ".codex" / "config.toml").write_text(config, "utf-8")
+
+    found = signed_in("codex", home=home)
+
+    assert found is not None and found.kind == "codex"
 
 
 # --- what to watch -----------------------------------------------------------
