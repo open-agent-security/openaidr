@@ -136,7 +136,7 @@ def _codex_signs_in_with_chatgpt(document: Mapping[str, object]) -> bool:
     asked whether it is set, never what it holds."""
     mode = document.get("auth_mode")
     if mode is not None:
-        return mode in _CODEX_CHATGPT_MODES
+        return isinstance(mode, str) and mode in _CODEX_CHATGPT_MODES
     return not any(document.get(name) is not None for name in _CODEX_NON_CHATGPT_FIELDS)
 
 
