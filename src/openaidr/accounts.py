@@ -307,15 +307,24 @@ def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
     `file`, the default, and `auto` use `auth.json`: `auto` tries the keyring
     first, falls back to the file, and deletes the file on every keyring
     save, so a file that is there is the one in use. `keyring`, `ephemeral`
-    and any other value keep the sign-in off disk. A `config.toml` that does
-    not parse leaves the default.
+    and any other value keep the sign-in off disk. Only a missing
+    `config.toml` leaves the default: Codex's own loader treats that as
+    `Ok(None)` and falls back to it, but an existing file it cannot read or
+    parse is an error there, not a default, so there is no store to read.
     """
     root = _codex_root(config_dir, home)
     try:
-        config = tomllib.loads((root / "config.toml").read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-        config = {}
-    store = config.get("cli_auth_credentials_store", "file")
+        raw = (root / "config.toml").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        store = "file"
+    except (OSError, UnicodeDecodeError):
+        return None
+    else:
+        try:
+            config = tomllib.loads(raw)
+        except tomllib.TOMLDecodeError:
+            return None
+        store = config.get("cli_auth_credentials_store", "file")
     return root / "auth.json" if store in ("file", "auto") else None
 
 

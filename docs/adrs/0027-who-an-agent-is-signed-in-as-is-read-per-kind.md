@@ -61,8 +61,11 @@ learns them for Claude Code first and the others never.
      access token, a Bedrock key) means a key, and the answer is None. A
      key field is checked for presence, never read.
    - `keyring`, `ephemeral` and any other value keep the sign-in off disk,
-     and a file left behind is an earlier one, so the answer is None. A
-     `config.toml` that does not parse leaves the default.
+     and a file left behind is an earlier one, so the answer is None. Only a
+     missing `config.toml` leaves the default: Codex's own loader treats
+     that as `Ok(None)` and falls back to it. An existing file it cannot
+     read or parse is an error there, not a default, so the answer is None
+     rather than a guess at the store.
    - The reader mirrors Codex's own code (`resolved_mode`, `AuthMode`,
      `parse_chatgpt_jwt_claims`) and its closed vocabularies. A value Codex
      would refuse reads as no sign-in, never as the nearest known one.
