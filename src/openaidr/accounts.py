@@ -2,9 +2,12 @@
 
 Each agent keeps its own sign-in record, in its own file and shape. This module
 reads it, one file read per call, and answers in one vocabulary, so a consumer
-asks `signed_in(kind)` and never learns where any agent keeps it. Devin keeps
-no record of the person on disk, so it is asked through its own `devin auth
-status`, which uses Devin's own credential.
+asks `signed_in(kind)` and never learns where any agent keeps it.
+
+Devin keeps no record of the person on disk; only its own `devin auth status`
+can say, by asking Devin's server. This package never runs it: its sensing is
+read-only. `sign_in_query(kind)` says how to ask and reads the answer, and a
+consumer that chooses to ask runs it.
 
 It reports what the agent says and nothing more: no lookup elsewhere, no
 matching of one agent's account to another's. A kind that cannot say returns
@@ -19,8 +22,9 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import tomllib
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .model import Account
@@ -75,9 +79,14 @@ def _codex(config_dir: Path | None, home: Path) -> Account | None:
     The same file holds the access token, the refresh token and any API key;
     none of them is read into anything this returns. The signature is not
     checked: this reports what Codex holds on this machine, not a proof of who
-    the person is. Signed in with an API key there is no person to name.
+    the person is. Signed in with an API key there is no person to name. Kept
+    in the OS keyring or in memory (`cli_auth_credentials_store`), the sign-in
+    is not in `auth.json`, so there is none to read here.
     """
-    document = _json(_codex_record(config_dir, home))
+    record = _codex_record(config_dir, home)
+    if record is None:
+        return None
+    document = _json(record)
     tokens = document.get("tokens") if isinstance(document, dict) else None
     id_token = tokens.get("id_token") if isinstance(tokens, dict) else None
     claims = _token_claims(id_token)
@@ -101,42 +110,59 @@ _DEVIN_APP_BINARIES: tuple[Path, ...] = (
     Path("/Applications/Devin.app/Contents/Resources/app/extensions/windsurf/devin/bin/devin"),
 )
 
-#: `devin auth status` asks Devin's server, so it is bounded.
-_DEVIN_TIMEOUT_SECONDS = 15.0
-
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 def _devin(config_dir: Path | None, home: Path) -> Account | None:
-    """Who Devin's own `devin auth status` says is signed in.
+    """Devin keeps no record of the person on disk: its configuration names
+    the organization, its session store has no user column, and its
+    credentials file holds the API key alone. `sign_in_query("devin")` says
+    how to ask Devin itself."""
+    del config_dir, home
+    return None
 
-    Devin's files name only the organization, and its session store has no
-    user column. Its credential file holds the API key alone, which is
-    Devin's to use, not this package's to read. `auth status` uses it and
-    reports the user. That costs a call to Devin's server, so a consumer asks
-    when the sign-in changes (`sign_in_record`), not on every pass. Offline,
-    Devin cannot say who, and the answer is None.
+
+@dataclass(frozen=True)
+class SignInQuery:
+    """How to ask an agent who is signed in, for a kind that keeps no record
+    of the person on disk (ADR-0027).
+
+    This package never runs it. The agent answers by asking its own server
+    with its own credential, which is not read-only sensing. A consumer that
+    chooses to ask runs `argv` with `environment` added to its own, bounded
+    by a timeout of its own choosing, and hands what it printed to `read`.
     """
-    del config_dir
+
+    kind: str
+    argv: tuple[str, ...]
+    environment: Mapping[str, str] = field(default_factory=dict)
+
+    def read(self, output: str) -> Account | None:
+        """The account the agent's answer names, or None for one that names
+        no user: signed out, offline, or a layout this package does not know."""
+        return _QUERY_READERS[self.kind](output)
+
+
+def sign_in_query(kind: str, *, home: Path | None = None) -> SignInQuery | None:
+    """How to ask `kind` who is signed in, or None for a kind that is read
+    from disk (`signed_in`) or that cannot be asked."""
+    if kind != "devin":
+        return None
+    explicit_home = home is not None
+    home = Path.home() if home is None else home
     binary = _devin_binary(home)
     if binary is None:
         return None
-    environment = {**os.environ, "HOME": str(home), "NO_COLOR": "1", "TERM": "dumb"}
-    try:
-        finished = subprocess.run(
-            [str(binary), "auth", "status"],
-            capture_output=True,
-            text=True,
-            timeout=_DEVIN_TIMEOUT_SECONDS,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if finished.returncode != 0:
-        return None
-    sections = _sections(_ANSI.sub("", finished.stdout))
+    environment = {"NO_COLOR": "1", "TERM": "dumb"}
+    if explicit_home:
+        environment["HOME"] = str(home)
+    return SignInQuery(kind="devin", argv=(str(binary), "auth", "status"), environment=environment)
+
+
+def _devin_status(output: str) -> Account | None:
+    """`devin auth status`'s `User` and `Account` sections. Devin prints them
+    only once its server has answered; offline it prints neither."""
+    sections = _sections(_ANSI.sub("", output))
     user = sections.get("User", {})
     account_id = user.get("User ID")
     if account_id is None:
@@ -148,6 +174,9 @@ def _devin(config_dir: Path | None, home: Path) -> Account | None:
         email=user.get("Email"),
         plan=sections.get("Account", {}).get("Plan"),
     )
+
+
+_QUERY_READERS: dict[str, Callable[[str], Account | None]] = {"devin": _devin_status}
 
 
 def _devin_data_root(home: Path) -> Path:
@@ -189,10 +218,10 @@ def sign_in_record(
     kind: str, *, config_dir: Path | None = None, home: Path | None = None
 ) -> Path | None:
     """The file a new sign-in rewrites for `kind`, or None for a kind with no
-    reader. A consumer asks `signed_in` again when it changes, which for Devin
-    is the difference between one call to its server and one per pass. Only
-    the file's existence and time are a consumer's business: for Devin it
-    holds the credential."""
+    reader or a sign-in kept off disk. A consumer asks again when it changes,
+    which for Devin's `sign_in_query` is the difference between one call to
+    its server and one per pass. Only the file's existence and time are a
+    consumer's business: for Devin it holds the credential."""
     home = Path.home() if home is None else home
     if kind == "claude-code":
         return _claude_record(config_dir, home)
@@ -214,9 +243,22 @@ def _claude_record(config_dir: Path | None, home: Path) -> Path:
     return home / ".claude.json" if root == home / ".claude" else root / ".claude.json"
 
 
-def _codex_record(config_dir: Path | None, home: Path) -> Path:
+def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
+    """`auth.json`, unless Codex is set to keep its sign-in elsewhere.
+
+    `cli_auth_credentials_store` in Codex's `config.toml` chooses `file` (the
+    default), `keyring`, `auto` (the keyring when the OS has one) or
+    `ephemeral`. Under any but `file`, `auth.json` is not where the sign-in
+    lives and may be an earlier one, so there is no record to read. A
+    `config.toml` that does not parse leaves the default.
+    """
     root = config_dir if config_dir is not None else _env_dir("CODEX_HOME", home / ".codex")
-    return root / "auth.json"
+    try:
+        config = tomllib.loads((root / "config.toml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        config = {}
+    store = config.get("cli_auth_credentials_store", "file")
+    return root / "auth.json" if store == "file" else None
 
 
 def _env_dir(variable: str, default: Path) -> Path:
