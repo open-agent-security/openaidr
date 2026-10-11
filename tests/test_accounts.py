@@ -496,3 +496,67 @@ def test_no_filesystem_probe_can_raise_out_of_the_reader() -> None:
     ]
 
     assert bare == [], f"bare filesystem probes at lines {bare}; use `_is_file`"
+
+
+#: Records nothing should have written, each a way reading one could raise.
+_HOSTILE_RECORDS: dict[str, bytes] = {
+    "deep-nesting": b"[" * 100_000 + b"]" * 100_000,
+    "deep-object": b'{"a":' * 50_000 + b"1" + b"}" * 50_000,
+    "not-utf-8": b"\xff\xfe\x00{",
+    "empty": b"",
+    "scalar": b"42",
+    "account-is-a-list": b'{"oauthAccount": ["accountUuid"]}',
+    "account-id-is-a-number": b'{"oauthAccount": {"accountUuid": 7}}',
+    "nul-bytes": b'{"oauthAccount": {"accountUuid": "a\\u0000b"}}\x00',
+}
+
+
+@pytest.mark.parametrize("content", list(_HOSTILE_RECORDS.values()), ids=list(_HOSTILE_RECORDS))
+def test_a_hostile_claude_record_never_raises(tmp_path: Path, content: bytes) -> None:
+    """`signed_in` promises never to raise. Each way of reading a record that
+    could raise is asked at once: unreadable, undecodable, unparseable, or
+    nested past the decoder's limit. Two rounds of review each found one."""
+    home = _home(tmp_path)
+    (home / ".claude.json").write_bytes(content)
+
+    found = signed_in("claude-code", home=home)
+
+    assert found is None or isinstance(found, Account)
+
+
+@pytest.mark.parametrize("shape", ["directory", "symlink-loop", "untraversable"])
+def test_a_claude_record_that_is_not_a_file_never_raises(tmp_path: Path, shape: str) -> None:
+    home = _home(tmp_path)
+    record = home / ".claude.json"
+    if shape == "directory":
+        record.mkdir()
+    elif shape == "symlink-loop":
+        record.symlink_to(record)
+    else:
+        (home / ".claude").mkdir()
+        (home / ".claude").chmod(0)
+    try:
+        assert signed_in("claude-code", home=home) is None
+        assert sign_in_records("claude-code", home=home)
+    finally:
+        if shape == "untraversable":
+            (home / ".claude").chmod(0o700)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "\x00" * 10_000,
+        "User:\n" + "  Name: x\n" * 100_000,
+        "User:\n  User ID:\n",
+        ":\n" * 1_000,
+        "\x1b[" * 10_000,
+    ],
+    ids=["nul", "huge", "empty-id", "colons", "broken-escapes"],
+)
+def test_a_hostile_devin_answer_never_raises(output: str) -> None:
+    query = SignInQuery(kind="devin", argv=("devin", "auth", "status"))
+
+    found = query.read(output)
+
+    assert found is None or isinstance(found, Account)
