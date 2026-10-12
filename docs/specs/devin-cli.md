@@ -1,9 +1,11 @@
 # OpenAIDR — Devin CLI
 
-*Implemented (2026-10-09). A second agent kind, `devin-cli`, with an
+*Implemented (2026-10-09). A second agent kind, `devin`, with an
 OpenAIDR-owned reader (`readers/devin_cli.py`, `readers/devin_cli_log.py`).
 Extends [Session collection](session-collection.md) and
-[Token usage](token-usage.md). Decisions: ADR-0018 to ADR-0022.*
+[Token usage](token-usage.md). Decisions: ADR-0018 to ADR-0022, and ADR-0024
+for the kind's name: `devin` rather than `devin-cli`, because Devin CLI and
+Devin Desktop's local agent are one agent writing one store.*
 
 ## At a glance
 
@@ -52,7 +54,7 @@ Extends [Session collection](session-collection.md) and
 | `message_nodes` | `row_id` (autoincrement), `session_id`, `node_id` (unique per session), `parent_node_id`, `chat_message` (JSON), `created_at` (epoch seconds), `metadata` (JSON: `summarized_from`, `num_tokens_preceding`) |
 | `subagent_heads` | `session_id`, `agent_id`, `chain_node_id`, `updated_at`. Each sub-agent chain is "its own tree in the forest, unreachable from `sessions.main_chain_id`" (the migration's own comment) |
 | `prompt_history` | `content`, `timestamp`, `session_id`, `is_shell`: what a person typed, shell-mode lines marked |
-| `tool_call_state` | The final ACP `ToolCall` and `ToolCallUpdate` JSON per call, kept for resume. Not read |
+| `tool_call_state` | The final ACP `ToolCall` and `ToolCallUpdate` JSON per call, kept for resume. Only `ToolCall.kind` is read: a call the table does not name is `other` when it has one (ADR-0025) |
 
 **`chat_message` fields**, by their names in the binary:
 
@@ -85,8 +87,8 @@ Extends [Session collection](session-collection.md) and
 
 | Level | Identity |
 |---|---|
-| Main session | `devin-cli:<sessions.id>`. The slug is unique in the store |
-| Sub-agent session | `devin-cli:<sessions.id>:<subagent_heads.agent_id>` (ADR-0001's `<kind>:<parent>:<stem>`). All its turns and responses are `is_sidechain` |
+| Main session | `devin:<sessions.id>`. The slug is unique in the store |
+| Sub-agent session | `devin:<sessions.id>:<subagent_heads.agent_id>` (ADR-0001's `<kind>:<parent>:<stem>`). All its turns and responses are `is_sidechain` |
 | Turn | `key` is the `node_id`; `position` is the index among turns along the chain |
 | Span | `span_id(session_id, node_id, call_index)`, the index being the call's position in its node's `tool_calls` |
 
@@ -271,7 +273,7 @@ ADR-0011's discipline, applied to a database (ADR-0018):
 | `collect_file(path)` | Any path under the data root that can change a session: `sessions.db`, `sessions.db-wal` (a WAL commit changes only `-wal`), a run log, a session lock. Every session is rebuilt; those whose digest differs are returned. Any other path: nothing |
 | The invariant | After any event, a consumer that replaced the sessions returned holds exactly what a cold read returns. One session's lock changes another's placement, so outputs are compared rather than inputs traced (ADR-0018) |
 | Replaced store | Needs no special case: content that differs is returned, identical content is not |
-| Between reads | Responses replace by `(session, response_id)`. **Turns can disappear on regeneration**, so a consumer replaces a `devin-cli` session's turns wholesale |
+| Between reads | Responses replace by `(session, response_id)`. **Turns can disappear on regeneration**, so a consumer replaces a `devin` session's turns wholesale |
 
 ## Model additions
 
@@ -289,23 +291,35 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 
 **`tool_class` and canonical keys:**
 
-| Class | `claude-code` | `devin-cli` | Canonical keys (`devin-cli` source key) |
+| Class | `claude-code` | `devin` | Canonical keys (`devin` source key) |
 |---|---|---|---|
 | `shell` | `Bash`, `Monitor` | `exec` | `command` (`command`) |
 | `shell_control` | `BashOutput`, `KillShell`, `KillBash` | `get_output`, `write_to_process`, `kill_shell` | — |
 | `file_read` | `Read`, `NotebookRead` | `read`, `notebook_read` | `path` (`file_path`, `notebook_path`) |
-| `file_search` | `Grep`, `Glob`, `LS` | `grep`, `glob` | — for `devin-cli` (schema keys unconfirmed) |
+| `file_search` | `Grep`, `Glob`, `LS` | `grep`, `glob`, `find_file_by_name`, `code_search` | — for `devin` (schema keys unconfirmed) |
 | `file_write` | `Write` | `write` | `path`, `content` (`file_path`, `content`) |
 | `file_edit` | `Edit`, `MultiEdit`, `NotebookEdit` | `edit`, `apply_patch`, `notebook_edit` | `path`, `new_text` (`file_path`, `new_string`); none for `apply_patch` (M3) |
 | `web_fetch` | `WebFetch` | `webfetch` | `url` (`url`) |
-| `web_search` | `WebSearch` | — | — |
-| `delegate` | `Agent`, `Task` | `run_subagent` | `agent` for `claude-code`; none for `devin-cli` (M3) |
+| `web_search` | `WebSearch` | `web_search` | — |
+| `delegate` | `Agent`, `Task` | `run_subagent` | `agent` (`profile`) |
 | `skill` | `Skill` | `skill` | `skill` (`skill` or `name`) |
 | `mcp` | Any call with an `mcp_server` | Any call with an `mcp_server` | — |
 | `other` | `TodoWrite`, `ExitPlanMode`, `EnterPlanMode`, `AskUserQuestion`, `SlashCommand`, the MCP resource tools, `ToolSearch`, `TaskCreate`, `TaskOutput`, `TaskStop`, `SendMessage`, `ListAgents`, `SubagentHandback`, `Artifact`, `ReportFindings`, `SendUserFile` | `read_subagent`, `todo_write`, `exit_plan_mode`, `request_scope`, `mcp_list_servers`, `mcp_list_tools`, `mcp_read_resource` | — |
 
-A name in neither table gets `None`, never `other`: a tool added after the
-table was written is unknown, not ordinary.
+A Devin call the table does not name is `other` when Devin declared an ACP
+kind for it in `tool_call_state` (ADR-0025): known to be Devin's own, with no
+capability claimed. ACP's kinds are icon hints whose definitions span "files or
+data", "commands or code" and "external data", so only the table gives a class
+like `file_read`, `shell` or `web_fetch`.
+A name the table does not hold and Devin declared nothing for gets `None`,
+never `other`: a tool added after the table was written is unknown, not
+ordinary. Devin Desktop bundles its own copy of the agent, which can be a
+different version from the CLI writing the same store, so the two can use tool
+names the other does not; the declared kind covers both.
+
+A `mcp_call_tool` whose arguments do not recover a `server_name` and
+`tool_name` is still known to be MCP, just not which call; it keeps `None`
+rather than the declared kind's `other`, the wrong kind of unknown.
 
 ## Coverage by agent kind
 
@@ -313,7 +327,7 @@ table was written is unknown, not ordinary.
 loss; **Unconfirmed**, a source in the binary not yet seen in a signed-in
 session; **Absent**, no source.
 
-| Field | `claude-code` | `devin-cli` |
+| Field | `claude-code` | `devin` |
 |---|---|---|
 | Session identity, start, last activity | Recorded | Recorded (seconds) |
 | Model, per response | Recorded | Recorded |
@@ -354,7 +368,7 @@ asks for Codex. Fixtures are synthetic. **Real stores are never committed.**
 |---|---|---|
 | M1 | That `failure_reason`, `exit_code` and `cwd` sit in `chisel/tool_result_meta`; what `Rejected` carries | Status, denial, exit code, working directory |
 | M2 | Where `PermissionResolution {decision_source, resolution, …}` is stored, and whether it names a person, a rule, an organisation or the `smart` classifier | `denial_kind`, including `automode-blocked` |
-| M3 | Argument keys of `grep`, `glob`, `apply_patch` and `run_subagent` (`SubagentInput` has five fields) | `canonical_arguments` |
+| M3 | Argument keys of `grep`, `glob` and `apply_patch`. A recorded 3000.11.3 `run_subagent` call settled its own: `title`, `task`, `profile`, `is_background` | `canonical_arguments` |
 | M4 | That the compaction node carries `summarized_from`, and whether a trigger is stated | `compactions` |
 | M5 | That `subagent_heads` holds every sub-agent, and that its requests never also sit on the parent's tree | Sub-agent sessions; no double count |
 | M6 | That `is_user_input` separates a person from the harness in every build | Turns, `initial_prompt`, context items |

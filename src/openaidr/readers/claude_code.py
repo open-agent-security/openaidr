@@ -1265,11 +1265,15 @@ def _tool_calls(
             # carried, and `results` deliberately holds no entry for an empty
             # body -- so the body alone would report a return with nothing in it
             # as a call that never came back.
+            completed = keyed is not None and keyed in transcript.completed
             returned = keyed is not None and (
-                keyed in transcript.ended or keyed in transcript.errored or recorded is not None
+                keyed in transcript.ended
+                or keyed in transcript.errored
+                or completed
+                or recorded is not None
             )
             status = _status(
-                tool, denial, transcript.errored.get(keyed) if keyed else None, returned
+                tool, denial, transcript.errored.get(keyed) if keyed else None, returned, completed
             )
             if recorded is not None:
                 # The record's own body, whole. Upstream's copy is a fallback,
@@ -1422,11 +1426,25 @@ def _server_and_tool(tool: ToolUsage) -> tuple[str | None, str]:
     return server, name
 
 
+#: The `toolUseResult` field that states a built-in file tool succeeded, by tool
+#: (ADR-0026). Claude Code writes `is_error` on these tools' results only when a
+#: call failed; on success it leaves it out and records what the call did in
+#: `toolUseResult` -- the file written or changed, or the file read. Measured on
+#: one machine's whole history, every such object came with a success and every
+#: failure carried `is_error: true` and a plain-text `toolUseResult` instead.
+#:
+#: A table, not "any structured result": WebFetch records one with no `is_error`
+#: for a 403 as readily as for a 200, so a tool joins only once its own record
+#: has been checked the same way.
+_STATED_SUCCESS: dict[str, str] = {"Write": "filePath", "Edit": "filePath", "Read": "file"}
+
+
 def _status(
     tool: ToolUsage,
     denial: str | None,
     errored: bool | None,
     returned: bool = False,
+    completed: bool = False,
 ) -> Status:
     """Normalise one outcome, asserting only what the surviving evidence supports.
 
@@ -1438,12 +1456,13 @@ def _status(
     unresolved until the next collection pass (ADR-0007). `rejected` comes from
     the record's `toolDenialKind`.
     `ok` and `error` come from `is_error` on the result block — the agent's own
-    statement about whether the call worked.
+    statement about whether the call worked. Where it is absent, a built-in file
+    tool's `toolUseResult` states the same thing (`completed`, `_STATED_SUCCESS`).
 
     `unknown` is what remains, and it is not a failure state. It means the call
-    ran and returned and the record does not say how it went: `is_error` is
-    absent on roughly a fifth of results. Claiming `ok` there would assert
-    something unsupported, since a consumer reads `ok` as *worked*.
+    ran and returned and the record does not say how it went. Claiming `ok`
+    there would assert something unsupported, since a consumer reads `ok` as
+    *worked*.
 
     Upstream's own `status` is deliberately not consulted. It reports `success`
     for a Claude Code call merely because a result exists — it never reads
@@ -1457,6 +1476,8 @@ def _status(
         return "rejected"
     if errored is not None:
         return "error" if errored else "ok"
+    if completed:
+        return "ok"
     if (tool.status or "").lower() == "error" or tool.error:
         return "error"
     return "unknown"
@@ -1651,6 +1672,10 @@ class _Transcript:
     response_ids: dict[tuple[str, str, int], str] = field(default_factory=dict)
     #: session id -> the name the client generated, from its latest `ai-title`.
     generated_titles: dict[str, str] = field(default_factory=dict)
+    #: (session id, provider call id) for a built-in file tool whose result
+    #: carries no `is_error` but whose `toolUseResult` states what it did
+    #: (`_STATED_SUCCESS`). Keyed as `errored` is, for the same reasons.
+    completed: set[tuple[str, str]] = field(default_factory=set)
 
 
 def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str | None]:
@@ -1697,6 +1722,10 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
     started: dict[tuple[str, str], datetime] = {}
     ended: dict[tuple[str, str], datetime] = {}
     errored: dict[tuple[str, str], bool] = {}
+    #: (session id, provider call id) -> the tool the call named, so a result
+    #: record can be read by its own tool's rules (`_STATED_SUCCESS`).
+    tool_names: dict[tuple[str, str], str] = {}
+    completed: set[tuple[str, str]] = set()
     denials: dict[tuple[str, str], str] = {}
     results: dict[tuple[str, str], str] = {}
     record_times: dict[tuple[str, str, int], datetime] = {}
@@ -1841,6 +1870,15 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
                 denial = record.get("toolDenialKind")
                 message = record.get("message")
                 blocks = message.get("content") if isinstance(message, dict) else None
+                # `toolUseResult` sits on the record, not the block, so it is
+                # read only where the record holds a single result for it to
+                # describe; with two, which one it describes is not recorded.
+                stated = record.get("toolUseResult")
+                single = (
+                    isinstance(blocks, list)
+                    and sum(isinstance(b, dict) and b.get("type") == "tool_result" for b in blocks)
+                    == 1
+                )
                 position = 0
                 for block in blocks if isinstance(blocks, list) else []:
                     if not isinstance(block, dict):
@@ -1855,11 +1893,18 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
                         position += 1
                         if timestamp is not None:
                             started[(sid, identifier)] = timestamp
+                        name = block.get("name")
+                        if isinstance(name, str):
+                            tool_names[(sid, identifier)] = name
                     elif kind == "tool_result":
                         if timestamp is not None:
                             ended[(sid, identifier)] = timestamp
                         if isinstance(block.get("is_error"), bool):
                             errored[(sid, identifier)] = block["is_error"]
+                        elif single and isinstance(stated, dict):
+                            field_name = _STATED_SUCCESS.get(tool_names.get((sid, identifier), ""))
+                            if field_name is not None and field_name in stated:
+                                completed.add((sid, identifier))
                         if isinstance(denial, str) and denial in _DENIAL_KINDS:
                             denials[(sid, identifier)] = denial
                         body = block.get("content")
@@ -1917,6 +1962,7 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
         responses=responses,
         response_ids=response_ids,
         generated_titles=generated_titles,
+        completed=completed,
     ), failure
 
 

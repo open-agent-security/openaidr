@@ -31,7 +31,7 @@ and results before OpenAIDR sees them.
 
 ## Agent kind coverage
 
-**Two kinds today: `claude-code` and `devin-cli`.** `default_readers()` returns
+**Two kinds today: `claude-code` and `devin`.** `default_readers()` returns
 one reader per kind, and `AGENT_KIND_BY_SOURCE` holds one row per kind. Devin
 CLI is read by an OpenAIDR-owned reader, not through the dependency; its design
 is [Devin CLI](devin-cli.md). Every other agent kind is **not read at all** —
@@ -369,6 +369,14 @@ does supply a genuine outcome maps it to `ok` or `error` directly. `unknown` is
 therefore a *coverage statement about the dependency*, and it narrows as the asks
 below are met.
 
+For Claude Code's built-in Write, Edit and Read it narrows from the same record:
+the client writes `is_error` on those results only when the call failed, and on
+success writes a `toolUseResult` naming the file it wrote, changed or read. That
+object is read as `ok` for exactly those three tools, by the field that states
+the outcome (ADR-0026). Any other tool's structured result says nothing here —
+WebFetch records one for a 403 as for a 200 — and a sub-agent's transcript
+records none, so its file calls stay `unknown`.
+
 For an MCP call it narrows from a second source rather than from the parser: the
 connection log states the outcome the transcript does not. It only ever *resolves*
 an `unknown` — a status the record itself stated is evidence from the session and
@@ -452,6 +460,29 @@ server name containing the delimiter, and the result is not a missing server but
 the *wrong* one — which then resolves to the wrong component and attributes a
 finding to a package that was never involved. A silent wrong answer is worse than
 a gap.
+
+## Who is signed in
+
+No transcript records who an agent was signed in as, so a consumer that ties work
+or spend to a person asks while the work runs. `openaidr.accounts.signed_in(kind)`
+reads the kind's own sign-in record once and returns an `Account` or None
+(ADR-0027). It answers for the kinds whose sessions this package reads, and
+for no other.
+
+| Kind | Read from | Answer |
+|---|---|---|
+| `claude-code` | `oauthAccount` in `.claude.json` (`.claude-custom-oauth.json` with `CLAUDE_CODE_CUSTOM_OAUTH_URL` set): inside the configuration directory when `CLAUDE_CONFIG_DIR` (or the caller) names one, else in the home directory; a legacy `.config.json` in the directory wins | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
+| `devin` | nothing on disk names the person | None. `sign_in_query("devin")` gives Devin's own `devin auth status` (binary under `$XDG_DATA_HOME/devin/cli`, else on `PATH`, else in Devin Desktop), which asks Devin's server. Its `read` returns `User ID`, `Name`, `Email` and `Plan`, or None when no `User ID` is printed. This package never runs it and never opens `credentials.toml` |
+| any other | — | None |
+
+`display_name` and `email` are `LOCAL_ONLY`. Reading a sign-in adds no session
+coverage.
+
+`openaidr.accounts.sign_in_records(kind)` names every file whose change can
+change the answer, existing or not: Claude Code's legacy `.config.json` and its
+`.claude.json`, and Devin's `credentials.toml` (ADR-0027 clause 5). A consumer
+asks again when any of them changes, so a consumer that asks Devin does so once
+per sign-in, not on every pass.
 
 ## What this component does not know
 

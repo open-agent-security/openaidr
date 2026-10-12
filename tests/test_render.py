@@ -308,12 +308,12 @@ def test_a_connection_that_failed_before_any_call_is_still_reported() -> None:
 
 def test_mcp_coverage_explanations_do_not_assume_a_single_agent_kind() -> None:
     """`no_log_for_session` and `log_discovery_incomplete` are reachable by
-    any reader, not just Claude Code's cache-log reader (`devin-cli` reaches
+    any reader, not just Claude Code's cache-log reader (`devin` reaches
     both through its own session lock). Their explanations must not assert a
     cause -- a pruned cache, or project-keyed cache files -- that only holds
     for one agent kind."""
     call = ToolCall(
-        span="devin-cli:s1:toolu_1",
+        span="devin:s1:toolu_1",
         tool_name="search",
         mcp_server="books",
         status="unknown",
@@ -327,8 +327,8 @@ def test_mcp_coverage_explanations_do_not_assume_a_single_agent_kind() -> None:
         position=0, key="u1", role="assistant", text="", is_sidechain=False, tool_calls=(call,)
     )
     no_log = Session(
-        session_id="devin-cli:s1",
-        agent_kind="devin-cli",
+        session_id="devin:s1",
+        agent_kind="devin",
         source="devin",
         started_at=_START,
         model=None,
@@ -339,8 +339,8 @@ def test_mcp_coverage_explanations_do_not_assume_a_single_agent_kind() -> None:
         turns=(turn,),
     )
     incomplete = Session(
-        session_id="devin-cli:s2",
-        agent_kind="devin-cli",
+        session_id="devin:s2",
+        agent_kind="devin",
         source="devin",
         started_at=_START,
         model=None,

@@ -58,6 +58,11 @@ LOCAL_ONLY = frozenset(
         "failure_detail",
         # The same material as `arguments`, under one key name across kinds.
         "canonical_arguments",
+        # Who an agent is signed in as, in the words a person chose or the
+        # address they sign in with. The account id is what tells people apart
+        # without naming them; these name them.
+        "display_name",
+        "email",
     }
 )
 
@@ -544,3 +549,25 @@ class Session:
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "turn_count": self.turn_count,
         }
+
+
+@dataclass(frozen=True)
+class Account:
+    """Who an agent kind is signed in as on this machine, now (ADR-0027).
+
+    Read live from the agent's own sign-in record, never from a session: no
+    transcript records who was signed in when it was written, so a consumer
+    that ties an account to past work has to have read it while the work ran.
+    """
+
+    kind: str
+    #: Stable per person and naming no one: the agent's own id for the
+    #: account. Two people on one machine have two.
+    account_id: str
+    #: The name the person goes by in the agent, as they set it. `LOCAL_ONLY`.
+    display_name: str | None = None
+    #: The address the person signs in with. `LOCAL_ONLY`.
+    email: str | None = None
+    #: The agent's own word for the plan the account is on, verbatim:
+    #: Claude Code's `billingType`, Devin's `Plan`.
+    plan: str | None = None
