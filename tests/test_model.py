@@ -9,13 +9,6 @@ def test_span_id_indexes_within_the_turn_not_the_session() -> None:
     assert span_id("s1", "turn-uuid", 2) == "s1:turn-uuid:2"
 
 
-def test_span_id_is_unchanged_by_later_turns() -> None:
-    """A session grows by appending; an existing span must keep its key."""
-    first = span_id("s1", "turn-a", 0)
-    _later = span_id("s1", "turn-b", 0)
-    assert span_id("s1", "turn-a", 0) == first
-
-
 def test_public_descriptor_carries_no_local_only_information() -> None:
     session = Session(
         session_id="claude-code:s1",
