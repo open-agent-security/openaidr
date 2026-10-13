@@ -71,7 +71,7 @@ def _claude_code(config_dir: Path | None, home: Path) -> Account | None:
             kind="claude-code",
             account_id=account_id,
             display_name=own.get("displayName"),
-            email=email or own.get("emailAddress"),
+            email=email,
             plan=own.get("billingType"),
         )
     account_id = fields.get("accountUuid")

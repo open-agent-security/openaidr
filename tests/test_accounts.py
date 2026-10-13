@@ -189,6 +189,25 @@ def test_a_cloud_sessions_own_file_adds_its_name_and_plan(
     )
 
 
+def test_a_cloud_sessions_own_file_does_not_supply_a_missing_email(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The matching file's `emailAddress` can be stale even for the same
+    account (ADR-0028 clause 2); only the session's own address is taken, so
+    a blank or unset `CLAUDE_CODE_USER_EMAIL` stays None rather than
+    borrowing the file's."""
+    home = _home(tmp_path)
+    own = {**_CLAUDE, "accountUuid": _SESSION_ACCOUNT}
+    (home / ".claude.json").write_text(json.dumps({"oauthAccount": own}), "utf-8")
+    _cloud(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_USER_EMAIL", "")
+
+    answer = signed_in("claude-code", home=home)
+
+    assert answer is not None
+    assert answer.email is None
+
+
 def test_a_cloud_session_without_a_file_still_names_its_account(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
