@@ -175,9 +175,9 @@ class ContextItem:
     """
 
     span: str
-    #: What produced it: `hook`, `skill_listing`, `agent_listing`,
-    #: `mcp_instructions`, `file`, `memory`, `mode`, or the raw attachment type
-    #: where it is none of those. Never inferred from the content.
+    #: What produced it, from the record's own type and never from its content:
+    #: `hook`, `skill_listing`, `agent_listing`, `mcp_instructions`, `file`,
+    #: `memory`, `system`, `injected`.
     source: str
     #: The hook, skill or file it came from, where the record names one.
     name: str | None
