@@ -30,10 +30,15 @@ def _home(tmp_path: Path) -> Path:
     return home
 
 
+_CLOUD_VARIABLES = ("CLAUDE_CODE_REMOTE", "CLAUDE_CODE_ACCOUNT_UUID", "CLAUDE_CODE_USER_EMAIL")
+
+
 @pytest.fixture(autouse=True)
 def _no_agent_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_CUSTOM_OAUTH_URL", raising=False)
+    for variable in _CLOUD_VARIABLES:
+        monkeypatch.delenv(variable, raising=False)
 
 
 # --- Claude Code -------------------------------------------------------------
@@ -135,6 +140,85 @@ def test_an_empty_name_is_no_name(tmp_path: Path) -> None:
 
     assert found is not None
     assert (found.display_name, found.email) == (None, None)
+
+
+# --- Claude Code in a cloud session (ADR-0028) -------------------------------
+
+_SESSION_ACCOUNT = "7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f"
+
+
+def _cloud(monkeypatch: pytest.MonkeyPatch, *, account: str = _SESSION_ACCOUNT) -> None:
+    monkeypatch.setenv("CLAUDE_CODE_REMOTE", "true")
+    monkeypatch.setenv("CLAUDE_CODE_ACCOUNT_UUID", account)
+    monkeypatch.setenv("CLAUDE_CODE_USER_EMAIL", "sam@example.com")
+
+
+def test_a_cloud_session_is_signed_in_as_the_person_who_started_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shared environment's file records whoever set it up; the session's
+    own account and address win, and that file's name and plan, being
+    someone else's, are not taken."""
+    home = _home(tmp_path)
+    (home / ".claude.json").write_text(json.dumps({"oauthAccount": _CLAUDE}), "utf-8")
+    _cloud(monkeypatch)
+
+    assert signed_in("claude-code", home=home) == Account(
+        kind="claude-code",
+        account_id=_SESSION_ACCOUNT,
+        display_name=None,
+        email="sam@example.com",
+        plan=None,
+    )
+
+
+def test_a_cloud_sessions_own_file_adds_its_name_and_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _home(tmp_path)
+    own = {**_CLAUDE, "accountUuid": _SESSION_ACCOUNT}
+    (home / ".claude.json").write_text(json.dumps({"oauthAccount": own}), "utf-8")
+    _cloud(monkeypatch)
+
+    assert signed_in("claude-code", home=home) == Account(
+        kind="claude-code",
+        account_id=_SESSION_ACCOUNT,
+        display_name="Jane",
+        email="sam@example.com",
+        plan="stripe_subscription",
+    )
+
+
+def test_a_cloud_session_without_a_file_still_names_its_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cloud(monkeypatch)
+    monkeypatch.delenv("CLAUDE_CODE_USER_EMAIL")
+
+    answer = signed_in("claude-code", home=_home(tmp_path))
+
+    assert answer is not None
+    assert (answer.account_id, answer.email) == (_SESSION_ACCOUNT, None)
+
+
+@pytest.mark.parametrize(
+    ("remote", "account"),
+    [("", _SESSION_ACCOUNT), ("1", _SESSION_ACCOUNT), ("false", _SESSION_ACCOUNT), ("true", " ")],
+)
+def test_outside_a_cloud_session_the_file_decides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: str, account: str
+) -> None:
+    """Only `CLAUDE_CODE_REMOTE=true` with an account makes a cloud session;
+    anything else reads the file, as on a laptop."""
+    home = _home(tmp_path)
+    (home / ".claude.json").write_text(json.dumps({"oauthAccount": _CLAUDE}), "utf-8")
+    _cloud(monkeypatch, account=account)
+    monkeypatch.setenv("CLAUDE_CODE_REMOTE", remote)
+
+    answer = signed_in("claude-code", home=home)
+
+    assert answer is not None and answer.account_id == _CLAUDE["accountUuid"]
+    assert answer.email == _CLAUDE["emailAddress"]
 
 
 # --- every kind --------------------------------------------------------------

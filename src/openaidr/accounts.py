@@ -46,15 +46,34 @@ def signed_in(
 
 
 def _claude_code(config_dir: Path | None, home: Path) -> Account | None:
-    """`oauthAccount` in Claude Code's configuration file.
+    """`oauthAccount` in Claude Code's configuration file, or, in a Claude
+    Code cloud session, the account the session runs as (ADR-0028).
 
     With the default directory the file is `~/.claude.json`, beside it; with
     `CLAUDE_CONFIG_DIR` set Claude Code keeps it inside that directory and
     writes nothing to the home directory. A legacy `.config.json` in the
     directory wins over either, as Claude Code reads it first.
+
+    A cloud session (`CLAUDE_CODE_REMOTE=true`) names its account in
+    `CLAUDE_CODE_ACCOUNT_UUID` and its address in `CLAUDE_CODE_USER_EMAIL`,
+    set for the person who started it. Those win: an environment several
+    people start sessions in keeps one configuration file, which need not be
+    theirs. The file then adds the name and plan only when it records the
+    same account.
     """
     document = _json(_claude_record(config_dir, home))
     fields = _strings(document.get("oauthAccount") if isinstance(document, dict) else None)
+    session = _cloud_session()
+    if session is not None:
+        account_id, email = session
+        own = fields if fields.get("accountUuid") == account_id else {}
+        return Account(
+            kind="claude-code",
+            account_id=account_id,
+            display_name=own.get("displayName"),
+            email=email or own.get("emailAddress"),
+            plan=own.get("billingType"),
+        )
     account_id = fields.get("accountUuid")
     if account_id is None:
         return None
@@ -65,6 +84,19 @@ def _claude_code(config_dir: Path | None, home: Path) -> Account | None:
         email=fields.get("emailAddress"),
         plan=fields.get("billingType"),
     )
+
+
+def _cloud_session() -> tuple[str, str | None] | None:
+    """`(account id, email)` a Claude Code cloud session names for the person
+    it runs as, from this package's environment; None outside one, or where
+    it names no account."""
+    if os.environ.get("CLAUDE_CODE_REMOTE") != "true":
+        return None
+    account_id = os.environ.get("CLAUDE_CODE_ACCOUNT_UUID", "").strip()
+    if not account_id:
+        return None
+    email = os.environ.get("CLAUDE_CODE_USER_EMAIL", "").strip()
+    return account_id, email or None
 
 
 #: Where Devin Desktop ships its copy of the CLI. A machine with Desktop alone
