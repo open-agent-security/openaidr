@@ -118,7 +118,7 @@ Devin Desktop's local agent are one agent writing one store.*
 | `title`, `generated_title` | `sessions.title` goes to `generated_title` only, until it is known whether a person set it (M8) |
 | `initial_prompt` | The first `user` chain node that is a person's; else the session's first non-shell `prompt_history` row |
 | `turns` | Chain nodes with role `assistant`, or role `user` unless `is_user_input` is false. `tool` nodes are results |
-| `context_items` | `system` chain nodes (source `system`), and `user` nodes with `is_user_input` false (source `injected`, e.g. a `cache_keepalive` "continue"); `occurred_at` is the node's time |
+| `context_items` | `system` chain nodes (source `system`), and `user` nodes with `is_user_input` false (source `injected`, e.g. a `cache_keepalive` "continue"); `occurred_at` is the node's time. A `system` node whose message metadata carries the `agent-ext/skills-loaded` extension is the skill listing (source `skill_listing`): its `parts` name each skill in the extension's `skills`, paired in order with the listing's `- **name**:` entries, and are empty unless every name heads its own entry (ADR-0016) |
 | `compactions` | One per chain node whose node `metadata` has `summarized_from`: `pre_tokens` from `num_tokens_preceding`, `trigger` `unknown`, `occurred_at` from the node. `compactions_recorded` is true |
 | `agent_version` | `version=` on the placed run log's `init_cli` line |
 | `entrypoint` | From the placed run log: `acp` when the process ran as an ACP server (`run_acp_server`), `cli` when it ran the terminal (`run_repl_mode`, which covers both the REPL and `-p`; M14) |
@@ -337,7 +337,7 @@ session; **Absent**, no source.
 | Git branch | Recorded | Absent |
 | Initial prompt | Recorded | Recorded (`prompt_history` fallback) |
 | Title | Recorded | Partial: `generated_title` until M8 |
-| Context items | Recorded | Unconfirmed |
+| Context items | Recorded | Unconfirmed; the skill listing named per skill |
 | Compactions | Recorded | Unconfirmed (`summarized_from`) |
 | Provider refusals | Recorded | Absent (M9) |
 | MCP connections | Recorded | Partial: no advertised identity at the default level |

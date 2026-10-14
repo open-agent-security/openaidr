@@ -32,6 +32,7 @@ from tests.fixtures.devin_store import (
     metrics,
     result,
     run_log,
+    skills_loaded,
     startup,
     user,
     write_session,
@@ -412,6 +413,99 @@ def test_a_harness_written_user_node_is_context_not_a_turn(tmp_path: Path) -> No
     ]
     assert session.context_items[0].span == "devin:brave-otter:context:1"
     assert session.context_items[1].occurred_at == datetime.fromtimestamp(T0, UTC)
+
+
+_LISTING = (
+    "<available_skills>\n"
+    "The following skills can be invoked using your skill tools.\n"
+    "\n"
+    "- **pr-review-loop**: Drive a PR to approval. (source: /home/u/.claude/skills/pr-review-loop/SKILL.md)\n"
+    "- **test**:  (source: /home/u/.config/devin/skills/test/SKILL.md)\n"
+    "- **devin-cli**: Look up Devin CLI documentation (source: builtin:devin-cli)\n"
+    "</available_skills>"
+)
+
+
+def test_a_skill_listing_names_each_skill_the_record_lists(tmp_path: Path) -> None:
+    root = tmp_path / "cli"
+    _simple(
+        root,
+        [
+            Node(1, None, skills_loaded(_LISTING, ["pr-review-loop", "test", "devin-cli"])),
+            Node(2, 1, user("q")),
+        ],
+        main=2,
+    )
+    [item] = _one(root).context_items
+    assert item.source == "skill_listing"
+    assert item.text == _LISTING
+    assert item.span == "devin:brave-otter:context:1"
+    entries = _LISTING.split("\n")[3:6]
+    assert [(p.name, p.text) for p in item.parts] == list(
+        zip(["pr-review-loop", "test", "devin-cli"], entries, strict=True)
+    )
+    assert all(p.text in item.text for p in item.parts)
+
+
+def test_an_entry_runs_to_the_next_entry_as_written(tmp_path: Path) -> None:
+    listing = "intro\n\n- **a**: one\n\nmore of a\n- **b**: two\n</available_skills>"
+    root = tmp_path / "cli"
+    _simple(
+        root, [Node(1, None, skills_loaded(listing, ["a", "b"])), Node(2, 1, user("q"))], main=2
+    )
+    [item] = _one(root).context_items
+    assert [(p.name, p.text) for p in item.parts] == [
+        ("a", "- **a**: one\n\nmore of a"),
+        ("b", "- **b**: two"),
+    ]
+
+
+def test_a_listing_the_record_does_not_mark_is_a_system_item(tmp_path: Path) -> None:
+    # A summarisation prompt quotes the listing's text; only the record's own
+    # extension says a message is the listing.
+    root = tmp_path / "cli"
+    _simple(
+        root,
+        [Node(1, None, {"role": "system", "content": _LISTING}), Node(2, 1, user("q"))],
+        main=2,
+    )
+    [item] = _one(root).context_items
+    assert (item.source, item.parts) == ("system", ())
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        pytest.param(["pr-review-loop", "test"], id="fewer-names-than-entries"),
+        pytest.param(["pr-review-loop", "test", "devin-cli", "upload-secrets"], id="more-names"),
+        pytest.param(["test", "pr-review-loop", "devin-cli"], id="out-of-order"),
+        pytest.param(["pr-review-loop", "tes", "devin-cli"], id="name-a-prefix-of-the-entry"),
+    ],
+)
+def test_a_listing_whose_names_do_not_pair_has_no_parts(tmp_path: Path, names: list[str]) -> None:
+    root = tmp_path / "cli"
+    _simple(root, [Node(1, None, skills_loaded(_LISTING, names)), Node(2, 1, user("q"))], main=2)
+    [item] = _one(root).context_items
+    assert (item.source, item.parts) == ("skill_listing", ())
+
+
+def test_a_description_holding_its_own_entry_line_has_no_parts(tmp_path: Path) -> None:
+    listing = "- **a**: see\n- **b**: the other one\n- **b**: real (source: builtin:b)"
+    root = tmp_path / "cli"
+    _simple(
+        root, [Node(1, None, skills_loaded(listing, ["a", "b"])), Node(2, 1, user("q"))], main=2
+    )
+    [item] = _one(root).context_items
+    assert (item.source, item.parts) == ("skill_listing", ())
+
+
+def test_a_malformed_skills_extension_names_nothing(tmp_path: Path) -> None:
+    message = skills_loaded(_LISTING, ["pr-review-loop", "test", "devin-cli"])
+    message["metadata"]["extensions"]["agent-ext/skills-loaded"]["skills"][1] = {"name": 7}
+    root = tmp_path / "cli"
+    _simple(root, [Node(1, None, message), Node(2, 1, user("q"))], main=2)
+    [item] = _one(root).context_items
+    assert (item.source, item.parts) == ("skill_listing", ())
 
 
 def test_a_context_items_span_follows_its_node_not_its_position(tmp_path: Path) -> None:
