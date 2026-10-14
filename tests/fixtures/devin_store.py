@@ -159,6 +159,29 @@ def user(text: str, *, typed: bool | None = True) -> dict:
     return {"role": "user", "content": text, "metadata": metadata}
 
 
+def skills_loaded(text: str, names: list[str]) -> dict:
+    """A system message as Devin writes its skill listing: the listing's text,
+    and the skills it lists in the message's own `agent-ext/skills-loaded`
+    extension (shape read from a 3000.11.3 store)."""
+    skills = [
+        {
+            "name": name,
+            "description": "",
+            "path": f"builtin:{name}",
+            "model_invocable": True,
+            "provider": "builtin",
+            "skill_id": f"builtin:{name}",
+        }
+        for name in names
+    ]
+    extension = {"skills": skills, "is_initial_listing": True}
+    return {
+        "role": "system",
+        "content": text,
+        "metadata": {"extensions": {"agent-ext/skills-loaded": extension}},
+    }
+
+
 def assistant(
     text: str = "",
     *,

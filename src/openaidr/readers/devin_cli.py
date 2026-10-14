@@ -38,6 +38,7 @@ from openaidr.kinds import map_source
 from openaidr.model import (
     Compaction,
     ContextItem,
+    ContextPart,
     ModelResponse,
     Session,
     Status,
@@ -68,6 +69,9 @@ _REQUIRED = {
     },
 }
 _RESULT_META = "chisel/tool_result_meta"
+#: The extension Devin writes on the system message that lists its skills,
+#: naming each one the listing holds, in the listing's order.
+_SKILLS_LOADED = "agent-ext/skills-loaded"
 _GENERIC_MCP = "mcp_call_tool"
 
 #: `ToolResult.failure_reason`, as the binary declares it, to a status and the
@@ -449,6 +453,10 @@ class DevinCliReader:
             if role == "tool":
                 continue
             if role == "system" or (role == "user" and node.meta.get("is_user_input") is False):
+                listing = _mapping(node.meta.get("extensions")).get(_SKILLS_LOADED)
+                source = "system" if role == "system" else "injected"
+                if role == "system" and listing is not None:
+                    source = "skill_listing"
                 context.append(
                     ContextItem(
                         # The node id, not the position in `context`: a
@@ -456,10 +464,11 @@ class DevinCliReader:
                         # different context nodes, and a positional index
                         # would then misname an unrelated item's span.
                         span=span_id(session_id, "context", node.node_id),
-                        source="system" if role == "system" else "injected",
+                        source=source,
                         name=None,
                         text=text,
                         occurred_at=node.at,
+                        parts=_skill_parts(listing, text) if source == "skill_listing" else (),
                     )
                 )
                 continue
@@ -820,6 +829,39 @@ def _arguments(value: object) -> dict[str, object] | None:
         except ValueError:
             return None
     return value if isinstance(value, dict) else None
+
+
+def _skill_parts(listing: object, text: str) -> tuple[ContextPart, ...]:
+    """Each skill a listing names, or none where the record does not pair every
+    one with its entry for certain (ADR-0016).
+
+    The extension's `skills` name the listing's skills in order. The listing
+    holds one `- **name**: description` entry per skill between a preamble and
+    the closing `</available_skills>`; an entry is a line that starts a new
+    `- ` item and every line after it up to the next one or the closing tag,
+    as written. They pair only when there is one entry per name and each
+    entry's first line opens with its name in bold, then `:`.
+    """
+    skills = _mapping(listing).get("skills")
+    if not isinstance(skills, list):
+        return ()
+    names = [name for skill in skills if (name := _string(_mapping(skill).get("name")))]
+    if not names or len(names) != len(skills):
+        return ()
+    entries: list[str] = []
+    body = text.split("\n</available_skills>", 1)[0]
+    for line in body.split("\n"):
+        if line.startswith("- "):
+            entries.append(line)
+        elif entries:
+            entries[-1] += "\n" + line
+    if len(entries) != len(names) or not all(
+        entry.startswith(f"- **{name}**:") for name, entry in zip(names, entries, strict=True)
+    ):
+        return ()
+    return tuple(
+        ContextPart(name=name, text=entry) for name, entry in zip(names, entries, strict=True)
+    )
 
 
 def _text(content: object) -> str:
