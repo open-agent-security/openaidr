@@ -264,9 +264,7 @@ Account:
 """
 
 
-def _fake_devin(
-    home: Path, output: str, *, exit_code: int = 0, sleep: float = 0, data: Path | None = None
-) -> Path:
+def _fake_devin(home: Path, output: str, *, data: Path | None = None) -> Path:
     """A `devin` where the CLI installs itself, recording how it was called."""
     root = data if data is not None else home / ".local" / "share"
     binary = root / "devin" / "cli" / "_versions" / "current" / "bin" / "devin"
@@ -274,11 +272,7 @@ def _fake_devin(
     printed = home / "printed.txt"
     printed.write_text(output.format(home=home), "utf-8")
     binary.write_text(
-        "#!/bin/sh\n"
-        f'printf "%s\\n" "$*" >> "{home}/argv.txt"\n'
-        f"sleep {sleep}\n"
-        f'cat "{printed}"\n'
-        f"exit {exit_code}\n",
+        f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{home}/argv.txt"\ncat "{printed}"\n',
         "utf-8",
     )
     binary.chmod(0o755)
