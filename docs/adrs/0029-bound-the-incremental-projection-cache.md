@@ -32,11 +32,15 @@ the leak this decision closes.
 
 The Claude Code reader keeps its per-path projections in an `OrderedDict`
 used as an LRU: every read moves its path to the most-recently-used end. After
-each read, while the cache holds more than 128 files or more than 16 MiB of
-combined source bytes (summed from each projection's committed offset,
-including an unfinished trailing record), the least-recently-used entry is
-evicted. A single transcript larger than the byte budget is served but never
-cached.
+each read, while the cache holds more than one entry and either more than 128
+files or more than 16 MiB of combined source bytes (summed from each
+projection's committed offset, including an unfinished trailing record), the
+least-recently-used entry is evicted. The file just read is never evicted by
+this budget — only other, less-recently-used files are — so a single active
+transcript larger than the byte budget on its own still stays cached rather
+than being reprojected from byte zero on every call, which would otherwise
+defeat the incremental read ADR-0011 exists to provide for exactly the
+longest-running sessions.
 
 An evicted path is not special-cased: the next read for it goes through the
 same `setdefault`-and-build path ADR-0011 already uses for inode changes and
@@ -57,6 +61,12 @@ whether a projection happened to still be cached.
 - **Bound by byte count only.** Rejected: very many small transcripts could
   stay under a byte budget while still pinning an unbounded number of
   projection objects and their internal state.
+- **Evict unconditionally, including the file just read.** Tried first and
+  rejected after a maintainer review reproduced the regression: any active
+  session larger than 16 MiB passes the byte budget on its own, so an
+  unconditional eviction loop empties the cache on every single call for
+  exactly the long-running sessions this decision exists to keep fast,
+  silently falling back to a full reparse per tick.
 - **A size-weighted or frequency-based eviction policy.** Rejected for this
   stage as unneeded complexity; recency already matches how consumers read
   sessions in practice (active sessions far more often than idle ones), the
