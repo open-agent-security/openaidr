@@ -602,3 +602,96 @@ def test_each_kinds_root_reaches_its_reader(tmp_path: Path) -> None:
         "claude-code": (tmp_path / "claude",),
         "devin": ((tmp_path / "devin").resolve(),),
     }
+
+
+def test_incremental_cache_releases_least_recently_used_transcripts(tmp_path: Path) -> None:
+    import gc
+    import weakref
+
+    paths = [
+        write_session(
+            tmp_path,
+            f"-work-project-{i}",
+            [user_text(f"s{i}", f"u{i}", "2026-09-18T10:00:00Z", "investigate")],
+        )
+        for i in range(3)
+    ]
+    reader = _reader(tmp_path)
+    with patch("openaidr.readers.claude_code._MAX_INCREMENTAL_FILES", 2):
+        reader.collect_file(paths[0])
+        reader.collect_file(paths[1])
+        evicted = weakref.ref(reader._incremental[paths[1]])
+        reader.collect_file(paths[0])  # Recently used, so keep this one.
+        reader.collect_file(paths[2])
+        gc.collect()
+        assert evicted() is None
+        assert set(reader._incremental) == {paths[0], paths[2]}
+
+
+def test_incremental_cache_bounds_source_bytes_and_rereads_evicted_results(tmp_path: Path) -> None:
+    path = write_session(
+        tmp_path,
+        "-work-project",
+        [
+            user_text("s1", "u1", "2026-09-18T10:00:00Z", "investigate"),
+            assistant_tool_use("s1", "u2", "2026-09-18T10:00:01Z", "call1", "Read"),
+        ],
+    )
+    reader = _reader(tmp_path)
+    with patch("openaidr.readers.claude_code._MAX_INCREMENTAL_BYTES", 1):
+        before, failures = reader.collect_file(path)
+        assert not failures
+        assert not reader._incremental
+        _append(path, tool_result("s1", "u3", "2026-09-18T10:00:02Z", "call1", "contents"))
+        after, failures = reader.collect_file(path)
+        assert not failures
+        cold, failures = _reader(tmp_path).collect(Window(since=None))
+        assert not failures
+        assert after == cold
+        assert after[0].turns[1].tool_calls[0].span == before[0].turns[1].tool_calls[0].span
+        assert not reader._incremental
+
+
+def test_incremental_cache_bounds_combined_source_bytes(tmp_path: Path) -> None:
+    paths = [
+        write_session(
+            tmp_path,
+            f"-work-project-{i}",
+            [user_text(f"s{i}", f"u{i}", "2026-09-18T10:00:00Z", "investigate")],
+        )
+        for i in range(3)
+    ]
+    reader = _reader(tmp_path)
+    budget = paths[0].stat().st_size + paths[1].stat().st_size
+    with patch("openaidr.readers.claude_code._MAX_INCREMENTAL_BYTES", budget):
+        for path in paths:
+            sessions, failures = reader.collect_file(path)
+            assert sessions and not failures
+        assert set(reader._incremental) == set(paths[1:])
+
+
+def test_evicted_partial_record_is_committed_only_when_completed(tmp_path: Path) -> None:
+    path = write_session(
+        tmp_path,
+        "-work-project",
+        [user_text("s1", "u1", "2026-09-18T10:00:00Z", "investigate")],
+    )
+    appended = json.dumps(
+        assistant_tool_use("s1", "u2", "2026-09-18T10:00:01Z", "call1", "Read")
+    ).encode()
+    with path.open("ab") as handle:
+        handle.write(appended)
+    reader = _reader(tmp_path)
+    with patch("openaidr.readers.claude_code._MAX_INCREMENTAL_BYTES", 1):
+        sessions, failures = reader.collect_file(path)
+        assert not failures
+        assert sessions[0].turn_count == 1
+        assert not reader._incremental
+        with path.open("ab") as handle:
+            handle.write(b"\n")
+        sessions, failures = reader.collect_file(path)
+        assert not failures
+        cold, failures = _reader(tmp_path).collect(Window(since=None))
+        assert not failures
+        assert sessions == cold
+        assert sessions[0].turn_count == 2
