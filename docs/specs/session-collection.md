@@ -388,11 +388,14 @@ boundary and its compatibility cost.
 Claude Code retains the most recently used projections for at most 128 files
 and 16 MiB of source bytes in total, including incomplete trailing records.
 Source bytes approximate retained state; this is not a limit on Python heap or
-on the full model returned to the caller. A projection larger than the budget
-is returned but not cached. An evicted transcript is rebuilt from byte zero on
-its next read, preserving tool results, partial-record framing and span identity.
-This bounds retention across a long-lived consumer's historical sessions at the
-cost of cold projection work when its working set exceeds the cache.
+on the full model returned to the caller. The file just read is never evicted
+by this budget, so an active transcript larger than 16 MiB on its own still
+stays cached rather than being reprojected from byte zero on every call; only
+other, less-recently-used files are evicted to make room for it. An evicted
+transcript is rebuilt from byte zero on its next read, preserving tool
+results, partial-record framing and span identity. This bounds retention
+across a long-lived consumer's historical sessions at the cost of cold
+projection work when its working set exceeds the cache.
 
 ### One contract, per agent kind
 

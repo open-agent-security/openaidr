@@ -597,11 +597,12 @@ class ClaudeCodeReader:
         try:
             events, failure = projection.read(path)
         finally:
-            # Include an unfinished trailing record in the budget. Even one
-            # oversized transcript must not stay cached forever. The local
-            # projection still supplies this read's committed prefix below.
+            # Include an unfinished trailing record in the budget. Never evict
+            # the file just read: it is last after move_to_end above, so an
+            # active transcript larger than the budget on its own still stays
+            # cached rather than being rebuilt from byte zero on every call.
             retained = sum(item._offset for item in self._incremental.values())
-            while self._incremental and (
+            while len(self._incremental) > 1 and (
                 len(self._incremental) > _MAX_INCREMENTAL_FILES or retained > _MAX_INCREMENTAL_BYTES
             ):
                 _, evicted = self._incremental.popitem(last=False)

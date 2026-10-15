@@ -628,7 +628,7 @@ def test_incremental_cache_releases_least_recently_used_transcripts(tmp_path: Pa
         assert set(reader._incremental) == {paths[0], paths[2]}
 
 
-def test_incremental_cache_bounds_source_bytes_and_rereads_evicted_results(tmp_path: Path) -> None:
+def test_incremental_cache_keeps_an_oversized_active_transcript_cached(tmp_path: Path) -> None:
     path = write_session(
         tmp_path,
         "-work-project",
@@ -641,15 +641,18 @@ def test_incremental_cache_bounds_source_bytes_and_rereads_evicted_results(tmp_p
     with patch("openaidr.readers.claude_code._MAX_INCREMENTAL_BYTES", 1):
         before, failures = reader.collect_file(path)
         assert not failures
-        assert not reader._incremental
+        assert path in reader._incremental
+        projection = reader._incremental[path]
         _append(path, tool_result("s1", "u3", "2026-09-18T10:00:02Z", "call1", "contents"))
         after, failures = reader.collect_file(path)
         assert not failures
+        # Still the same projection: the second read continued from its cursor
+        # rather than being rebuilt from byte zero because it exceeds the budget.
+        assert reader._incremental[path] is projection
         cold, failures = _reader(tmp_path).collect(Window(since=None))
         assert not failures
         assert after == cold
         assert after[0].turns[1].tool_calls[0].span == before[0].turns[1].tool_calls[0].span
-        assert not reader._incremental
 
 
 def test_incremental_cache_bounds_combined_source_bytes(tmp_path: Path) -> None:
@@ -681,17 +684,27 @@ def test_evicted_partial_record_is_committed_only_when_completed(tmp_path: Path)
     ).encode()
     with path.open("ab") as handle:
         handle.write(appended)
+    other = write_session(
+        tmp_path,
+        "-work-project-2",
+        [user_text("s2", "u3", "2026-09-18T10:00:00Z", "investigate")],
+    )
     reader = _reader(tmp_path)
-    with patch("openaidr.readers.claude_code._MAX_INCREMENTAL_BYTES", 1):
+    with patch("openaidr.readers.claude_code._MAX_INCREMENTAL_FILES", 1):
         sessions, failures = reader.collect_file(path)
         assert not failures
         assert sessions[0].turn_count == 1
-        assert not reader._incremental
+        assert path in reader._incremental
+        # Reading a second file evicts `path`, the now-least-recently-used entry,
+        # while its trailing record is still incomplete.
+        other_sessions, failures = reader.collect_file(other)
+        assert other_sessions and not failures
+        assert path not in reader._incremental
         with path.open("ab") as handle:
             handle.write(b"\n")
         sessions, failures = reader.collect_file(path)
         assert not failures
-        cold, failures = _reader(tmp_path).collect(Window(since=None))
+        cold, failures = _reader(tmp_path).collect_file(path)
         assert not failures
         assert sessions == cold
         assert sessions[0].turn_count == 2
