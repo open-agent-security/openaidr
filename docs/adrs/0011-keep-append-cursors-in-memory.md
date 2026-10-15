@@ -1,10 +1,10 @@
 ---
 id: 0011
 title: Keep append cursors in memory for growing transcripts
-status: accepted
+status: superseded
 date: 2026-09-18
 supersedes: null
-superseded-by: null
+superseded-by: 0029
 ---
 
 ## Context
