@@ -97,7 +97,6 @@ class _Attempt:
 class ProcessLog:
     """What one process's log says, independent of any session."""
 
-    path: Path
     first: datetime | None
     last: datetime | None
     agent_version: str | None
@@ -303,7 +302,6 @@ def read_log(path: Path) -> ProcessLog:
                     entrypoint = "cli"
             _mcp_line(rest, at, attempts)
     return ProcessLog(
-        path=path,
         first=first,
         last=last,
         agent_version=version,
