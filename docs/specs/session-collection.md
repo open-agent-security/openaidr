@@ -385,6 +385,15 @@ It retains the projected state and returns the current full session, while the
 ordinary collector remains the cold recovery path. ADR-0011 records the
 boundary and its compatibility cost.
 
+Claude Code retains the most recently used projections for at most 128 files
+and 16 MiB of source bytes in total, including incomplete trailing records.
+Source bytes approximate retained state; this is not a limit on Python heap or
+on the full model returned to the caller. A projection larger than the budget
+is returned but not cached. An evicted transcript is rebuilt from byte zero on
+its next read, preserving tool results, partial-record framing and span identity.
+This bounds retention across a long-lived consumer's historical sessions at the
+cost of cold projection work when its working set exceeds the cache.
+
 ### One contract, per agent kind
 
 Given a kind and a window, return sessions; given a kind and a changed transcript

@@ -33,7 +33,7 @@ import json
 import os
 import re
 import stat
-from collections import Counter, defaultdict, deque
+from collections import Counter, OrderedDict, defaultdict, deque
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,6 +72,12 @@ DEFAULT_ROOT = Path.home() / ".claude" / "projects"
 
 #: The on-disk name this kind gives itself, as `adr-sensor` reports it.
 SOURCE = "claude"
+
+#: Bound retained projections by both file count and bytes read from their
+#: sources. Source bytes are a cheap size proxy, not a Python heap limit. An
+#: evicted file is read from byte zero when requested again.
+_MAX_INCREMENTAL_FILES = 128
+_MAX_INCREMENTAL_BYTES = 16 * 1024 * 1024
 
 #: A subagent's transcript lives under this directory beside its parent's file.
 _SUBAGENT_DIR = "subagents"
@@ -392,7 +398,7 @@ class ClaudeCodeReader:
         #: since the last pass rather than the first pass's snapshot forever.
         self._injected_mcp_logs = mcp_logs
         self._mcp_logs: MCPLogIndex | None = mcp_logs
-        self._incremental: dict[Path, _IncrementalProjection] = {}
+        self._incremental: OrderedDict[Path, _IncrementalProjection] = OrderedDict()
         self._incremental_mcp_logs = _IncrementalMCPLogReader()
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
@@ -587,7 +593,19 @@ class ClaudeCodeReader:
         if not _is_transcript(path, self._root):
             return [], []
         projection = self._incremental.setdefault(path, _IncrementalProjection(self._parser))
-        events, failure = projection.read(path)
+        self._incremental.move_to_end(path)
+        try:
+            events, failure = projection.read(path)
+        finally:
+            # Include an unfinished trailing record in the budget. Even one
+            # oversized transcript must not stay cached forever. The local
+            # projection still supplies this read's committed prefix below.
+            retained = sum(item._offset for item in self._incremental.values())
+            while self._incremental and (
+                len(self._incremental) > _MAX_INCREMENTAL_FILES or retained > _MAX_INCREMENTAL_BYTES
+            ):
+                _, evicted = self._incremental.popitem(last=False)
+                retained -= evicted._offset
         if failure is not None:
             return [], [ReaderFailure(agent_kind=self.agent_kind, message=failure)]
 
