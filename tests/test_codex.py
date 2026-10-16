@@ -13,7 +13,7 @@ from openaidr.kinds import parse_kind_filter
 from openaidr.model import Session, ToolCall
 from openaidr.readers.base import Window
 from openaidr.readers.codex import CodexReader
-from tests.fixtures.codex_rollout import Rollout
+from tests.fixtures.codex_rollout import Rollout, started_line, write_logs
 
 _ALL = Window(since=None)
 
@@ -335,6 +335,34 @@ def test_mcp_calls_name_their_configured_server(tmp_path: Path) -> None:
     }
     assert calls["ok"].result == "Wall time: 0.0 seconds\nOutput:\nok"
     assert calls["bad"].error_text is not None and "401 Unauthorized" in calls["bad"].error_text
+
+
+def test_a_pending_calls_namespace_is_corrected_from_the_logged_server(tmp_path: Path) -> None:
+    """Codex sanitises a server's punctuation into `_`, so `mcp__my_server` is
+    indistinguishable on its own from a server actually named `my_server`. A
+    connection the log database names breaks the tie (P1 Codex review finding
+    on PR #76)."""
+    write_logs(
+        tmp_path,
+        [
+            ("rmcp::service", started_line("my-server"), None, "solo"),
+            ("codex_core::shell_snapshot", "turn", "t", "solo"),
+        ],
+    )
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.call("denied", "search", {"q": "x"}, namespace="mcp__my_server")
+    rollout.output(
+        "denied",
+        'exec_command failed: CreateProcess { message: "Rejected(\\"rejected by user\\")" }',
+    )
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    calls = _calls(_only(tmp_path))
+
+    assert calls["denied"].mcp_server == "my-server"
+    assert calls["denied"].tool_name == "search"
 
 
 def test_each_call_ran_where_codex_says(tmp_path: Path) -> None:

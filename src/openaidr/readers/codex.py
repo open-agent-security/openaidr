@@ -682,7 +682,7 @@ class _Projection:
         output = outputs[0] if len(outputs) == 1 else None
         if len(outputs) > 1:
             item = {}
-        server, tool = _names(call, item)
+        server, tool = _names(call, item, transports)
         status, denial, exit_code = _outcome(
             call, item, output, call.turn in self.ended if call.turn else True
         )
@@ -769,7 +769,14 @@ def _item_call(
     )
 
 
-def _names(call: _Call, item: Mapping[str, object]) -> tuple[str | None, str]:
+def _sanitize_server(name: str) -> str:
+    """The namespace Codex would call `name` under, `mcp__<this>__<tool>`."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", name)
+
+
+def _names(
+    call: _Call, item: Mapping[str, object], transports: Mapping[str, str | None]
+) -> tuple[str | None, str]:
     """`(server, tool)`: an MCP item's own names first, as the server is configured;
     then the namespace Codex called it under; then a flat legacy name."""
     if item.get("type") == "McpToolCall":
@@ -779,9 +786,15 @@ def _names(call: _Call, item: Mapping[str, object]) -> tuple[str | None, str]:
     namespace = call.namespace
     if namespace is not None:
         if namespace.startswith("mcp__") and len(namespace) > len("mcp__"):
-            # Codex sanitises a server's name into its namespace, so this is
-            # the configured name only for names of letters, digits and `_`.
-            return namespace.removeprefix("mcp__").removesuffix("__"), call.name
+            # Codex sanitises a server's name into its namespace, collapsing any
+            # punctuation to `_`, so the namespace alone cannot tell `my-server`
+            # from `my_server`. A connection the log database names is ground
+            # truth; prefer it when exactly one configured server matches.
+            sanitized = namespace.removeprefix("mcp__").removesuffix("__")
+            configured = [name for name in transports if _sanitize_server(name) == sanitized]
+            if len(configured) == 1:
+                return configured[0], call.name
+            return sanitized, call.name
         if namespace.startswith("multi_agent"):
             return None, call.name
         return None, f"{namespace}.{call.name}"
