@@ -53,8 +53,9 @@ absence is total and silent, which is why it is declared here.
 
 ### Codex and Cursor are the intended next kinds
 
-Both are still to do. What follows is not a plan but the measurement that should
-inform one, taken from one active development machine so the cost is known before
+Both are still to do. Codex now has a proposed design, [Codex](codex.md), with
+an OpenAIDR-owned reader rather than the dependency. What follows is not a plan
+but the measurement that should inform one, taken from one active development machine so the cost is known before
 the work is scheduled rather than discovered during it. Both would arrive
 **dependency-only** — the recoveries the Claude Code reader performs are per-kind
 and none of them would carry over.

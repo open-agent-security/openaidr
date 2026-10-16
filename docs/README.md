@@ -32,6 +32,12 @@
   branching conversation, statuses from the result's own record, usage per
   provider request, MCP connections from the log placed through each session's
   lock, and the model additions a second kind needs.
+- [Codex](specs/codex.md) — a third agent kind, `codex` (Codex CLI, `codex
+  exec`, and the IDE extension and Codex app through `codex app-server`),
+  read from its rollout files and its log database: one turn per record,
+  outcomes from completion items, denials from Codex's rejection envelope, usage
+  per response with cached input separated, and MCP connections placed by
+  process. *Proposed.*
 
 ## Decisions
 
