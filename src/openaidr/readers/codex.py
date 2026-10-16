@@ -172,6 +172,8 @@ class _Projection:
 
     meta: dict[str, object] | None = None
     boundary: int | None = None
+    #: The highest ordinal turned into a key so far, past the boundary.
+    max_ordinal: int | None = None
     records: list[_Record] = field(default_factory=list)
     #: Per call id, the index of its record; None once the id is used twice.
     calls: dict[str, int | None] = field(default_factory=dict)
@@ -257,7 +259,16 @@ class _Projection:
                 return
             if ordinal < self.boundary:
                 return
-        key = f"o{ordinal}" if type(ordinal) is int and ordinal >= 0 else f"l{line}"
+        if type(ordinal) is int and ordinal >= 0:
+            if self.max_ordinal is not None and ordinal <= self.max_ordinal:
+                # Codex's own ordinal is monotonic per file (Source); a repeat
+                # or a regression would key two turns alike, colliding their
+                # spans, so the session is withheld rather than half-read.
+                raise ValueError(f"ordinal {ordinal} does not advance past {self.max_ordinal}")
+            self.max_ordinal = ordinal
+            key = f"o{ordinal}"
+        else:
+            key = f"l{line}"
         self._seen(at)
         if kind == "turn_context":
             self._turn_context(payload)
