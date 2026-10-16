@@ -1617,11 +1617,7 @@ def test_a_still_running_mcp_outcome_does_not_supply_a_missing_duration() -> Non
     )
     enrichment = _MCPEnrichment(
         state="applied",
-        outcomes={
-            ("books", "search"): deque(
-                [MCPCallOutcome(server="books", tool="search", ok=None, duration_ms=9000)]
-            )
-        },
+        outcomes={("books", "search"): deque([MCPCallOutcome(ok=None, duration_ms=9000)])},
     )
     (call,) = _tool_calls(
         [_Usage()],  # type: ignore[list-item]

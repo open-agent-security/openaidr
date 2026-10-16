@@ -1388,12 +1388,11 @@ def _tool_calls(
                 working_directory=transcript.cwd_at.get((raw_session_id, record_uuid, occurrence)),
                 attributed_skill=skill,
                 attributed_plugin=plugin,
-                # By `server`, not `outcome.server`: transport is a property of
-                # the connection, established the moment the tool name is
-                # parsed, not of whether an ordinal outcome could be placed for
-                # this particular call. A call withheld for overlap still ran
-                # over a known connection; only its status and duration are
-                # genuinely ambiguous.
+                # Transport is a property of the connection, keyed by the server
+                # parsed from the tool name, not by whether an ordinal outcome
+                # could be placed for this particular call. A call withheld for
+                # overlap still ran over a known connection; only its status
+                # and duration are genuinely ambiguous.
                 transport=mcp.transport_for(server),
                 tool_class=tool_class(ClaudeCodeReader.agent_kind, name, server),
                 canonical_arguments=canonical_arguments(
