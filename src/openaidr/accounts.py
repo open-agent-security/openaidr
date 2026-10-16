@@ -456,6 +456,6 @@ def _token_claims(token: object) -> dict[str, object]:
         if base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != payload:
             return {}
         claims = json.loads(decoded)
-    except (binascii.Error, ValueError):
+    except (binascii.Error, ValueError, RecursionError):
         return {}
     return claims if isinstance(claims, dict) else {}
