@@ -1222,7 +1222,7 @@ class CodexReader:
         for line in raw.splitlines():
             try:
                 entry = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if isinstance(entry, dict):
                 thread, name = _string(entry.get("id")), _string(entry.get("thread_name"))
