@@ -36,8 +36,8 @@
   exec`, and the IDE extension and Codex app through `codex app-server`),
   read from its rollout files and its log database: one turn per record,
   outcomes from completion items, denials from Codex's rejection envelope, usage
-  per response with cached input separated, and MCP connections placed by
-  process. *Proposed.*
+  per response with cached input separated, and MCP connections placed by the
+  request that created the thread. On the Claude Code reader's design.
 
 ## Decisions
 

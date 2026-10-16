@@ -244,8 +244,12 @@ a workflow agent a different identity shape from every other sub-agent.
 
 ## A second kind: Codex
 
-Codex is not read yet, but its format was measured before this model was fixed, so
-the model does not assume one agent. Five Codex sessions on 2026-10-05:
+Codex is now read ([Codex](codex.md), ADR-0031). Its format was measured before
+this model was fixed, so the model does not assume one agent. Two rules below
+changed when the reader landed: a cache write of 0 is `None`, since Codex writes
+0 where the provider reported nothing, and a title a person set is read from
+`session_index.jsonl`. `final` is true, since Codex writes the record when the
+response completes. Five Codex sessions on 2026-10-05:
 
 | Measured | Rule |
 |---|---|
@@ -319,8 +323,8 @@ truncated or replaced file is rebuilt cold, as it is today.
 - **Read a sub-agent's `.meta.json`** (agent type, description, the tool call
   that launched it), or a workflow run's journal or script. Nothing here needs
   them. They can be added on their own evidence.
-- **Read other agent kinds' usage.** Codex and Cursor are not read yet. Their
-  formats must be measured, as this one was, when their readers land.
+- **Read other agent kinds' usage.** Cursor is not read yet. Its format must
+  be measured, as this one was, when its reader lands.
 - **Read provider-side usage reports.** This package reads what is on disk.
 
 ## Compatibility

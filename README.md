@@ -10,17 +10,19 @@ Session collection for AI coding agents.
 OpenAIDR reads the session state AI coding agents already write to disk and
 normalises it into one session model with stable span identity.
 
-> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Two
-> agent kinds read today (`claude-code`, `devin`). Start with
+> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Three
+> agent kinds read today (`claude-code`, `devin`, `codex`). Start with
 > [Install and run](#install-and-run), then
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
 
-**Today it reads two kinds: Claude Code and Devin** (`devin`, which covers
-Devin CLI, Devin Desktop's local agent and editors driving it over ACP: one
-agent, one session store). Codex and Cursor are the
-intended next kinds and are not read yet — a session from either is absent from
-the output entirely, not collected and marked. The parsing dependency supports more formats
+**Today it reads three kinds: Claude Code, Devin and Codex** (`devin`, which
+covers Devin CLI, Devin Desktop's local agent and editors driving it over ACP:
+one agent, one session store; `codex`, which covers Codex CLI, `codex exec`, and
+the IDE extension and Codex app through `codex app-server`, from
+[`docs/specs/codex.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/codex.md)).
+Cursor is the intended next kind and is not read yet — a session from it is
+absent from the output entirely, not collected and marked. The parsing dependency supports more formats
 than this package instantiates, which is a distinction worth holding onto; what
 each additional kind would cost is measured in
 [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage).
@@ -162,9 +164,9 @@ neither source records it.
 
 Not yet built, in the order they matter:
 
-- **Two further agent kinds, Codex and Cursor.** What each would cost is
-  measured in [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage)
-  rather than assumed — including why Cursor cannot be added dependency-only
+- **A further agent kind, Cursor.** What it would cost is measured in
+  [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage)
+  rather than assumed — including why it cannot be added dependency-only
   without breaking span identity.
 
 For long-lived consumers, `IncrementalCollector` accepts an agent kind and one
