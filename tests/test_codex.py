@@ -548,6 +548,25 @@ def test_session_fields_come_from_the_records(tmp_path: Path) -> None:
     assert session.started_at == datetime(2026, 10, 16, 2, 0, 0, tzinfo=UTC)
 
 
+def test_a_title_nested_past_the_decoders_limit_is_ignored_not_fatal(tmp_path: Path) -> None:
+    """`_titles()` runs before the per-rollout loop in `collect()`, with no
+    `_read()` of its own to withhold just one session; a `RecursionError`
+    there must not escape and cost the whole pass its Codex sessions, the
+    same way a merely malformed title line is ignored (P2 Codex review
+    finding on PR #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("fix the build")
+    rollout.write(tmp_path)
+    depth = 100_000
+    nested = ("[" * depth) + ("]" * depth)
+    (tmp_path / "session_index.jsonl").write_text(f'{{"id": "t", "thread_name": {nested}}}\n')
+
+    session = _only(tmp_path)
+
+    assert session.title is None
+
+
 def test_client_errors_are_turns_and_provider_refusals_are_named(tmp_path: Path) -> None:
     rollout = Rollout("t")
     rollout.turn("t1")
