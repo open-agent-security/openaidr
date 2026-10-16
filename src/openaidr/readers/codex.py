@@ -1066,7 +1066,8 @@ class CodexReader:
         logs = CodexLogs.open(self._root)
         if logs.failure:
             failures.append(self._failure(logs.failure))
-        sessions: list[Session] = []
+        claims: OrderedDict[str, list[Path]] = OrderedDict()
+        read: dict[Path, Session] = {}
         try:
             for path in paths:
                 if window.since is not None:
@@ -1084,9 +1085,24 @@ class CodexReader:
                     session.last_activity_at is None or session.last_activity_at < window.since
                 ):
                     continue
-                sessions.append(session)
+                read[path] = session
+                claims.setdefault(session.session_id, []).append(path)
         finally:
             logs.close()
+        sessions: list[Session] = []
+        for session_id, claimants in claims.items():
+            if len(claimants) > 1:
+                # A rollback keeps the thread id but starts a new rollout file
+                # (docs/specs/codex.md#the-rollout), so more than one file can
+                # claim the same session; which one is current is not on disk.
+                names = ", ".join(str(path) for path in claimants)
+                failures.append(
+                    self._failure(
+                        f"{session_id}: claimed by {len(claimants)} rollouts ({names}); not read"
+                    )
+                )
+                continue
+            sessions.append(read[claimants[0]])
         return sessions, failures
 
     def collect_file(self, path: Path) -> tuple[list[Session], list[ReaderFailure]]:
