@@ -1040,7 +1040,7 @@ class _Cursor:
                     if not isinstance(record, dict):
                         raise TypeError("record is not an object")
                     self.projection.project(record, self.line)
-                except (ValueError, TypeError, UnicodeError):
+                except (ValueError, TypeError, UnicodeError, RecursionError):
                     # Never the record's content in a failure: a malformed
                     # record can also hide a second claim on a call id, so the
                     # session is withheld rather than half-read.

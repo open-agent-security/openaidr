@@ -620,6 +620,27 @@ def test_a_malformed_record_withholds_the_session_and_never_echoes_it(tmp_path: 
     assert "malformed rollout record" in failures[0]
 
 
+def test_a_record_nested_past_the_decoders_limit_withholds_the_session(tmp_path: Path) -> None:
+    """`json.loads` on a pathologically nested record raises `RecursionError`,
+    not the `ValueError` a merely malformed record raises; a cold pass must
+    withhold only this rollout, not let the exception escape and cost every
+    Codex session the pass was collecting (P2 Codex review finding on PR
+    #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    path = rollout.write(tmp_path)
+    depth = 100_000
+    nested = ("[" * depth) + ("]" * depth)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(f'{{"type": "response_item", "payload": {nested}}}\n')
+
+    sessions, failures = _read(tmp_path)
+
+    assert sessions == []
+    assert len(failures) == 1
+    assert "malformed rollout record" in failures[0]
+
+
 def test_a_record_still_being_written_waits_for_its_newline(tmp_path: Path) -> None:
     rollout = Rollout("t")
     rollout.turn("t1")
