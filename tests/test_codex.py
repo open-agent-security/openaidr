@@ -641,6 +641,42 @@ def test_a_record_nested_past_the_decoders_limit_withholds_the_session(tmp_path:
     assert "malformed rollout record" in failures[0]
 
 
+def test_a_record_that_does_not_advance_the_ordinal_withholds_the_session(
+    tmp_path: Path,
+) -> None:
+    """Codex's own ordinal is monotonic per file (docs/specs/codex.md#the-rollout);
+    a repeat or a regression would key two turns alike, colliding their spans
+    (P1 Codex review finding on PR #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("first")
+    replayed = rollout._ordinal - 1
+    path = rollout.write(tmp_path)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "timestamp": "2026-10-16T02:00:10.000Z",
+                    "type": "event_msg",
+                    "ordinal": replayed,
+                    "payload": {
+                        "type": "item_completed",
+                        "thread_id": "t",
+                        "turn_id": "t1",
+                        "item": {"type": "UserMessage", "id": "replayed", "text": "again"},
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    sessions, failures = _read(tmp_path)
+
+    assert sessions == []
+    assert len(failures) == 1
+    assert "malformed rollout record" in failures[0]
+
+
 def test_a_record_still_being_written_waits_for_its_newline(tmp_path: Path) -> None:
     rollout = Rollout("t")
     rollout.turn("t1")
