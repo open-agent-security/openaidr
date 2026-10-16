@@ -31,19 +31,20 @@ and results before OpenAIDR sees them.
 
 ## Agent kind coverage
 
-**Two kinds today: `claude-code` and `devin`.** `default_readers()` returns
-one reader per kind, and `AGENT_KIND_BY_SOURCE` holds one row per kind. Devin
-CLI is read by an OpenAIDR-owned reader, not through the dependency; its design
-is [Devin CLI](devin-cli.md). Every other agent kind is **not read at all** —
-not read shallowly, not read and marked. A Codex or Cursor session sitting on
-the same machine is absent from this package's output entirely.
+**Three kinds today: `claude-code`, `devin` and `codex`.** `default_readers()`
+returns one reader per kind, and `AGENT_KIND_BY_SOURCE` holds one row per kind.
+Devin CLI and Codex are read by OpenAIDR-owned readers, not through the
+dependency; their designs are [Devin CLI](devin-cli.md) and [Codex](codex.md).
+Every other agent kind is **not read at all** — not read shallowly, not read and
+marked. A Cursor session sitting on the same machine is absent from this
+package's output entirely.
 
 **"The dependency parses it" is not "OpenAIDR reads it",** and the gap between
 those two statements is the most likely thing to be misread about this package.
 `adr-sensor` ships parsers for seven kinds; this package instantiates one of
 them. Reading a kind takes two more things that are ours: a reader implementing
 the collection contract, and a row mapping the agent's own on-disk source name to
-an agent kind. Neither exists for any kind but Claude Code and Devin CLI.
+an agent kind. Neither exists for any kind but Claude Code, Devin CLI and Codex.
 
 Nor is an unread kind the same as a *kind-anonymous* one. Kind-anonymous
 (see [Source vocabulary](#source-vocabulary)) describes a session this package
@@ -53,8 +54,9 @@ absence is total and silent, which is why it is declared here.
 
 ### Codex and Cursor are the intended next kinds
 
-Both are still to do. Codex now has a proposed design, [Codex](codex.md), with
-an OpenAIDR-owned reader rather than the dependency. What follows is not a plan
+Codex is now read, by an OpenAIDR-owned reader rather than the dependency
+([Codex](codex.md)); the Codex rows below are why. Cursor is still to do. What
+follows is not a plan
 but the measurement that should inform one, taken from one active development machine so the cost is known before
 the work is scheduled rather than discovered during it. Both would arrive
 **dependency-only** — the recoveries the Claude Code reader performs are per-kind

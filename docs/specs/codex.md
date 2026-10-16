@@ -1,12 +1,14 @@
 # OpenAIDR — Codex
 
-*Proposed (2026-10-16). A third agent kind, `codex`, with an OpenAIDR-owned
+*Implemented (2026-10-16). A third agent kind, `codex`, with an OpenAIDR-owned
 reader (`readers/codex.py`, `readers/codex_log.py`). Extends
-[Session collection](session-collection.md) and [Token usage](token-usage.md),
-in the shape of [Devin](devin-cli.md). Supersedes the design of the unmerged
-reader in open-agent-security/openaidr#35 and reuses its record handling. Takes
-the account reader from the `codex-sign-in-reader` branch (ADR-0027). Nothing
-here is built.*
+[Session collection](session-collection.md) and [Token usage](token-usage.md).
+**The Claude Code reader is the reference design**: Codex writes one append-only
+file per thread, as Claude Code writes one transcript per session, so the
+reader follows it, never [Devin](devin-cli.md)'s one-store rebuild. Supersedes
+the design of the unmerged reader in open-agent-security/openaidr#35 and reuses
+its record handling. Takes the account reader from the `codex-sign-in-reader`
+branch (ADR-0027). Decisions: ADR-0030, ADR-0031, ADR-0032.*
 
 ## At a glance
 
@@ -14,7 +16,7 @@ here is built.*
 |---|---|
 | Covers | Codex CLI in the terminal (`codex`), `codex exec`, and the IDE extension and Codex app, which drive the same agent through `codex app-server`. Sub-agent threads of all of them. One harness, one `CODEX_HOME` |
 | Not covered | **Codex Cloud** tasks. They run in OpenAI's containers, so reading them needs a network client, which read-only sensing rules out |
-| Reads | Under the data root: `sessions/**/rollout-*.jsonl` for messages, calls, outcomes and per-response tokens; `logs_2.sqlite` (read-only) for MCP connections; `session_index.jsonl` for a thread's name; `auth.json` for the account |
+| Reads | Under the data root: `sessions/**/rollout-*.jsonl` for messages, calls, outcomes and per-response tokens; the newest `logs_<n>.sqlite` (read-only) for MCP connections; `session_index.jsonl` for a thread's name; `auth.json` for the account |
 | Data root | `$CODEX_HOME`, else `~/.codex`. `OPENAIDR_CODEX_ROOT` overrides it for the CLI; `default_readers(codex_root=…)` for callers. `archived_sessions/` is a second location |
 | Backed by `adr-sensor` | No. Its Codex parser drops `custom_tool_call` (where `apply_patch` lives), marks every returned call successful and truncates bodies at 1,000 characters (measured: 619 of 4,205 calls read, all `ok`) |
 | Platforms | Linux and macOS. Windows deferred (ADR-0013) |
@@ -134,17 +136,17 @@ client errors in one place. `codex_error_info` is a closed vocabulary (Source
 | `tool_name`, `mcp_server` | An `McpToolCall` item's `server` and `tool` when one is recorded. Else a `function_call` with `namespace` `mcp__<server>` gives the server, and `name` the tool (Seen: MCP tools are deferred behind `tool_search` and called this way). Else a flat `mcp__<server>__<tool>` splits by Claude Code's rule. Any other name stays whole, with no server |
 | `arguments` | `function_call.arguments` parsed from JSON text; `custom_tool_call.input` as `{"input": …}`. Non-object JSON gives `{"raw": …}`, reported |
 | `result`, `result_size` | The output's `output`: a string, or a list of content blocks kept whole as JSON text. Never elided |
-| `error_text` | When `status` is `error`: the item's `error`, `stderr` or the output text |
-| `truncated` | True when the output says Codex cut it (`Original token count` above what is shown, or an item's 64 KiB cap). C2 |
+| `error_text` | When `status` is `error`: the item's `error`, else its `stderr`, else its `aggregated_output`, else the output text |
+| `truncated` | True when the result carries Codex's own cut mark, `…N tokens truncated…` or `…N chars truncated…` (Source `utils/string/src/truncate.rs`). C2 |
 | `provider_call_id` | `call_id` |
 | `status`, `denial_kind` | [Status](#status) |
 | `working_directory` | `CommandExecution.cwd` (a `file://` URI, made a path); else the call's `workdir` against the turn's `cwd`; else the turn's `cwd` |
-| `exit_code` | `CommandExecution.exit_code`. In legacy mode, the `Process exited with code N` line of Codex's output header, which Codex writes before the command's output |
+| `exit_code` | `CommandExecution.exit_code`. Else the `Process exited with code N` or `Exit code: N` line of the header Codex writes above `Output:`, never a line below it. Legacy rollouts have only the header |
 | `duration_ms` | The item's `duration`, else `completed_at_ms − started_at_ms`. None when the call has no item |
 | `transport` | For an MCP call, its server's transport from the placed connection |
 | `tool_class`, `canonical_arguments` | The kind's tables ([below](#tool-class-and-canonical-arguments)) |
 | `attributed_skill` | `None`. Codex lists skills in its instructions, and the model opens one with the shell, so no record names the skill a call served (C12) |
-| `attributed_plugin` | The MCP call's plugin, where its item names one (C10) |
+| `attributed_plugin` | The item's `plugin_id`, where one is written (C10) |
 
 ### Status
 
@@ -153,16 +155,19 @@ From Codex's own records, never from what a command printed:
 | Record | `status` | `denial_kind` |
 |---|---|---|
 | `CommandExecution` `completed`, exit code 0; `FileChange` `completed`; `McpToolCall` `completed` and not `isError`; `tool_search_output` `completed` | `ok` | — |
-| `CommandExecution` `failed` or a non-zero exit; `McpToolCall` `failed` or `isError`; legacy output header with a non-zero exit | `error` | — |
+| `CommandExecution` `failed` or a non-zero exit; `McpToolCall` `failed` or `isError`; an output header with a non-zero exit | `error` | — |
 | `FileChange` `declined` | `rejected` | `user-rejected` |
 | Output that is Codex's rejection envelope, `exec_command failed: CreateProcess { message: "Rejected(…)` at its start, carrying `rejected by user` | `rejected` | `user-rejected` |
 | The same envelope carrying `automatic approval review denied the action` (the Guardian reviewer) | `rejected` | `automode-blocked` |
 | The same envelope carrying `rejected by configuration` (a hook), `forbidden by policy`, `policy forbids commands starting with` (an exec-policy rule), `rm -f style commands are not permitted` (a built-in rule), or `approval policy is Never; reject command` | `rejected` | `permission-rule` |
 | The envelope with any other reason | `rejected` | `None` |
-| Output `aborted by user`, followed by `turn_aborted` | `interrupted` | — |
-| An output and no item, in paginated mode | `unknown` | — |
-| No output, and the thread moved on | `unknown` | — |
-| No output, at the thread's last record | `pending` | — |
+| Output `approval policy is Never; reject command` | `rejected` | `permission-rule` |
+| Output `patch rejected by user` | `rejected` | `user-rejected` |
+| Output `aborted by user` | `interrupted` | — |
+| A `tool_search_call` or `web_search_call` whose own status is `completed` or `failed` | `ok` or `error` | — |
+| An output with no item and no header | `unknown` | — |
+| No output and no item, after the Codex turn ended | `unknown` | — |
+| No output and no item, while the Codex turn runs | `pending` | — |
 
 - **Denials leave no item.** A refused, declined or policy-blocked command
   produces only its `function_call_output` (Seen for each case above). The
@@ -202,63 +207,66 @@ estimate with zero input after an overflow (Seen).
 | `context_window` | **New, additive.** `model_context_window` from the turn's `task_started` |
 | 5-minute and 1-hour cache split, web request counts, tier, speed, region | `None`: not recorded |
 
-`Turn.response_id`: a turn takes the `response_id` of the next
-`token_usage_record` with the same `turn_id`. A thread has one response in
-flight at a time, so the records between two usage records belong to the later
-one.
+`Turn.response_id`: an assistant turn takes the `response_id` of the next
+`token_usage_record` with the same `turn_id` (ADR-0031). A thread has one
+response in flight at a time, so the records between two usage records belong
+to the later one.
 
 ## MCP connections: the log database
 
-The rollout records MCP calls, not connections. Connection facts are in
-`<root>/logs_2.sqlite`, table `logs(ts, ts_nanos, level, target,
+The rollout records MCP calls, not connections. Connection facts are in the
+newest `<root>/logs_<n>.sqlite`, table `logs(ts, ts_nanos, level, target,
 feedback_log_body, thread_id, process_uuid, …)`. Its default filter keeps
 `rmcp` and `codex_rmcp_client` at INFO (Source `state/src/log_db.rs`). Lines
 from the app-server run, shortened (Seen):
 
 ```
-INFO rmcp::service  …new{server_name=probe}…: Service initialized as client peer_info=Some(… server_info: Some(Implementation { name: "probe-mcp-server", version: "9.9.9" … }))
-WARN codex_mcp::rmcp_client  MCP server startup failed server_name="broken_stdio" error=No such file or directory (os error 2)
-WARN codex_rmcp_client::http_client_adapter  streamable HTTP post_message failed endpoint_scheme="http" endpoint_host="127.0.0.1" endpoint_path="/mcp" mcp_method="initialize"
-WARN codex_mcp::rmcp_client  MCP server startup failed server_name="broken_http" error=handshaking with MCP server failed: …
-TRACE … session_loop{thread_id=01a1427b-…}: omitting MCP server without an exact ready client server_name=broken_stdio
+INFO rmcp::service  app_server.request{rpc.method="thread/start" rpc.request_id=2 app_server.connection_id=1 …}:new{server_name=probe}: Service initialized as client peer_info=Some(… server_info: Some(Implementation { name: "probe-mcp-server", version: "9.9.9" … }))
+WARN codex_mcp::rmcp_client  app_server.request{… rpc.request_id=2 app_server.connection_id=1 …}: MCP server startup failed server_name="broken_stdio" error=No such file or directory (os error 2)
+WARN codex_mcp::rmcp_client  app_server.request{…}: MCP server startup failed server_name="broken_http" error=handshaking with MCP server failed: … StreamableHttpClientAdapter … error sending request …
 ```
 
 **`codex exec` writes no rows** (Seen: 0 rows after an exec run, 627 after an
 app-server run). Only the terminal UI and app-server open the database. An
 exec session's state is `no_log_for_session`.
 
-**Placement.** Startup lines carry `process_uuid` and no `thread_id`. Later
-lines of the same process carry the threads it served.
+**Placement by request, never by time** (ADR-0032). Startup lines carry
+`process_uuid` and no `thread_id`. Codex starts a thread's servers inside the
+`thread/start` request that creates it, and every line it logs there carries
+that request's span. Another line in the same span carries the thread's id.
 
-1. The startup lines a process logged before a thread's first thread-tagged line,
-   and after the previous thread's, are that thread's connections.
-2. If two threads in one process started inside the same window, connections
-   are withheld and `mcp_log_state` is `placement_ambiguous`.
-3. A thread-tagged `omitting MCP server without an exact ready client` line
-   places a failed server on that thread alone, whatever rules 1 and 2 decide.
+1. A startup line belongs to the thread whose own tagged line shares its
+   request span (connection id and request id).
+2. A line logged in no request is placed only where its process served one
+   thread. Otherwise the thread's state is `placement_ambiguous`.
+3. Two lines that disagree about one server leave `connected` unknown.
+
+A slow failure is logged after the thread's first tagged line (Seen: 1.3
+seconds later), so a time window would misplace it.
 
 | `MCPConnection` | Source |
 |---|---|
 | `server` | `server_name` |
-| `transport` | `streamable-http` where an `http_client_adapter` line names the server's endpoint. `stdio` only where a line says so (C5). Otherwise `None` |
-| `endpoint` | `endpoint_scheme://endpoint_host endpoint_path`. Codex logs no query string. `None` for stdio |
+| `transport` | `streamable-http` where the failure names Codex's HTTP client. Otherwise `None` (C5) |
+| `endpoint` | `None`. Never taken from error text |
 | `advertised_name`, `advertised_version` | `server_info` on the `Service initialized` line. Codex logs the handshake at the default level, where Devin does not |
-| `connected` | True on `Service initialized`, false on `MCP server startup failed` or an `omitting … ready client` line |
-| `failure_category` | From the error, first match wins: `spawn` (`No such file or directory`, `os error 2`); `auth` (401, 403, `Unauthorized`, OAuth); `timeout`; `network` (`error sending request`, `Connection refused`, DNS); `protocol` (`handshaking with MCP server failed` with no cause above); else `unknown` |
+| `connected` | True on `Service initialized`, false on `MCP server startup failed` |
+| `failure_category` | From the error, first match wins: `policy`; `spawn` (`No such file or directory`, `os error 2`); `auth` (401, 403, `Unauthorized`, OAuth); `timeout`; `network` (`error sending request`, `Connection refused`, DNS); `http_status`; `protocol` (`handshaking with MCP server failed` with no cause above); else `unknown` |
 | `failure_detail` | The error text (`LOCAL_ONLY`) |
 | `duration_ms` | `None` (C5) |
 
-The reader reads only rows whose `target` is one of the four above. No other
-log body is read.
+The reader reads only rows whose `target` is `rmcp::service` or
+`codex_mcp::rmcp_client`, and finds a thread's request spans by its own tagged
+rows. No other log body is read.
 
 | `mcp_log_state` | Meaning for `codex` |
 |---|---|
 | `applied` | Placed |
-| `no_log_root` | No `logs_2.sqlite` |
+| `no_log_root` | No `logs_<n>.sqlite` |
 | `log_root_unreadable` | The database could not be opened |
-| `no_log_for_session` | No row names the thread's process. Always the case for `codex exec` |
+| `no_log_for_session` | No row names the thread. Always the case for `codex exec` |
 | `log_discovery_incomplete` | A read failed part-way |
-| `placement_ambiguous` | Two threads started in one window of one process |
+| `placement_ambiguous` | A line logged in no request, in a process that served several threads |
 
 ## Who is signed in
 
@@ -273,13 +281,14 @@ also `None`. `sign_in_records("codex")` names `auth.json` and `config.toml`.
 
 ## Growing sessions
 
-ADR-0011's discipline, unchanged:
+The Claude Code reader's discipline (ADR-0011, ADR-0029, ADR-0030):
 
 | Rule | Detail |
 |---|---|
-| Committed unit | A newline-terminated record |
-| What is held | Per file: device, inode, offset, line count and the projection. In memory, never persisted |
-| `collect_file(path)` | A rollout: read from the offset. `logs_2.sqlite` or its `-wal`: re-place every session read so far and return those whose connections changed. `session_index.jsonl`: re-read titles. Anything else: nothing |
+| Committed unit | A newline-terminated record. A torn last line waits for its newline |
+| What is held | Per file: device, inode, offset, line count and the projection. In memory, never persisted, under the 128-file and 16 MiB LRU bound |
+| `locations()` | `sessions/` and `archived_sessions/` |
+| `collect_file(path)` | A rollout under those locations: read from the offset, and return the file's session on every read. The log database and `session_index.jsonl` are read again with it, as Claude Code's connection logs are. Anything else: nothing |
 | Replaced or shorter file | Rebuilt cold |
 | Malformed complete record | That file's session is withheld and the path and line reported, never the record's content. An unread record could hide a second claim on a `call_id` |
 | Between reads | Calls update in place by span. Responses replace by `(session, response_id)`. No turn disappears |
@@ -288,24 +297,25 @@ ADR-0011's discipline, unchanged:
 
 | Class | `codex` | Canonical keys (`codex` source key) |
 |---|---|---|
-| `shell` | `exec_command`, `shell`, `shell_command`, `local_shell_call` | `command`: `cmd` as written. For an argv form, the script of `bash -lc <script>` or `sh -c <script>`, else the argv joined. **Always the script, never the wrapper**, so a consumer sees `curl …` and not `bash -lc …` |
+| `shell` | `exec_command`, `shell`, `shell_command`, `local_shell` | `command`: `cmd` as written. For an argv form, the script of `bash -lc <script>` or `sh -c <script>`, else the argv joined. **Always the script, never the wrapper**, so a consumer sees `curl …` and not `bash -lc …` |
 | `shell_control` | `write_stdin` | — |
 | `file_read` | `view_image` | `path` (`path`) |
 | `file_edit` | `apply_patch` | `edits` (**new**, below). A patch that touches one file also gets `path` and `new_text` |
-| `web_search` | `web_search_call` | — |
-| `delegate` | `spawn_agent`, `send_input`, `resume_agent` | `agent` (the role argument; C7) |
+| `web_search` | `web_search` | — |
+| `delegate` | `spawn_agent` | `agent`: `agent_type`, else `default`, the role Codex itself applies (Source `core/src/agent/role.rs`; C7) |
 | `mcp` | Any call with an `mcp_server` | — |
-| `other` | `wait_agent`, `close_agent`, `tool_search`, `update_plan`, `request_user_input`, `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `get_goal`, `create_goal`, `update_goal`, `image_generation_call` | — |
+| `other` | `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `tool_search`, `update_plan`, `request_user_input`, `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `get_goal`, `create_goal`, `update_goal`, `image_generation`. `send_input` and `resume_agent` reach an agent that already exists, as Claude Code's `SendMessage` does | — |
 
 Codex has no file-read, file-search, file-write or web-fetch tool. It reads,
 searches and fetches through the shell, so those calls are `shell`.
 
 **`edits` is a new canonical key** for a patch tool. It is a list of `{path,
 kind, new_text}`, one per file. `kind` is `add`, `update` or `delete`. `new_text`
-holds the added lines, taken from `FileChange.changes` when recorded, else
-from the patch's own grammar (`*** Add File:`, `*** Update File:`, `+` lines).
+holds the added lines, taken from the patch's own grammar (`*** Add File:`,
+`*** Update File:`, `*** Move to:`, `+` lines), else from a `changes` argument.
 One canonical `path` cannot describe a patch that touches three files. Devin's
-`apply_patch` has the same shape and fills the same key (its M3).
+`apply_patch` has the same shape and could fill the same key; that is not done
+here.
 
 ## Model additions
 
@@ -338,7 +348,7 @@ it. **Absent** means there is no source.
 | Compactions | Recorded | Unconfirmed | Recorded; trigger absent (C6) |
 | Provider refusals | Recorded | Absent | Recorded (error codes) |
 | Client errors (quota, throttle, overflow) | Recorded (as turns) | Absent | Recorded (role `error`) |
-| MCP connections | Recorded | Partial: no advertised identity | Partial: none under `codex exec`; no duration |
+| MCP connections | Recorded | Partial: no advertised identity | Partial: none under `codex exec`; no endpoint or duration |
 | Responses and tokens | Recorded | Recorded | Recorded; input normalised |
 | Context window | Absent | Absent | Recorded |
 | Turn time | Recorded | Recorded | Recorded |
@@ -347,7 +357,7 @@ it. **Absent** means there is no source.
 | Tool name, MCP server, arguments | Recorded | Recorded | Recorded |
 | Tool class, canonical arguments | Recorded | Recorded; `apply_patch` none | Recorded; patches as `edits` |
 | Status and denial | Recorded | Unconfirmed | Recorded (paginated); denials from the envelope |
-| Exit code | Absent | Unconfirmed | Recorded; legacy from the output header |
+| Exit code | Absent | Unconfirmed | Recorded; else from the output header |
 | Per-call working directory | Recorded | Unconfirmed | Recorded |
 | Duration | Recorded | Absent | Recorded (paginated) |
 | Attributed skill, plugin | Recorded | Absent | Skill absent (C12); plugin unconfirmed (C10) |
@@ -378,32 +388,11 @@ Then re-measure the earlier corpus with the new reader.
 
 ## Decisions
 
-Each is a candidate ADR, numbered from 0030 when it is written. #35's ADR-0014
-and ADR-0015 are not used as numbered: those numbers are taken.
-
-1. **An OpenAIDR-owned reader of rollouts, paginated and legacy alike.**
-   Rejected: `adr-sensor`'s parser, which drops most calls and reads every
-   returned call as successful. Rejected: Codex's own `thread_history_1.sqlite`.
-   It duplicates the rollout, and a reader that joins two stores for one fact
-   has two answers when they disagree.
-2. **Usage from `token_usage_record`, input normalised to exclude cached
-   tokens.** Rejected: `token_count`, for the three reasons above. Rejected:
-   carrying input as recorded. Every consumer sums the four token kinds as
-   disjoint, so cached tokens would be counted twice.
-3. **MCP connections from `logs_2.sqlite`, placed by process and time, and
-   absent for `codex exec`.** Rejected: setting `log_dir`, `RUST_LOG` or OTel.
-   Each is a configuration change on the developer's machine, and read-only
-   sensing does not make one.
-4. **Denials from Codex's rejection envelope.** Rejected: leaving every
-   unpaired output `unknown`. That drops every refusal, and a consumer can then
-   no longer separate a refusal from a failure. Rejected: reading the model's
-   prose.
-5. **A sub-agent is named by the root thread**, `codex:<root>:<child>`, at any
-   depth. Rejected: `codex:<child>` alone, which loses the run. Rejected: the
-   immediate parent, which makes a depth-two child's run a sub-agent.
-6. **The canonical key `edits` for patch tools.** Rejected: a canonical `path`
-   per call, which cannot describe a patch that touches several files and would
-   silently drop all but one.
+| ADR | Decision | Rejected |
+|---|---|---|
+| [0030](../adrs/0030-read-codex-rollouts-on-the-claude-code-readers-design.md) | An OpenAIDR-owned reader on the Claude Code reader's design. A record is a turn. Outcomes come only from Codex's records, refusals from its envelope. A sub-agent is named by its root. A patch's files are `edits` | `adr-sensor`'s parser; the Devin reader's rebuild-and-diff; `unknown` for every unpaired output; naming by the immediate parent |
+| [0031](../adrs/0031-codex-usage-from-token-usage-records-with-cached-input-apart.md) | One response per `token_usage_record`, cached input taken out of input, a 0 cache write is `None`, the window from `task_started` | `token_count`; input as recorded |
+| [0032](../adrs/0032-place-codex-mcp-connections-by-the-request-that-created-the-thread.md) | MCP connections placed by the request that created the thread; none for `codex exec` | Placement by time; turning on logging |
 
 ## Non-goals
 
@@ -417,15 +406,16 @@ and ADR-0015 are not used as numbered: those numbers are taken.
 
 ## References
 
-- [Session collection](session-collection.md) · [Token usage](token-usage.md) ·
-  [Devin](devin-cli.md)
+- [Session collection](session-collection.md) · [Token usage](token-usage.md)
 - ADR-0001 identity · ADR-0011 cursors · ADR-0013 Windows · ADR-0014 usage per
   response · ADR-0015 tokens as recorded · ADR-0021 tool class · ADR-0022
-  absence flags · ADR-0023 locations · ADR-0027 accounts
+  absence flags · ADR-0023 locations · ADR-0027 accounts · ADR-0029 cache
+  bound · ADR-0030 to ADR-0032 Codex
 - openai/codex `rust-v0.163.0`: `rollout/src/policy.rs`, `rollout/src/recorder.rs`,
   `rollout/src/session_index.rs`, `protocol/src/protocol.rs`,
   `protocol/src/codex_error_info.rs`, `codex-api/src/sse/responses.rs`,
   `core/src/tools/approvals.rs`, `core/src/exec_policy.rs`,
-  `state/src/log_db.rs`, `login/src/token_data.rs`
+  `state/src/log_db.rs`, `login/src/token_data.rs`, `core/src/agent/role.rs`,
+  `utils/string/src/truncate.rs`
 - Prior work: open-agent-security/openaidr#35 (reader), the
   `codex-sign-in-reader` branch (account)
