@@ -233,6 +233,25 @@ def test_a_token_payload_with_embedded_padding_is_malformed(tmp_path: Path) -> N
     assert signed_in("codex", home=home) is None
 
 
+def test_a_payload_nested_past_the_decoders_limit_is_a_malformed_token(tmp_path: Path) -> None:
+    """A payload nested deep enough makes `json.loads` raise `RecursionError`,
+    not `ValueError`. `signed_in` never raises for a malformed record, so this
+    is a malformed token like any other, not an exception that escapes it
+    (P2 Codex review finding on PR #76)."""
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    header, _, signature = _jwt(_CODEX_CLAIMS).split(".")
+    depth = 100_000
+    nested = (b"[" * depth) + (b"]" * depth)
+    payload = base64.urlsafe_b64encode(nested).decode("ascii").rstrip("=")
+    tampered = f"{header}.{payload}.{signature}"
+    (home / ".codex" / "auth.json").write_text(
+        json.dumps(_codex_auth(None) | {"tokens": {"id_token": tampered}}), "utf-8"
+    )
+
+    assert signed_in("codex", home=home) is None
+
+
 def test_no_codex_secret_reaches_the_account(tmp_path: Path) -> None:
     """The file holds the access token, the refresh token and any API key
     beside the identity token. None of them is in what comes back."""
