@@ -696,6 +696,39 @@ def test_a_record_that_does_not_advance_the_ordinal_withholds_the_session(
     assert "malformed rollout record" in failures[0]
 
 
+def test_a_timestamp_that_overflows_converting_to_utc_is_not_fatal(tmp_path: Path) -> None:
+    """A boundary offset like `0001-01-01T00:00:00+23:59` parses fine with
+    `datetime.fromisoformat` but raises `OverflowError` converting to UTC,
+    not the `ValueError` an unparseable timestamp raises. The record's own
+    instant is simply absent, not fatal to the whole session (P2 Codex
+    review finding on PR #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    next_ordinal = rollout._ordinal
+    path = rollout.write(tmp_path)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "timestamp": "0001-01-01T00:00:00+23:59",
+                    "type": "response_item",
+                    "ordinal": next_ordinal,
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "hi"}],
+                        "internal_chat_message_metadata_passthrough": {"turn_id": "t1"},
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    session = _only(tmp_path)
+
+    assert session.turns[-1].occurred_at is None
+
+
 def test_a_record_still_being_written_waits_for_its_newline(tmp_path: Path) -> None:
     rollout = Rollout("t")
     rollout.turn("t1")

@@ -988,9 +988,11 @@ def _instant(value: object) -> datetime | None:
         return None
     try:
         moment = datetime.fromisoformat(value)
-    except ValueError:
+        return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment.astimezone(UTC)
+    except (ValueError, OverflowError):
+        # A boundary offset, e.g. "0001-01-01T00:00:00+23:59", parses fine but
+        # overflows converting to UTC; as unrepresentable as an instant it is.
         return None
-    return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment.astimezone(UTC)
 
 
 def _count(value: object) -> int | None:
