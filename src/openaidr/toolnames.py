@@ -22,6 +22,11 @@ def split_tool_name(agent_kind: str | None, raw: str) -> tuple[str | None, str]:
         # Devin CLI names MCP tools by Claude Code's convention, verified in its
         # own hook matchers (`^mcp__`), so the same rule is correct for both.
         return _split_claude_code(raw)
+    if agent_kind == "codex" and "." not in raw:
+        # Codex names an MCP tool by a namespace and a name, which its reader
+        # splits from the record. A flat `mcp__<server>__<tool>`, from builds
+        # that had no namespaces, uses Claude Code's delimiter exactly.
+        return _split_claude_code(raw)
     return None, raw
 
 

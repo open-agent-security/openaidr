@@ -296,6 +296,10 @@ class ModelResponse:
     service_tier: str | None = None
     speed: str | None = None
     inference_region: str | None = None
+    #: The model's context window in tokens, where the agent records the one it
+    #: ran against. A consumer otherwise keeps a table by model name, and that
+    #: table is wrong the day a model ships. None where nothing records it.
+    context_window: int | None = None
 
 
 @dataclass(frozen=True)

@@ -438,14 +438,14 @@ def test_each_kind_names_every_file_its_sign_in_depends_on(
     assert sign_in_records(kind, home=home) == tuple(home / r for r in relatives)
 
 
-@pytest.mark.parametrize("kind", ["cursor", "codex"])
+@pytest.mark.parametrize("kind", ["cursor"])
 def test_a_kind_with_no_reader_names_no_file(tmp_path: Path, kind: str) -> None:
-    """Codex's sign-in is read with its sessions, which this package does not
+    """Cursor's sign-in is read with its sessions, which this package does not
     read yet (ADR-0027 clause 1)."""
     assert sign_in_records(kind, home=_home(tmp_path)) == ()
 
 
-@pytest.mark.parametrize("kind", ["cursor", "codex"])
+@pytest.mark.parametrize("kind", ["cursor"])
 def test_a_kind_with_no_reader_is_signed_in_as_no_one(tmp_path: Path, kind: str) -> None:
     assert signed_in(kind, home=_home(tmp_path)) is None
 

@@ -22,6 +22,7 @@ from openaidr.readers.base import (
     collect_from,
 )
 from openaidr.readers.claude_code import ClaudeCodeReader
+from openaidr.readers.codex import CodexReader
 from openaidr.readers.devin_cli import DevinCliReader
 
 
@@ -33,20 +34,36 @@ class Collection:
     failures: list[ReaderFailure] = field(default_factory=list)
 
 
-def default_readers(root: Path | None = None, devin_root: Path | None = None) -> list[Reader]:
+def default_readers(
+    root: Path | None = None,
+    devin_root: Path | None = None,
+    *,
+    codex_root: Path | None = None,
+) -> list[Reader]:
     """The readers this package ships: one per kind.
 
     `root` is Claude Code's, kept positional for existing callers; each other
-    kind's root has its own keyword.
+    kind's root has its own keyword. Codex's is its home, `CODEX_HOME`.
     """
-    return [ClaudeCodeReader(root=root), DevinCliReader(root=devin_root)]
+    return [
+        ClaudeCodeReader(root=root),
+        DevinCliReader(root=devin_root),
+        CodexReader(root=codex_root),
+    ]
 
 
 def default_incremental_readers(
-    root: Path | None = None, devin_root: Path | None = None
+    root: Path | None = None,
+    devin_root: Path | None = None,
+    *,
+    codex_root: Path | None = None,
 ) -> list[IncrementalReader]:
     """The stateful readers this package ships: one per kind."""
-    return [ClaudeCodeReader(root=root), DevinCliReader(root=devin_root)]
+    return [
+        ClaudeCodeReader(root=root),
+        DevinCliReader(root=devin_root),
+        CodexReader(root=codex_root),
+    ]
 
 
 class IncrementalCollector:
@@ -58,9 +75,12 @@ class IncrementalCollector:
         readers: Sequence[IncrementalReader] | None = None,
         *,
         devin_root: Path | None = None,
+        codex_root: Path | None = None,
     ) -> None:
         available = (
-            readers if readers is not None else default_incremental_readers(root, devin_root)
+            readers
+            if readers is not None
+            else default_incremental_readers(root, devin_root, codex_root=codex_root)
         )
         self._readers = {reader.agent_kind: reader for reader in available}
 
