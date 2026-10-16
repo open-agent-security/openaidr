@@ -77,6 +77,32 @@ def test_a_sub_agent_is_named_by_its_root_thread_at_any_depth(tmp_path: Path) ->
     assert grandchild.entrypoint == "exec"
 
 
+def test_two_rollouts_claiming_the_same_thread_are_reported_not_guessed(tmp_path: Path) -> None:
+    """A rollback keeps the thread id but starts a new rollout file
+    (docs/specs/codex.md#the-rollout), so `collect()` can find two files for
+    one thread. Which is current is not on disk, so neither is guessed at;
+    the ambiguity is reported instead of returning two sessions sharing one
+    `session_id` (ADR-0001's span identity)."""
+    first = Rollout("01a1-main")
+    first.turn("t1")
+    first.user("fix the build")
+    first.write(tmp_path)
+
+    second = Rollout("01a1-main")
+    second.turn("t2")
+    second.user("fix it differently")
+    directory = tmp_path / "sessions/2026/10/16"
+    second_path = directory / "rollout-2026-10-16T02-05-00-01a1-main_rb1.jsonl"
+    second_path.write_text(second.text(), encoding="utf-8")
+
+    sessions, failures = CodexReader(tmp_path).collect(_ALL)
+
+    assert sessions == []
+    assert len(failures) == 1
+    assert "codex:01a1-main" in failures[0].message
+    assert "2 rollouts" in failures[0].message
+
+
 def test_a_call_is_its_own_turn_and_its_span_never_moves(tmp_path: Path) -> None:
     rollout = Rollout("t")
     rollout.turn("t1")
