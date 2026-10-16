@@ -28,3 +28,12 @@ def test_unknown_kind_never_guesses_a_server() -> None:
 @pytest.mark.parametrize("raw", ["mcp__", "mcp__github", "mcp____x"])
 def test_malformed_claude_names_are_left_whole(raw: str) -> None:
     assert split_tool_name("claude-code", raw) == (None, raw)
+
+
+def test_codex_splits_a_flat_mcp_name_and_never_a_namespaced_one() -> None:
+    assert split_tool_name("codex", "mcp__github__get_issue") == ("github", "get_issue")
+    assert split_tool_name("codex", "multi_agent_v1.spawn_agent") == (
+        None,
+        "multi_agent_v1.spawn_agent",
+    )
+    assert split_tool_name("codex", "exec_command") == (None, "exec_command")

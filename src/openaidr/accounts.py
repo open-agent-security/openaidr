@@ -17,16 +17,22 @@ here (ADR-0027 clause 1).
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import re
 import shutil
+import tomllib
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .model import Account
+
+_OPENAI_AUTH_CLAIM = "https://api.openai.com/auth"
+_OPENAI_PROFILE_CLAIM = "https://api.openai.com/profile"
 
 
 def signed_in(
@@ -35,8 +41,8 @@ def signed_in(
     """The account `kind` is signed in as now, or None.
 
     `config_dir` is the agent's own configuration directory when it is not the
-    default: Claude Code's `~/.claude` (or `CLAUDE_CONFIG_DIR`). `home` stands
-    in for the home directory.
+    default: Claude Code's `~/.claude` (or `CLAUDE_CONFIG_DIR`), Codex's
+    `~/.codex` (or `CODEX_HOME`). `home` stands in for the home directory.
     Never raises: a missing, unreadable or malformed record is no account.
     """
     reader = _READERS.get(kind)
@@ -106,6 +112,73 @@ _DEVIN_APP_BINARIES: tuple[Path, ...] = (
 )
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _codex(config_dir: Path | None, home: Path) -> Account | None:
+    """The identity token in Codex's `auth.json`, when signed in with ChatGPT.
+
+    Only the token's payload is decoded, and only its identity claims are kept.
+    The same file holds the access token, the refresh token and any API key;
+    none of them is read into anything this returns. The signature is not
+    checked: this reports what Codex holds on this machine, not a proof of who
+    the person is. Signed in with an API key there is no person to name, and
+    where Codex keeps the sign-in off `auth.json` there is none to read here
+    (`_codex_record`).
+    """
+    record = _codex_record(config_dir, home)
+    if record is None:
+        return None
+    document = _json(record)
+    if not isinstance(document, dict) or not _codex_signs_in_with_chatgpt(document):
+        return None
+    tokens = document.get("tokens")
+    id_token = tokens.get("id_token") if isinstance(tokens, dict) else None
+    claims = _token_claims(id_token)
+    auth = _strings(claims.get(_OPENAI_AUTH_CLAIM))
+    profile = _strings(claims.get(_OPENAI_PROFILE_CLAIM))
+    names = _strings(claims)
+    # Codex's own reading of the same token (`parse_chatgpt_jwt_claims`): the
+    # user is `chatgpt_user_id`, else `user_id`, and the email is the
+    # top-level claim, else the profile's. Codex reads no other user claim, so
+    # a token with neither names no account Codex would recognise.
+    account_id = auth.get("chatgpt_user_id") or auth.get("user_id")
+    if account_id is None:
+        return None
+    return Account(
+        kind="codex",
+        account_id=account_id,
+        display_name=names.get("name"),
+        email=names.get("email") or profile.get("email"),
+        plan=auth.get("chatgpt_plan_type"),
+    )
+
+
+#: Fields of Codex's `auth.json` that, present without an explicit
+#: `auth_mode`, make Codex sign in with something other than ChatGPT, in
+#: Codex's own order (`resolved_mode`).
+_CODEX_NON_CHATGPT_FIELDS = (
+    "personal_access_token",
+    "bedrock_api_key",
+    "bedrock_access_keys",
+    "OPENAI_API_KEY",
+)
+
+
+#: Codex's `AuthMode` values that sign in with ChatGPT tokens, spelled exactly
+#: as it serialises them. Codex refuses any value it does not define, so an
+#: unknown one is no sign-in.
+_CODEX_CHATGPT_MODES = frozenset({"chatgpt", "chatgptAuthTokens"})
+
+
+def _codex_signs_in_with_chatgpt(document: Mapping[str, object]) -> bool:
+    """Whether Codex uses the file's ChatGPT tokens, as its `resolved_mode`
+    decides: an explicit `auth_mode` wins, else any key field present means a
+    key, else ChatGPT. Only the ChatGPT modes carry a person. A key field is
+    asked whether it is set, never what it holds."""
+    mode = document.get("auth_mode")
+    if mode is not None:
+        return isinstance(mode, str) and mode in _CODEX_CHATGPT_MODES
+    return not any(document.get(name) is not None for name in _CODEX_NON_CHATGPT_FIELDS)
 
 
 def _devin(config_dir: Path | None, home: Path) -> Account | None:
@@ -204,6 +277,7 @@ def _sections(text: str) -> dict[str, dict[str, str]]:
 
 _READERS: dict[str, Callable[[Path | None, Path], Account | None]] = {
     "claude-code": _claude_code,
+    "codex": _codex,
     "devin": _devin,
 }
 
@@ -220,11 +294,16 @@ def sign_in_records(
 
     Claude Code's are the legacy `.config.json` and the file it falls back to:
     the legacy file winning is a change the fallback file need not show
-    (ADR-0027 clause 5)."""
+    (ADR-0027 clause 5). Codex's are its `config.toml` and `auth.json`
+    whatever the store: the store setting can move the sign-in on or off
+    `auth.json` without the file changing."""
     home = Path.home() if home is None else home
     if kind == "claude-code":
         legacy, modern = _claude_paths(config_dir, home)
         return (legacy, modern)
+    if kind == "codex":
+        root = _codex_root(config_dir, home)
+        return (root / "config.toml", root / "auth.json")
     if kind == "devin":
         return (_devin_data_root(home) / "credentials.toml",)
     return ()
@@ -281,6 +360,39 @@ def _exists(path: Path) -> bool:
         return False
 
 
+def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
+    """`auth.json`, where Codex's configured store can keep the sign-in, else
+    None (ADR-0027 clause 5, checked against Codex's auth storage).
+
+    `cli_auth_credentials_store` in Codex's `config.toml` chooses the store.
+    `file`, the default, and `auto` use `auth.json`: `auto` tries the keyring
+    first, falls back to the file, and deletes the file on every keyring
+    save, so a file that is there is the one in use. `keyring`, `ephemeral`
+    and any other value keep the sign-in off disk. Only a missing
+    `config.toml` leaves the default: Codex's own loader treats that as
+    `Ok(None)` and falls back to it, but an existing file it cannot read or
+    parse is an error there, not a default, so there is no store to read.
+    """
+    root = _codex_root(config_dir, home)
+    try:
+        raw = (root / "config.toml").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        store = "file"
+    except (OSError, UnicodeDecodeError):
+        return None
+    else:
+        try:
+            config = tomllib.loads(raw)
+        except tomllib.TOMLDecodeError:
+            return None
+        store = config.get("cli_auth_credentials_store", "file")
+    return root / "auth.json" if store in ("file", "auto") else None
+
+
+def _codex_root(config_dir: Path | None, home: Path) -> Path:
+    return config_dir if config_dir is not None else _env_dir("CODEX_HOME", home / ".codex")
+
+
 def _named_dir(variable: str) -> Path | None:
     value = os.environ.get(variable)
     return Path(value) if value else None
@@ -308,3 +420,42 @@ def _strings(value: object) -> dict[str, str]:
     if not isinstance(value, Mapping):
         return {}
     return {str(key): item for key, item in value.items() if isinstance(item, str) and item.strip()}
+
+
+#: `-_` to `+/`, so a strict standard decoder can read a base64url payload.
+_URLSAFE_TO_STANDARD = bytes.maketrans(b"-_", b"+/")
+
+
+def _token_claims(token: object) -> dict[str, object]:
+    """The payload of a JWT, decoded but not verified; empty when malformed.
+
+    Decoded exactly as Codex's own decoder (Rust's `URL_SAFE_NO_PAD`) would:
+    no embedded padding, since base64url-no-pad never has any; no character
+    outside the base64 alphabet, which Python's own decoder would otherwise
+    silently drop; and no non-canonical final symbol, whose unused bits a
+    lenient decoder discards instead of rejecting, so two different strings
+    would decode to the same claims. Reading past any of these would mean an
+    account from a credential Codex itself cannot load.
+
+    The three segments must each be non-empty, as Codex's own
+    `decode_jwt_payload` requires: a header, payload or signature missing
+    entirely is a shape Codex itself refuses, not one lacking only a payload.
+    """
+    if not isinstance(token, str):
+        return {}
+    segments = token.split(".")
+    if len(segments) != 3 or not all(segments):
+        return {}
+    payload = segments[1]
+    if "=" in payload:
+        return {}
+    padded = payload + "=" * (-len(payload) % 4)
+    try:
+        standard = padded.encode("ascii").translate(_URLSAFE_TO_STANDARD)
+        decoded = base64.b64decode(standard, validate=True)
+        if base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != payload:
+            return {}
+        claims = json.loads(decoded)
+    except (binascii.Error, ValueError):
+        return {}
+    return claims if isinstance(claims, dict) else {}

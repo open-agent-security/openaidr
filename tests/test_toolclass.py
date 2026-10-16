@@ -124,3 +124,36 @@ def test_anything_acp_does_not_define_has_no_class() -> None:
 @pytest.mark.parametrize("name", ["find_file_by_name", "code_search"])
 def test_devin_file_searches_seen_in_sessions_are_classed(name: str) -> None:
     assert tool_class("devin", name, None) == "file_search"
+
+
+def test_codex_names_a_shell_by_the_script_never_its_wrapper() -> None:
+    for argv in (["bash", "-lc", "curl -s https://x"], ["/bin/zsh", "-c", "curl -s https://x"]):
+        assert canonical_arguments("codex", "shell", None, {"command": argv}) == {
+            "command": "curl -s https://x"
+        }
+    assert canonical_arguments("codex", "shell", None, {"command": ["git", "status", "-s"]}) == {
+        "command": "git status -s"
+    }
+    assert canonical_arguments("codex", "exec_command", None, {"cmd": "rm -rf x"}) == {
+        "command": "rm -rf x"
+    }
+
+
+def test_codex_patch_edits_land_where_the_patch_puts_them() -> None:
+    patch = "*** Begin Patch\n*** Update File: a.py\n*** Move to: b.py\n@@\n-x\n+y\n*** End Patch\n"
+    assert canonical_arguments("codex", "apply_patch", None, {"input": patch}) == {
+        "edits": [{"path": "b.py", "kind": "update", "new_text": "y"}],
+        "path": "b.py",
+        "new_text": "y",
+    }
+
+
+def test_codex_patch_edits_read_the_changes_codex_recorded() -> None:
+    changes = {
+        "/w/.env": {"type": "add", "content": "KEY=1\n"},
+        "/w/app.py": {"type": "update", "unified_diff": "--- a\n+++ b\n@@\n-x\n+y\n"},
+    }
+    assert canonical_arguments("codex", "apply_patch", None, {"changes": changes})["edits"] == [
+        {"path": "/w/.env", "kind": "add", "new_text": "KEY=1\n"},
+        {"path": "/w/app.py", "kind": "update", "new_text": "y"},
+    ]

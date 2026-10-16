@@ -12,6 +12,7 @@ from dataclasses import dataclass
 AGENT_KIND_BY_SOURCE = {
     "claude": "claude-code",
     "devin": "devin",
+    "codex": "codex",
 }
 
 
