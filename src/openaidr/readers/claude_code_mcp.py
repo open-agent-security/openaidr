@@ -74,10 +74,12 @@ _CONNECT_FAILED = re.compile(r"Connection failed after (\d+)ms(?: \(([^)]+)\))?:
 
 @dataclass(frozen=True)
 class MCPCallOutcome:
-    """How one MCP call ended, as the client recorded it."""
+    """How one MCP call ended, as the client recorded it.
 
-    server: str
-    tool: str
+    Which call this is lives on the `(server, tool)` queue that holds the
+    outcome. Copying that pair onto the outcome would only restate the key.
+    """
+
     #: `True` completed, `False` failed, `None` **never resolved** — the client
     #: reported the call still running and no outcome ever followed it.
     ok: bool | None
@@ -172,9 +174,7 @@ class SessionMCPLogs:
         `ok=None` rather than being dropped.
         """
         for (server, tool), elapsed in self.waiting.items():
-            self.outcomes[(server, tool)].append(
-                MCPCallOutcome(server=server, tool=tool, ok=None, duration_ms=elapsed)
-            )
+            self.outcomes[(server, tool)].append(MCPCallOutcome(ok=None, duration_ms=elapsed))
         self.waiting.clear()
 
     def tool_counts(self) -> Counter[tuple[str, str]]:
@@ -745,12 +745,7 @@ def _record(logs: SessionMCPLogs, server: str, found: re.Match[str], *, ok: bool
     logs.finish(server, tool)
     duration = found.group(2)
     logs.outcomes[(server, tool)].append(
-        MCPCallOutcome(
-            server=server,
-            tool=tool,
-            ok=ok,
-            duration_ms=int(duration) if duration else None,
-        )
+        MCPCallOutcome(ok=ok, duration_ms=int(duration) if duration else None)
     )
 
 
