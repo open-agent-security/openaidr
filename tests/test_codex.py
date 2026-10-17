@@ -709,6 +709,32 @@ def test_a_code_mode_status_line_is_read_only_from_a_script(tmp_path: Path) -> N
     assert (call.tool_class, call.status) == ("file_edit", "unknown")
 
 
+def test_a_namespaced_exec_tool_keeps_its_own_outcome(tmp_path: Path) -> None:
+    """Codex's `is_exec_tool_name` requires the default namespace
+    (`core/src/tools/code_mode/mod.rs`); a namespaced tool also named `exec`
+    is not Code Mode, even if its output opens with a status line's words
+    (P2 Codex review finding on PR #78)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.response(
+        {
+            "type": "custom_tool_call",
+            "status": "completed",
+            "call_id": "vendor-exec",
+            "name": "exec",
+            "namespace": "vendor",
+            "input": "{}",
+        }
+    )
+    rollout.output("vendor-exec", "Script failed\nreal output\n", kind="custom_tool_call_output")
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    call = _calls(_only(tmp_path))["vendor-exec"]
+
+    assert call.status != "error"
+
+
 def test_an_interrupted_collab_agent_call_is_interrupted_not_unknown(tmp_path: Path) -> None:
     """`CollabAgentToolCallStatus` has a real `interrupted` variant (wire value
     `interrupted`) alongside `completed`/`failed`, which `_outcome` matched
