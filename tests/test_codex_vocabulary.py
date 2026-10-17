@@ -315,6 +315,57 @@ def test_a_web_search_with_no_results_recorded_has_no_result(tmp_path: Path) -> 
     assert _calls(session)["w1"].result is None
 
 
+#: The field each call item records its result in, and an empty value of that
+#: field's type (`protocol/src/items.rs`, `ext/items/src/*.rs`).
+_RESULT_FIELDS: dict[str, tuple[str, object]] = {
+    "CommandExecution": ("aggregated_output", ""),
+    "FileChange": ("stdout", ""),
+    "McpToolCall": ("result", {"content": []}),
+    "DynamicToolCall": ("content_items", []),
+    "WebSearch": ("results", []),
+    "ImageGeneration": ("result", ""),
+    "image_gen.generation": ("result", ""),
+    "web.search": ("results", []),
+}
+#: Items that record no result.
+_NO_RESULT = {"CollabAgentToolCall", "ImageView", "clock.sleep"}
+
+
+def _item_of(kind: str) -> dict[str, object]:
+    if kind in _EXTENSION_KINDS:
+        return {"type": "Extension", "kind": kind, **_EXTENSION_ITEMS[kind]}
+    return dict(_CALL_ITEMS[kind])
+
+
+def test_every_call_item_says_where_its_result_is() -> None:
+    assert set(_RESULT_FIELDS) | _NO_RESULT == set(_CALL_ITEMS) | _EXTENSION_KINDS
+
+
+@pytest.mark.parametrize("kind", sorted(_RESULT_FIELDS))
+def test_an_empty_recorded_result_is_a_result_and_an_absent_one_is_none(
+    kind: str, tmp_path: Path
+) -> None:
+    """Present but empty is what the call returned; absent is nothing recorded.
+    Each item's result is read from its own field, never by trying fields in
+    turn, where an empty one falls through to the next (ADR-0034)."""
+    field, empty = _RESULT_FIELDS[kind]
+    recorded = {**_item_of(kind), "id": "full", field: empty}
+    absent = {key: value for key, value in _item_of(kind).items() if key != field}
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.item(recorded)
+    rollout.item({**absent, "id": "none"})
+    session, _ = _session(rollout, tmp_path)
+
+    calls = _calls(session)
+
+    assert calls["full"].result is not None
+    assert calls["full"].result_size == len(calls["full"].result)
+    if kind not in ("ImageGeneration", "image_gen.generation"):
+        # Codex always writes an image's `result`; the others are optional.
+        assert calls["none"].result is None
+
+
 #: Every built-in name the reader can emit for a call: each 0.163 tool the
 #: model is offered, each name an item implies, and each older build's name.
 #: All are the agent's own, so each must be classed.
