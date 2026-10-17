@@ -147,6 +147,7 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "create_goal": "other",
         "update_goal": "other",
         "image_generation": "other",
+        "sleep": "other",
     },
 }
 
