@@ -64,6 +64,32 @@ def test_a_line_is_placed_by_the_request_that_created_its_thread(tmp_path: Path)
     ]
 
 
+def test_a_request_span_match_outside_the_process_is_not_the_same_span(tmp_path: Path) -> None:
+    """A request id and a connection id are both assigned per app-server
+    process, so the same pair can recur in an unrelated process. A thread
+    whose own activity spans two processes must not pick up a server
+    another thread started in the other one just because the numbers happen
+    to match (P2 Codex review finding on PR #76)."""
+    span = request_span(5)
+    write_logs(
+        tmp_path,
+        [
+            # Thread "t"'s own request span, logged in its real process "pA".
+            (_OTHER, f"{span}:thread_spawn: snapshot created", "t", "pA"),
+            # An unrelated process "pB" reuses the same (request_id,
+            # connection) pair for a server that has nothing to do with "t".
+            (_STARTED, started_line("other-thread-server", span=span), None, "pB"),
+            # "t" also has activity in "pB" sometime later, so "pB" is one of
+            # the processes place() considers for it.
+            (_OTHER, "turn", "t", "pB"),
+        ],
+    )
+
+    placement = _place(tmp_path, "t")
+
+    assert (placement.state, placement.connections) == ("applied", ())
+
+
 def test_a_line_outside_any_request_is_placed_only_where_the_process_served_one_thread(
     tmp_path: Path,
 ) -> None:
