@@ -18,8 +18,10 @@ import re
 import shlex
 from collections.abc import Callable, Mapping
 
-#: The closed vocabulary. `mcp` is any call with an MCP server; `other` is a
-#: built-in the table knows and that fits no class above it.
+#: The closed vocabulary. `mcp` is any call with an MCP server; `script` is a
+#: built-in that runs other tools, each of which the agent records as its own
+#: call (ADR-0036); `other` is a built-in the table knows and that fits no
+#: class above it.
 TOOL_CLASSES = frozenset(
     {
         "shell",
@@ -33,6 +35,7 @@ TOOL_CLASSES = frozenset(
         "delegate",
         "skill",
         "mcp",
+        "script",
         "other",
     }
 )
@@ -122,6 +125,9 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
     # `local_shell`. Codex has no tool to read, search, write or fetch: it does
     # all four through the shell, so those calls are `shell`.
     "codex": {
+        # Code Mode's cell: JavaScript whose nested tool calls Codex dispatches
+        # and records one by one, each with its own completion item (ADR-0036).
+        "exec": "script",
         "exec_command": "shell",
         "shell": "shell",
         "shell_command": "shell",

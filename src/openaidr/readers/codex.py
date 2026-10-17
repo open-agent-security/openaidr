@@ -211,6 +211,14 @@ _EXIT = re.compile(r"^(?:Process exited with code|Exit code:) (-?\d+)\s*$", re.M
 _HEADER_END = re.compile(r"^Output:\s*$", re.MULTILINE)
 #: Codex's own marks where it cut a call's output (`utils/string/src/truncate.rs`).
 _TRUNCATED = re.compile(r"…\d+ (?:tokens|chars) truncated…")
+#: The status line a Code Mode cell opens its output with
+#: (`core/src/tools/code_mode/mod.rs`, `format_script_status`), and what each
+#: says of the cell. A cell still running yields `Script running with cell ID`.
+_SCRIPT_STATES: dict[str, Status] = {
+    "Script completed": "ok",
+    "Script failed": "error",
+    "Script terminated": "interrupted",
+}
 #: The deepest a record or a call's JSON arguments may nest. Codex writes with
 #: serde_json's default limit of 128, so nothing Codex wrote is deeper; this
 #: stays far below Python's own recursion limit (ADR-0033).
@@ -965,6 +973,15 @@ def _outcome(
         refused = _refusal(body)
         if refused is not None:
             return "rejected", refused[1], None
+        if call.family == "custom_tool_call" and call.name == "exec":
+            # A Code Mode cell (ADR-0036): its own status line, before anything
+            # the script printed, and never the outcome of a tool it ran, which
+            # is that tool's own call.
+            state = _SCRIPT_STATES.get(body.split("\n", 1)[0].strip())
+            if state is not None:
+                return state, None, None
+            if body.startswith("Script running with cell ID"):
+                return "pending", None, None
     exit_code = item.get("exit_code")
     exit_code = exit_code if type(exit_code) is int else None
     if exit_code is None and body is not None:

@@ -612,6 +612,103 @@ def test_an_execution_no_call_names_is_its_own_call(tmp_path: Path) -> None:
     )
 
 
+def _code_mode_cell(rollout: Rollout, call_id: str, source: str, status_line: str) -> None:
+    """A Code Mode `exec` cell as Codex 0.163.0 writes it: the script is a
+    custom call, and its output opens with the cell's status line."""
+    rollout.response(
+        {
+            "type": "custom_tool_call",
+            "status": "completed",
+            "call_id": call_id,
+            "name": "exec",
+            "input": source,
+        }
+    )
+    rollout.output(
+        call_id,
+        [
+            {"type": "input_text", "text": f"{status_line}\nWall time 0.0 seconds\nOutput:\n"},
+            {"type": "input_text", "text": "{}"},
+        ],
+        kind="custom_tool_call_output",
+    )
+
+
+def test_a_code_mode_script_is_classed_and_its_tools_stay_their_own_calls(
+    tmp_path: Path,
+) -> None:
+    """A Code Mode cell is a script, not the tool it runs. Each tool the script
+    calls has its own completion item and stays its own call, with its own
+    outcome; the cell's outcome is its own status line (ADR-0036)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.response(
+        {
+            "type": "custom_tool_call",
+            "status": "completed",
+            "call_id": "cell",
+            "name": "exec",
+            "input": 'text(await tools.mcp__northwind__fetch_record({"record":"northwind"}));',
+        }
+    )
+    rollout.item(
+        {
+            "type": "McpToolCall",
+            "id": "exec-nested",
+            "server": "northwind",
+            "tool": "fetch_record",
+            "arguments": {"record": "northwind"},
+            "status": "failed",
+            "result": {"content": [{"type": "text", "text": "locked"}], "isError": True},
+        }
+    )
+    rollout.output(
+        "cell",
+        [{"type": "input_text", "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"}],
+        kind="custom_tool_call_output",
+    )
+    _code_mode_cell(rollout, "broken", "text(await tools.apply_patch(1));", "Script failed")
+    _code_mode_cell(rollout, "stopped", "await sleep(9e9);", "Script terminated")
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    calls = _calls(_only(tmp_path))
+
+    assert (calls["cell"].tool_class, calls["cell"].status) == ("script", "ok")
+    assert (calls["broken"].tool_class, calls["broken"].status) == ("script", "error")
+    assert (calls["stopped"].tool_class, calls["stopped"].status) == ("script", "interrupted")
+    nested = calls["exec-nested"]
+    assert (nested.mcp_server, nested.tool_name, nested.tool_class, nested.status) == (
+        "northwind",
+        "fetch_record",
+        "mcp",
+        "error",
+    )
+
+
+def test_a_code_mode_status_line_is_read_only_from_a_script(tmp_path: Path) -> None:
+    """Only Code Mode's `exec` writes a status line. Another custom tool whose
+    output happens to open with the same words keeps the outcome it had."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.response(
+        {
+            "type": "custom_tool_call",
+            "status": "completed",
+            "call_id": "patch",
+            "name": "apply_patch",
+            "input": "*** Begin Patch\n*** End Patch",
+        }
+    )
+    rollout.output("patch", "Script failed\n", kind="custom_tool_call_output")
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    call = _calls(_only(tmp_path))["patch"]
+
+    assert (call.tool_class, call.status) == ("file_edit", "unknown")
+
+
 def test_an_interrupted_collab_agent_call_is_interrupted_not_unknown(tmp_path: Path) -> None:
     """`CollabAgentToolCallStatus` has a real `interrupted` variant (wire value
     `interrupted`) alongside `completed`/`failed`, which `_outcome` matched
