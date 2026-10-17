@@ -515,8 +515,9 @@ def test_a_sleep_extension_call_is_not_a_coverage_gap(tmp_path: Path) -> None:
 
     call = _calls(_only(tmp_path))["sleep-1"]
 
-    assert (call.tool_name, call.status, call.arguments) == (
+    assert (call.tool_name, call.tool_class, call.status, call.arguments) == (
         "sleep",
+        "other",
         "ok",
         {"duration_ms": 1000},
     )
