@@ -523,6 +523,39 @@ def test_a_sleep_extension_call_is_not_a_coverage_gap(tmp_path: Path) -> None:
     )
 
 
+def test_a_web_search_extension_call_is_not_a_coverage_gap(tmp_path: Path) -> None:
+    """A standalone web search also completes as an `Extension` item, with
+    kind `web.search` (confirmed against `ExtensionItem`'s own
+    `#[serde(rename = "web.search")]` at `rust-v0.163.0`), wrapping the same
+    `WebSearchItem` shape the core `WebSearch` completion item already uses.
+    `_item()`'s `Extension` guard only accepted `clock.sleep`, so a
+    standalone web search held no turn at all (P1 Codex review finding on
+    PR #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.item(
+        {
+            "type": "Extension",
+            "kind": "web.search",
+            "id": "ws-1",
+            "query": "weather today",
+            "action": {"type": "search", "query": "weather today"},
+            "results": [],
+        }
+    )
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    call = _calls(_only(tmp_path))["ws-1"]
+
+    assert (call.tool_name, call.tool_class, call.status, call.arguments) == (
+        "web_search",
+        "web_search",
+        "ok",
+        {"type": "search", "query": "weather today"},
+    )
+
+
 def test_a_dynamic_tool_calls_content_items_are_its_result(tmp_path: Path) -> None:
     """`DynamicToolCallItem.content_items` is where a completed dynamic
     tool's text/image/audio output lands; `_item_body` only checked

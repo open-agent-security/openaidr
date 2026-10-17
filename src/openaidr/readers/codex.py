@@ -87,7 +87,13 @@ _ITEMS = {
     "CollabAgentToolCall": None,
     "ImageView": "view_image",
     "DynamicToolCall": None,
-    "Extension": "sleep",
+    "Extension": None,
+}
+#: An `Extension` item's own `kind` field names which tool it is; confirmed
+#: shapes only (Source: `ExtensionItem`'s `clock.sleep` and `web.search`).
+_EXTENSION_NAMES = {
+    "clock.sleep": "sleep",
+    "web.search": "web_search",
 }
 #: A user message is a person's when every part Codex says it holds is typed
 #: text. Codex marks what it injected (`environments.environment_context`,
@@ -435,10 +441,11 @@ class _Projection:
             if self.initial_prompt is None:
                 self.initial_prompt = _text(item.get("content")) or None
             return
-        if kind == "Extension" and item.get("kind") != "clock.sleep":
-            # Image generation and web search also use this path (Source),
-            # but only the sleep shape is confirmed; anything else is left
-            # unhandled rather than guessed at.
+        if kind == "Extension" and item.get("kind") not in _EXTENSION_NAMES:
+            # Image generation also uses this path (Source: ExtensionItem's
+            # `image_gen.generation`), but only sleep and web search's shapes
+            # are confirmed; anything else is left unhandled rather than
+            # guessed at.
             return
         if not isinstance(kind, str) or kind not in _ITEMS:
             return
@@ -791,11 +798,17 @@ def _item_call(
         arguments = _mapping(item.get("action"))
     elif kind == "ImageView":
         arguments = {"path": item.get("path")}
-    elif kind == "Extension":
+    elif kind == "Extension" and item.get("kind") == "clock.sleep":
         arguments = {"duration_ms": item.get("durationMs")}
+    elif kind == "Extension" and item.get("kind") == "web.search":
+        arguments = _mapping(item.get("action"))
     else:
         arguments = _mapping(item.get("arguments"))
-    name = _ITEMS.get(kind) or _string(item.get("tool")) or kind
+    name = (
+        _EXTENSION_NAMES.get(_string(item.get("kind")) or "", kind)
+        if kind == "Extension"
+        else _ITEMS.get(kind) or _string(item.get("tool")) or kind
+    )
     return _Call(
         family="item",
         name=name,
