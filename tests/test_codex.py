@@ -554,7 +554,9 @@ def test_a_web_search_extension_call_is_not_a_coverage_gap(tmp_path: Path) -> No
         "ok",
         {"type": "search", "query": "weather today"},
     )
-    assert (call.result, call.result_size) == ("Sunny, 72F", len("Sunny, 72F"))
+    # Kept whole: `results` is opaque JSON in Codex, so a `text` field is one
+    # field among others, never the result on its own (ADR-0035).
+    assert call.result == json.dumps([{"text": "Sunny, 72F"}])
 
 
 def test_a_dynamic_tool_calls_content_items_are_its_result(tmp_path: Path) -> None:
