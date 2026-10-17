@@ -155,7 +155,9 @@ class CodexLogs:
         for process in processes:
             lines = self._startup_lines(db, process)
             requests = {line.request for line in lines if line.request is not None}
-            owned = {request for request in requests if self._names(db, thread_id, request)}
+            owned = {
+                request for request in requests if self._names(db, thread_id, process, request)
+            }
             mine.extend(
                 line for line in lines if line.request is not None and line.request in owned
             )
@@ -185,13 +187,18 @@ class CodexLogs:
                 lines.append(line)
         return lines
 
-    def _names(self, db: sqlite3.Connection, thread_id: str, request: tuple[str, str]) -> bool:
-        """Whether a line the thread logged sits in the same request span."""
+    def _names(
+        self, db: sqlite3.Connection, thread_id: str, process: str, request: tuple[str, str]
+    ) -> bool:
+        """Whether a line the thread logged in this process sits in the same
+        request span. A request id and connection id are both per-process, so
+        a match outside this process is a coincidence, not the same span."""
         request_id, connection = request
         pattern = f"app_server.request{{%rpc.request_id={_like(request_id)} %"
         for (body,) in db.execute(
-            "SELECT feedback_log_body FROM logs WHERE thread_id = ? AND feedback_log_body LIKE ? ESCAPE '\\'",
-            (thread_id, pattern),
+            "SELECT feedback_log_body FROM logs"
+            " WHERE thread_id = ? AND process_uuid = ? AND feedback_log_body LIKE ? ESCAPE '\\'",
+            (thread_id, process, pattern),
         ):
             if isinstance(body, str) and _request(body) == (request_id, connection):
                 return True
