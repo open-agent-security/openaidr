@@ -147,6 +147,9 @@ class _Call:
     cwd: str | None
     turn: str | None
     status_hint: str | None = None
+    #: A result a self-contained response item carries inline, with no
+    #: separate output or completion record to join it from.
+    result: str | None = None
 
 
 @dataclass
@@ -702,7 +705,7 @@ class _Projection:
         )
         if not joined and call.call_id is not None:
             status, denial, exit_code = "unknown", None, None
-        body = output.body if output is not None else _item_body(item)
+        body = output.body if output is not None else _item_body(item) or call.result
         arguments = call.arguments
         if not arguments and item.get("type") == "McpToolCall":
             arguments = _mapping(item.get("arguments"))
@@ -762,6 +765,7 @@ def _response_call(
         status_hint=_string(payload.get("status"))
         if kind in ("web_search_call", "tool_search_call", "image_generation_call")
         else None,
+        result=_string(payload.get("result")) if kind == "image_generation_call" else None,
     )
 
 

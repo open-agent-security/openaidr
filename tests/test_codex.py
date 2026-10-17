@@ -462,6 +462,7 @@ def test_a_hosted_image_generation_call_is_not_a_coverage_gap(tmp_path: Path) ->
         "ok",
     )
     assert calls["ig_1"].arguments == {"revised_prompt": "a cat wearing a hat"}
+    assert (calls["ig_1"].result, calls["ig_1"].result_size) == ("<base64>", len("<base64>"))
 
 
 def test_view_image_and_dynamic_tool_completion_items_join_their_call(tmp_path: Path) -> None:
