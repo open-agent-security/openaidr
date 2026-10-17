@@ -69,6 +69,7 @@ _CALLS = {
     "tool_search_call": "tool_search",
     "web_search_call": "web_search",
     "local_shell_call": "local_shell",
+    "image_generation_call": "image_generation",
 }
 #: Response items that answer a call, by the call family they answer.
 _OUTPUTS = {
@@ -739,6 +740,8 @@ def _response_call(
     elif kind == "local_shell_call":
         action = _mapping(payload.get("action"))
         arguments = {"command": action.get("command"), "workdir": action.get("working_directory")}
+    elif kind == "image_generation_call":
+        arguments = {"revised_prompt": payload.get("revised_prompt")}
     else:
         arguments = _arguments(payload.get("arguments"))
     return _Call(
@@ -746,12 +749,16 @@ def _response_call(
         name=name,
         namespace=_string(payload.get("namespace")),
         call_id=_string(payload.get("call_id"))
-        or (_string(payload.get("id")) if kind == "web_search_call" else None),
+        or (
+            _string(payload.get("id"))
+            if kind in ("web_search_call", "image_generation_call")
+            else None
+        ),
         arguments=arguments,
         cwd=cwd,
         turn=turn,
         status_hint=_string(payload.get("status"))
-        if kind in ("web_search_call", "tool_search_call")
+        if kind in ("web_search_call", "tool_search_call", "image_generation_call")
         else None,
     )
 
@@ -842,7 +849,11 @@ def _outcome(
     if exit_code is not None:
         return ("ok" if exit_code == 0 else "error"), None, exit_code
     hint = (output.status if output is not None else None) or call.status_hint
-    if call.family in ("tool_search_call", "web_search_call") and hint in ("completed", "failed"):
+    if call.family in (
+        "tool_search_call",
+        "web_search_call",
+        "image_generation_call",
+    ) and hint in ("completed", "failed"):
         return ("ok" if hint == "completed" else "error"), None, None
     if output is None and not item:
         return ("unknown" if turn_ended else "pending"), None, None

@@ -434,6 +434,36 @@ def test_calls_are_classed_and_their_arguments_named_once(tmp_path: Path) -> Non
     assert (calls["wait"].tool_name, calls["wait"].tool_class) == ("wait_agent", "other")
 
 
+def test_a_hosted_image_generation_call_is_not_a_coverage_gap(tmp_path: Path) -> None:
+    """Codex persists `image_generation_call` as its own self-contained
+    response item (`status` and `result` inline, no separate output record),
+    the same way `web_search_call` is read; without a branch for it the call
+    fell through to the generic "tool coverage is incomplete" warning and the
+    session held no turn for it at all (P1 Codex review finding on PR #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.response(
+        {
+            "type": "image_generation_call",
+            "id": "ig_1",
+            "status": "completed",
+            "result": "<base64>",
+            "revised_prompt": "a cat wearing a hat",
+        }
+    )
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    calls = _calls(_only(tmp_path))
+
+    assert (calls["ig_1"].tool_name, calls["ig_1"].tool_class, calls["ig_1"].status) == (
+        "image_generation",
+        "other",
+        "ok",
+    )
+    assert calls["ig_1"].arguments == {"revised_prompt": "a cat wearing a hat"}
+
+
 def test_an_execution_no_call_names_is_its_own_call(tmp_path: Path) -> None:
     """A command nested inside another tool has its own id. It becomes its own
     call, and never attaches to an outer call by position."""
