@@ -77,23 +77,85 @@ _OUTPUTS = {
     "custom_tool_call_output": ("custom_tool_call",),
     "tool_search_output": ("tool_search_call",),
 }
-#: Completion items that record a call's outcome, and the tool each stands for
-#: when no call record names the same id: an execution nested inside another tool.
-_ITEMS = {
-    "CommandExecution": "shell",
-    "FileChange": "apply_patch",
-    "McpToolCall": None,
-    "WebSearch": "web_search",
-    "CollabAgentToolCall": None,
-    "ImageView": "view_image",
-    "DynamicToolCall": None,
-    "Extension": None,
+
+
+@dataclass(frozen=True)
+class _ItemKind:
+    """How one completion item records a call (ADR-0033).
+
+    `tool` names the built-in it stands for, None when the item names its own
+    tool (`tool`). `arguments` maps the item's fields to the call's argument
+    keys, an empty key spreading that field's object; with none, the item's
+    own `arguments` object is the call's.
+    """
+
+    tool: str | None
+    arguments: tuple[tuple[str, str], ...] = ()
+    #: The item has no status: its completion is the call succeeding.
+    complete: bool = False
+
+
+#: Every completion item Codex 0.163.0 writes for a call, keyed by `type`, and
+#: by `kind` for an `Extension` item: `TurnItem` and `ExtensionItem` are both
+#: closed enums (`protocol/src/items.rs`, `ext/items/src/lib.rs`). An item here
+#: joins the call whose `call_id` is its `id`; with no such call it is its own
+#: (an execution nested inside another tool).
+_CALL_ITEMS: dict[str, _ItemKind] = {
+    "CommandExecution": _ItemKind("shell", (("command", "command"),)),
+    "FileChange": _ItemKind("apply_patch", (("changes", "changes"),)),
+    "McpToolCall": _ItemKind(None),
+    "DynamicToolCall": _ItemKind(None),
+    "CollabAgentToolCall": _ItemKind(None),
+    "WebSearch": _ItemKind("web_search", (("action", ""),), complete=True),
+    "ImageView": _ItemKind("view_image", (("path", "path"),), complete=True),
+    "ImageGeneration": _ItemKind("image_generation", (("revised_prompt", "revised_prompt"),)),
+    "image_gen.generation": _ItemKind("image_generation", (("revisedPrompt", "revised_prompt"),)),
+    "clock.sleep": _ItemKind("sleep", (("durationMs", "duration_ms"),), complete=True),
+    "web.search": _ItemKind("web_search", (("action", ""),), complete=True),
 }
-#: An `Extension` item's own `kind` field names which tool it is; confirmed
-#: shapes only (Source: `ExtensionItem`'s `clock.sleep` and `web.search`).
-_EXTENSION_NAMES = {
-    "clock.sleep": "sleep",
-    "web.search": "web_search",
+#: The rest of `TurnItem`: none is an invocation, so none is a call.
+#: `FunctionCallOutput` is an output the client supplied as turn input; the
+#: `function_call_output` response item beside it is the one read.
+_NOT_CALL_ITEMS = frozenset(
+    {
+        "UserMessage",
+        "FunctionCallOutput",
+        "HookPrompt",
+        "AgentMessage",
+        "Plan",
+        "Reasoning",
+        "SubAgentActivity",
+        "EnteredReviewMode",
+        "ExitedReviewMode",
+        "ContextCompaction",
+    }
+)
+#: `CollabAgentTool` as written, where it differs from the tool the model
+#: called: `wait` is the `wait_agent` tool.
+_COLLAB_TOOLS = {"wait": "wait_agent"}
+#: Codex 0.163.0's own namespaced tools, `(namespace, name)` as the model
+#: calls them, to the built-in each is (`core/src/tools/handlers/sleep.rs`,
+#: `ext/web-search/src/tool.rs`, `core/src/tools/spec_plan.rs`). Read when no
+#: item names the call, as for a refused or a still-running one.
+_NAMESPACED_BUILTINS = {
+    ("clock", "sleep"): "sleep",
+    ("web", "run"): "web_search",
+    ("image_gen", "imagegen"): "image_generation",
+}
+#: Items whose own name beats the namespace their call was made under.
+_NAMED_BY_ITEM = frozenset(
+    {"CollabAgentToolCall", "image_gen.generation", "clock.sleep", "web.search"}
+)
+#: Multi-Agent V1's namespace, and V2's default (`multi_agent_v2.tool_namespace`
+#: can name another, so a V2 call elsewhere is recognised by its item alone).
+_COLLAB_NAMESPACES = frozenset({"multi_agent_v1", "collaboration"})
+#: Item statuses that end a call, by what they mean. `declined` is a person's
+#: refusal; `interrupted` a person's stop.
+_ITEM_STATES: dict[str, Status] = {
+    "completed": "ok",
+    "failed": "error",
+    "declined": "rejected",
+    "interrupted": "interrupted",
 }
 #: A user message is a person's when every part Codex says it holds is typed
 #: text. Codex marks what it injected (`environments.environment_context`,
@@ -136,6 +198,10 @@ _EXIT = re.compile(r"^(?:Process exited with code|Exit code:) (-?\d+)\s*$", re.M
 _HEADER_END = re.compile(r"^Output:\s*$", re.MULTILINE)
 #: Codex's own marks where it cut a call's output (`utils/string/src/truncate.rs`).
 _TRUNCATED = re.compile(r"…\d+ (?:tokens|chars) truncated…")
+#: The deepest a record or a call's JSON arguments may nest. Codex writes with
+#: serde_json's default limit of 128, so nothing Codex wrote is deeper; this
+#: stays far below Python's own recursion limit (ADR-0033).
+_MAX_DEPTH = 256
 
 
 def default_root() -> Path:
@@ -441,14 +507,17 @@ class _Projection:
             if self.initial_prompt is None:
                 self.initial_prompt = _text(item.get("content")) or None
             return
-        if kind == "Extension" and item.get("kind") not in _EXTENSION_NAMES:
-            # Image generation also uses this path (Source: ExtensionItem's
-            # `image_gen.generation`), but only sleep and web search's shapes
-            # are confirmed; anything else is left unhandled rather than
-            # guessed at.
+        if kind in _NOT_CALL_ITEMS:
             return
-        if not isinstance(kind, str) or kind not in _ITEMS:
+        key_name = item.get("kind") if kind == "Extension" else kind
+        if not isinstance(key_name, str) or key_name not in _CALL_ITEMS:
+            # Outside Codex 0.163.0's closed vocabulary (ADR-0033): reported,
+            # never dropped silently and never guessed at.
+            self.warnings.add(
+                f"completion item {key_name!r} is not read; tool coverage is incomplete"
+            )
             return
+        item["_kind"] = key_name
         call_id = _string(item.get("id"))
         if call_id is None:
             return
@@ -789,35 +858,39 @@ def _response_call(
 def _item_call(
     item: Mapping[str, object], call_id: str, cwd: str | None, turn: str | None
 ) -> _Call:
-    kind = str(item.get("type"))
-    if kind == "CommandExecution":
-        arguments: dict[str, object] = {"command": item.get("command")}
-    elif kind == "FileChange":
-        arguments = {"changes": item.get("changes")}
-    elif kind == "WebSearch":
-        arguments = _mapping(item.get("action"))
-    elif kind == "ImageView":
-        arguments = {"path": item.get("path")}
-    elif kind == "Extension" and item.get("kind") == "clock.sleep":
-        arguments = {"duration_ms": item.get("durationMs")}
-    elif kind == "Extension" and item.get("kind") == "web.search":
-        arguments = _mapping(item.get("action"))
-    else:
+    shape = _CALL_ITEMS[str(item["_kind"])]
+    arguments: dict[str, object] = {}
+    for field_name, key in shape.arguments:
+        value = item.get(field_name)
+        if key:
+            arguments[key] = value
+        else:
+            arguments.update(_mapping(value))
+    if not shape.arguments:
         arguments = _mapping(item.get("arguments"))
-    name = (
-        _EXTENSION_NAMES.get(_string(item.get("kind")) or "", kind)
-        if kind == "Extension"
-        else _ITEMS.get(kind) or _string(item.get("tool")) or kind
-    )
     return _Call(
         family="item",
-        name=name,
+        name=_item_tool(item) or str(item["_kind"]),
         namespace=None,
         call_id=call_id,
         arguments=arguments,
         cwd=cwd,
         turn=turn,
     )
+
+
+def _item_tool(item: Mapping[str, object]) -> str | None:
+    """The built-in an item says the call was, from Codex's own closed
+    vocabulary; None when the item names no built-in (an MCP or dynamic tool)."""
+    kind = item.get("_kind")
+    if not isinstance(kind, str):
+        return None
+    if kind == "CollabAgentToolCall":
+        tool = _string(item.get("tool"))
+        return _COLLAB_TOOLS.get(tool, tool) if tool else None
+    if kind == "DynamicToolCall":
+        return _string(item.get("tool"))
+    return _CALL_ITEMS[kind].tool
 
 
 def _sanitize_server(name: str) -> str:
@@ -828,12 +901,20 @@ def _sanitize_server(name: str) -> str:
 def _names(
     call: _Call, item: Mapping[str, object], transports: Mapping[str, str | None]
 ) -> tuple[str | None, str]:
-    """`(server, tool)`: an MCP item's own names first, as the server is configured;
-    then the namespace Codex called it under; then a flat legacy name."""
+    """`(server, tool)`, by the first rule that applies (`docs/specs/codex.md#tool-names`):
+    the item's own names, as the server is configured or as Codex's closed
+    vocabulary says; then the namespace Codex called it under; then a flat
+    legacy name."""
     if item.get("type") == "McpToolCall":
         server, tool = _string(item.get("server")), _string(item.get("tool"))
         if server and tool:
             return server, tool
+    if call.namespace is not None and item.get("_kind") in _NAMED_BY_ITEM:
+        # A namespace Codex lets configuration choose, or one wrapping a tool
+        # the item names exactly: the item says which built-in it was.
+        tool = _item_tool(item)
+        if tool:
+            return None, tool
     namespace = call.namespace
     if namespace is not None:
         if namespace.startswith("mcp__") and len(namespace) > len("mcp__"):
@@ -846,7 +927,10 @@ def _names(
             if len(configured) == 1:
                 return configured[0], call.name
             return sanitized, call.name
-        if namespace.startswith("multi_agent"):
+        builtin = _NAMESPACED_BUILTINS.get((namespace, call.name))
+        if builtin is not None:
+            return None, builtin
+        if namespace in _COLLAB_NAMESPACES:
             return None, call.name
         return None, f"{namespace}.{call.name}"
     return split_tool_name(SOURCE, call.name)
@@ -867,19 +951,21 @@ def _outcome(
     exit_code = exit_code if type(exit_code) is int else None
     if exit_code is None and body is not None:
         exit_code = _header_exit(body)
-    kind = item.get("type")
-    state = item.get("status")
-    if kind is not None:
-        if state == "declined":
+    kind = item.get("_kind")
+    if isinstance(kind, str):
+        state = _ITEM_STATES.get(str(item.get("status")))
+        if state is None and _CALL_ITEMS[kind].complete:
+            state = "ok"
+        if state == "rejected":
             return "rejected", "user-rejected", exit_code
         if state == "interrupted":
             return "interrupted", None, exit_code
         if kind == "McpToolCall":
-            failed = state == "failed" or _mapping(item.get("result")).get("isError") is True
-            return ("error" if failed else "ok" if state == "completed" else "unknown"), None, None
-        if state == "failed" or (exit_code is not None and exit_code != 0):
+            failed = state == "error" or _mapping(item.get("result")).get("isError") is True
+            return ("error" if failed else state or "unknown"), None, None
+        if state == "error" or (exit_code is not None and exit_code != 0):
             return "error", None, exit_code
-        if state == "completed" or kind in ("WebSearch", "ImageView", "Extension"):
+        if state == "ok":
             return "ok", None, exit_code
     if exit_code is not None:
         return ("ok" if exit_code == 0 else "error"), None, exit_code
@@ -927,12 +1013,15 @@ def _item_body(item: Mapping[str, object]) -> str | None:
     result = item.get("result")
     if isinstance(result, Mapping):
         return _body(result.get("content", result))
+    if isinstance(result, str) and result:
+        return result
     content_items = item.get("content_items")
     if isinstance(content_items, list) and content_items:
         return _body(content_items)
     results = item.get("results")
-    if isinstance(results, list) and results:
-        return _body(results)
+    if isinstance(results, list):
+        # A search recorded with no matches is `[]`: a result, not an absent one.
+        return _body(results) if results else "[]"
     return None
 
 
@@ -1001,10 +1090,32 @@ def _arguments(value: object) -> dict[str, object]:
     if isinstance(value, str):
         try:
             decoded = json.loads(value)
-        except ValueError:
+        except (ValueError, RecursionError):
+            return {"raw": value}
+        if _deeper_than(decoded, _MAX_DEPTH):
+            # Decodable but nested past the bound: kept as written, and the
+            # session read.
             return {"raw": value}
         return decoded if isinstance(decoded, dict) else {"raw": decoded}
     return {} if value is None else {"raw": value}
+
+
+def _deeper_than(value: object, limit: int) -> bool:
+    """Whether a decoded JSON value nests more than `limit` containers deep.
+    Iterative, so a hostile value cannot exhaust the stack measuring itself."""
+    pending: list[tuple[object, int]] = [(value, 1)]
+    while pending:
+        node, depth = pending.pop()
+        if isinstance(node, dict):
+            children: list[object] = list(node.values())
+        elif isinstance(node, list):
+            children = node
+        else:
+            continue
+        if depth > limit:
+            return True
+        pending.extend((child, depth + 1) for child in children)
+    return False
 
 
 def _body(value: object) -> str | None:
@@ -1104,6 +1215,11 @@ class _Cursor:
                     record = json.loads(raw)
                     if not isinstance(record, dict):
                         raise TypeError("record is not an object")
+                    if _deeper_than(record, _MAX_DEPTH):
+                        # Decodable, yet too deep for anything that walks it
+                        # again (`json.dumps`, a consumer's own recursion), so
+                        # it would fail outside this catch (ADR-0033).
+                        raise ValueError("record is nested past the bound")
                     self.projection.project(record, self.line)
                 except (ValueError, TypeError, UnicodeError, RecursionError):
                     # Never the record's content in a failure: a malformed
