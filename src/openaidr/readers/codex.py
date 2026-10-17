@@ -973,10 +973,13 @@ def _outcome(
         refused = _refusal(body)
         if refused is not None:
             return "rejected", refused[1], None
-        if call.family == "custom_tool_call" and call.name == "exec":
+        if call.family == "custom_tool_call" and call.name == "exec" and call.namespace is None:
             # A Code Mode cell (ADR-0036): its own status line, before anything
             # the script printed, and never the outcome of a tool it ran, which
-            # is that tool's own call.
+            # is that tool's own call. Codex's own `is_exec_tool_name`
+            # (`core/src/tools/code_mode/mod.rs`) requires the default
+            # namespace too, so a namespaced tool also named `exec` keeps its
+            # own outcome instead of being read as this cell's status line.
             state = _SCRIPT_STATES.get(body.split("\n", 1)[0].strip())
             if state is not None:
                 return state, None, None
