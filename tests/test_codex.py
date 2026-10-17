@@ -522,6 +522,32 @@ def test_a_sleep_extension_call_is_not_a_coverage_gap(tmp_path: Path) -> None:
     )
 
 
+def test_a_dynamic_tool_calls_content_items_are_its_result(tmp_path: Path) -> None:
+    """`DynamicToolCallItem.content_items` is where a completed dynamic
+    tool's text/image/audio output lands; `_item_body` only checked
+    `aggregated_output`, `stdout` and `result`, so the call got its status
+    and duration but `result`/`result_size` stayed `None` (P2 Codex review
+    finding on PR #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.item(
+        {
+            "type": "DynamicToolCall",
+            "id": "dyn-2",
+            "tool": "custom_widget",
+            "arguments": {},
+            "status": "completed",
+            "content_items": [{"type": "inputText", "text": "widget output"}],
+        }
+    )
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    call = _calls(_only(tmp_path))["dyn-2"]
+
+    assert (call.result, call.result_size) == ("widget output", len("widget output"))
+
+
 def test_an_execution_no_call_names_is_its_own_call(tmp_path: Path) -> None:
     """A command nested inside another tool has its own id. It becomes its own
     call, and never attaches to an outer call by position."""
