@@ -283,15 +283,16 @@ def _changed_files(changes: Mapping[object, object]) -> list[dict[str, str]]:
             new_text = content if isinstance(content, str) else ""
         else:
             diff = change.get("unified_diff")
-            new_text = (
-                "\n".join(
-                    line[1:]
-                    for line in diff.splitlines()
-                    if line.startswith("+") and not line.startswith("+++")
-                )
-                if isinstance(diff, str)
-                else ""
-            )
+            if isinstance(diff, str):
+                body = diff.splitlines()
+                # Only the diff's own "--- a" / "+++ b" header is excluded, by
+                # position: an added line that itself starts with "++" (e.g.
+                # "++counter;") is content, not a second header.
+                if len(body) >= 2 and body[0].startswith("--- ") and body[1].startswith("+++ "):
+                    body = body[2:]
+                new_text = "\n".join(line[1:] for line in body if line.startswith("+"))
+            else:
+                new_text = ""
         moved = change.get("move_path")
         edits.append(
             {
