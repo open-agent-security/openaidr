@@ -646,7 +646,7 @@ def test_session_fields_come_from_the_records(tmp_path: Path) -> None:
             "tools": [
                 {
                     "type": "namespace",
-                    "name": "mcp__github",
+                    "name": "mcp__github__",
                     "description": "GitHub tools.",
                     "tools": [],
                 }
