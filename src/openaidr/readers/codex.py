@@ -930,6 +930,9 @@ def _item_body(item: Mapping[str, object]) -> str | None:
     content_items = item.get("content_items")
     if isinstance(content_items, list) and content_items:
         return _body(content_items)
+    results = item.get("results")
+    if isinstance(results, list) and results:
+        return _body(results)
     return None
 
 

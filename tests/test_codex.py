@@ -540,7 +540,7 @@ def test_a_web_search_extension_call_is_not_a_coverage_gap(tmp_path: Path) -> No
             "id": "ws-1",
             "query": "weather today",
             "action": {"type": "search", "query": "weather today"},
-            "results": [],
+            "results": [{"text": "Sunny, 72F"}],
         }
     )
     rollout.complete()
@@ -554,6 +554,7 @@ def test_a_web_search_extension_call_is_not_a_coverage_gap(tmp_path: Path) -> No
         "ok",
         {"type": "search", "query": "weather today"},
     )
+    assert (call.result, call.result_size) == ("Sunny, 72F", len("Sunny, 72F"))
 
 
 def test_a_dynamic_tool_calls_content_items_are_its_result(tmp_path: Path) -> None:
