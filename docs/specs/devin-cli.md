@@ -281,7 +281,7 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 
 | Addition | Why |
 |---|---|
-| `ToolCall.tool_class` | What the tool *is*, from a closed set: `shell`, `shell_control`, `file_read`, `file_search`, `file_write`, `file_edit`, `web_fetch`, `web_search`, `delegate`, `skill`, `mcp`, `other` (ADR-0021) |
+| `ToolCall.tool_class` | What the tool *is*, from a closed set: `shell`, `shell_control`, `file_read`, `file_search`, `file_write`, `file_edit`, `web_fetch`, `web_search`, `delegate`, `skill`, `mcp`, `script`, `other` (ADR-0021, ADR-0036) |
 | `ToolCall.canonical_arguments` (`LOCAL_ONLY`) | One key name across kinds: `command`, `path`, `content`, `new_text`, `url`, `agent`, `skill`. A key the call did not record is absent |
 | `ToolCall.exit_code` | A shell command's own exit status, where the kind records one |
 | `Session.compactions_recorded`, `subagents_recorded` | Whether an empty list means "none happened" or "the kind can't say" (ADR-0022) |

@@ -220,6 +220,8 @@ From Codex's own records, never from what a command printed:
 | Output `approval policy is Never; reject command` | `rejected` | `permission-rule` |
 | Output `patch rejected by user` | `rejected` | `user-rejected` |
 | Output `aborted by user` | `interrupted` | — |
+| A Code Mode cell (`custom_tool_call` `exec`) whose output opens `Script completed`, `Script failed` or `Script terminated` (ADR-0036) | `ok`, `error` or `interrupted` | — |
+| A Code Mode cell whose output opens `Script running with cell ID` | `pending` | — |
 | A `tool_search_call` or `web_search_call` whose own status is `completed` or `failed` | `ok` or `error` | — |
 | An output with no item and no header | `unknown` | — |
 | No output and no item, after the Codex turn ended | `unknown` | — |
@@ -356,6 +358,7 @@ The Claude Code reader's discipline (ADR-0011, ADR-0029, ADR-0030):
 |---|---|---|
 | `shell` | `exec_command`, `shell`, `shell_command`, `local_shell` | `command`: `cmd` as written. For an argv form, the script of `bash -lc <script>` or `sh -c <script>`, else the argv joined. **Always the script, never the wrapper**, so a consumer sees `curl …` and not `bash -lc …` |
 | `shell_control` | `write_stdin` | — |
+| `script` | `exec`, Code Mode's cell. Each tool its script runs is its own call from its own completion item (ADR-0036) | — |
 | `file_read` | `view_image` | `path` (`path`) |
 | `file_edit` | `apply_patch` | `edits` (**new**, below). A patch that touches one file also gets `path` and `new_text` |
 | `web_search` | `web_search` | — |
@@ -453,6 +456,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0033](../adrs/0033-read-codex-against-its-own-closed-vocabularies.md) | Codex 0.163.0's closed item vocabularies as one table; a call named by its most specific record; one nesting bound on input | Any item with an id as a call; naming collaboration calls by namespace; per-site exception catches |
 | [0034](../adrs/0034-a-codex-items-result-is-its-own-field-empty-included.md) | Each item's result is the one field the table names; empty is a result, absent is none | Trying fields in turn; empty as no result |
 | [0035](../adrs/0035-a-codex-record-belongs-to-the-turn-it-names.md) | A record belongs to the turn it names; a web search's results are kept whole | The turn in force for every record; joining text blocks in `results` |
+| [0036](../adrs/0036-a-code-mode-cell-is-a-script-and-its-tools-are-their-own-calls.md) | A Code Mode cell is classed `script` and its status is its own status line; the tools it runs stay their own calls | Dropping the cell; folding nested calls into it; `other`; joining by position |
 
 ## Non-goals
 
