@@ -116,7 +116,7 @@ That installs an `openaidr` command:
 
 ```console
 $ openaidr --version
-openaidr 0.1.0
+openaidr 0.6.3
 ```
 
 `openaidr sessions` prints what each agent on this machine actually did —
@@ -153,33 +153,42 @@ and a doc index in
 
 ## Status
 
-**Beta.** Session collection works for `claude-code`: sessions, turns, tool
-calls, and span identity, read by an OpenAIDR-owned reader that calls
-`adr-sensor`'s Claude Code parser one file at a time and normalises everything
-upstream's shared event schema cannot express. The model has six outcome
-statuses; this reader emits five of them (`unknown`, `rejected`, `pending`,
-`ok`, `error`) from Claude Code's own transcripts and, for MCP calls, its
-per-server connection logs — `interrupted` is modelled but not emitted, since
-neither source records it.
+**Beta.** Session collection works for `claude-code`, `devin` and `codex`:
+sessions, turns, tool calls and span identity. Claude Code is read through
+`adr-sensor`, one file at a time. Devin is read from its SQLite store and run
+logs, and Codex from its rollouts and log database; both of those readers are
+OpenAIDR-owned. The model has six outcome statuses. Claude Code emits five of
+them (`unknown`, `rejected`, `pending`, `ok`, `error`) from its transcripts
+and, for MCP calls, its per-server connection logs. `interrupted` is not
+emitted for Claude Code or Devin: neither Claude Code source records a stop,
+and Devin's result reasons do not include one. Codex emits it, from a
+completion item's own status and from output Codex marks aborted.
 
-Not yet built, in the order they matter:
+Not yet read: **Cursor**. What it would cost is measured in
+[Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage)
+rather than assumed, including why it cannot be added through the dependency
+alone without breaking span identity. A Cursor session is absent from the
+output entirely.
 
-- **A further agent kind, Cursor.** What it would cost is measured in
-  [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage)
-  rather than assumed — including why it cannot be added dependency-only
-  without breaking span identity.
-
-For long-lived consumers, `IncrementalCollector` accepts an agent kind and one
-changed transcript path. It cold-reads that file once, then projects only newly
-appended, newline-terminated records while returning its current full session.
-`IncrementalCollector.locations()` says which directories hold each kind's
+For long-lived consumers, `IncrementalCollector` takes an agent kind and one
+changed path. Claude Code and Codex cold-read that file once, then project
+only newly appended, newline-terminated records, and return what that file
+holds now. Each keeps those projections in an LRU of at most 128 files and 16
+MiB of source bytes
+([ADR-0029](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0029-bound-the-incremental-projection-cache.md),
+which supersedes
+[ADR-0011](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0011-keep-append-cursors-in-memory.md)).
+Devin keeps every session in one store, so a change under its data root
+rebuilds them and returns the sessions whose output differs
+([ADR-0018](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0018-read-devin-cli-from-its-sqlite-store-read-only.md)).
+`IncrementalCollector.locations()` names the directories that hold each kind's
 session files, sub-agents included, so a consumer can watch every kind without
-knowing its layout ([ADR-0023](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0023-each-reader-says-where-its-files-live.md)).
-The cursor is in memory only; process restart deliberately falls back to a cold
-read. See [ADR-0011](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0011-keep-append-cursors-in-memory.md).
+knowing its layout
+([ADR-0023](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0023-each-reader-says-where-its-files-live.md)).
+The cursors stay in memory. A process restart reads cold again.
 
-Why this reader walks the tree and calls `adr-sensor`'s parser per file, rather
-than going through upstream's own whole-tree walk, is recorded in
+Why the Claude Code reader walks the tree and calls `adr-sensor`'s parser per
+file, rather than going through upstream's own whole-tree walk, is recorded in
 [the spec](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#what-the-dependency-cannot-carry).
 
 ## Contributing
