@@ -8,7 +8,7 @@ file per thread, as Claude Code writes one transcript per session, so the
 reader follows it, never [Devin](devin-cli.md)'s one-store rebuild. Supersedes
 the design of the unmerged reader in open-agent-security/openaidr#35 and reuses
 its record handling. Takes the account reader from the `codex-sign-in-reader`
-branch (ADR-0027). Decisions: ADR-0030, ADR-0031, ADR-0032.*
+branch (ADR-0027). Decisions: ADR-0030 to ADR-0033.*
 
 ## At a glance
 
@@ -62,7 +62,7 @@ branch (ADR-0027). Decisions: ADR-0030, ADR-0031, ADR-0032.*
 | `session_meta` | First line. `id`, `session_id` (the root thread), `parent_thread_id`, `timestamp`, `cwd`, `originator`, `cli_version`, `source`, `thread_source`, `agent_nickname`, `model_provider`, `base_instructions`, `history_mode`, `git {commit_hash, branch, repository_url}` |
 | `turn_context` | Per turn: `turn_id`, `cwd`, `model`, `approval_policy`, `approvals_reviewer`, `sandbox_policy.type`, `effort` |
 | `response_item` | `message` (`developer`, `user`, `assistant`), `reasoning`, `function_call`, `function_call_output`, `custom_tool_call`, `custom_tool_call_output`, `tool_search_call`, `tool_search_output`, `web_search_call`, `image_generation_call`. `local_shell_call` (Source) |
-| `event_msg` | `item_completed` with a typed item: `UserMessage`, `AgentMessage`, `CommandExecution`, `FileChange`, `McpToolCall`, `WebSearch`, `CollabAgentToolCall`, `ImageView`, `DynamicToolCall`, `Extension` (`clock.sleep`, `web.search` only), `ContextCompaction`. Also `task_started`, `task_complete` (with `error` on failure), `turn_aborted`, `token_count` |
+| `event_msg` | `item_completed` with a typed item ([Completion items](#completion-items)). Also `task_started`, `task_complete` (with `error` on failure), `turn_aborted`, `token_count` |
 | `token_usage_record` | One per model response: `response_id`, `turn_id`, `usage` |
 | `compacted` | One per compaction |
 
@@ -97,6 +97,36 @@ text.
 - **Child threads start from their own first line.** A child that inherits its
   parent's history marks where its own begins; copied parent records are not
   the child's.
+
+## Completion items
+
+`TurnItem` and `ExtensionItem` are closed enums in 0.163.0 (Source
+`protocol/src/items.rs`, `ext/items/src/lib.rs`), and a paginated rollout keeps
+every one (Source `rollout/src/policy.rs`). Each is read as a call or
+deliberately not, and anything else is reported (ADR-0033).
+
+| Item (`type`, or an `Extension`'s `kind`) | The call | Arguments | Result |
+|---|---|---|---|
+| `CommandExecution` | `shell` | `command` | `aggregated_output` |
+| `FileChange` | `apply_patch` | `changes` | `stdout` |
+| `McpToolCall` | its `server` and `tool` | its `arguments` | `result.content` |
+| `DynamicToolCall` | its `tool`, with no class (the client defines it) | its `arguments` | `content_items` |
+| `CollabAgentToolCall` | its `tool`; `wait` is `wait_agent` | — | — |
+| `WebSearch`, `web.search` | `web_search` | `action` | `results`, `[]` included |
+| `ImageView` | `view_image` | `path` | — |
+| `ImageGeneration`, `image_gen.generation` | `image_generation` | `revised_prompt` | `result` |
+| `clock.sleep` | `sleep` | `duration_ms` | — |
+
+Status is the item's own: `completed` `ok`, `failed` `error`, `declined`
+`rejected` (`user-rejected`), `interrupted` `interrupted`. `WebSearch`,
+`ImageView`, sleep and standalone web search carry no status; their completion
+is the call succeeding.
+
+**Not calls:** `UserMessage` (the initial prompt), `AgentMessage`, `Plan`,
+`Reasoning`, `HookPrompt`, `SubAgentActivity`, `EnteredReviewMode`,
+`ExitedReviewMode`, `ContextCompaction`, and `FunctionCallOutput`, an output
+the client supplied as turn input, beside the `function_call_output` response
+item that is read.
 
 ## Session fields
 
@@ -133,7 +163,7 @@ client errors in one place. `codex_error_info` is a closed vocabulary (Source
 
 | Field | Source |
 |---|---|
-| `tool_name`, `mcp_server` | An `McpToolCall` item's `server` and `tool` when one is recorded. Else a `function_call` with `namespace` `mcp__<server>` gives the server, and `name` the tool (Seen: MCP tools are deferred behind `tool_search` and called this way). Else a flat `mcp__<server>__<tool>` splits by Claude Code's rule. Any other name stays whole, with no server |
+| `tool_name`, `mcp_server` | [Tool names](#tool-names) |
 | `arguments` | `function_call.arguments` parsed from JSON text; `custom_tool_call.input` as `{"input": …}`. Non-object JSON gives `{"raw": …}`, reported |
 | `result`, `result_size` | The output's `output`: a string, or a list of content blocks kept whole as JSON text. Never elided |
 | `error_text` | When `status` is `error`: the item's `error`, else its `stderr`, else its `aggregated_output`, else the output text |
@@ -147,6 +177,25 @@ client errors in one place. `codex_error_info` is a closed vocabulary (Source
 | `tool_class`, `canonical_arguments` | The kind's tables ([below](#tool-class-and-canonical-arguments)) |
 | `attributed_skill` | `None`. Codex lists skills in its instructions, and the model opens one with the shell, so no record names the skill a call served (C12) |
 | `attributed_plugin` | The item's `plugin_id`, where one is written (C10) |
+
+### Tool names
+
+The first rule that applies (ADR-0033):
+
+| # | Record | `mcp_server`, `tool_name` |
+|---|---|---|
+| 1 | An `McpToolCall` item | Its `server` and `tool`, as the server is configured |
+| 2 | A `CollabAgentToolCall` or `Extension` item | `None` and the item's tool. A collaboration call's namespace is configurable, so the item decides |
+| 3 | A call with `namespace` `mcp__<server>` | The server, and `name` (Seen: MCP tools are deferred behind `tool_search` and called this way). Codex sanitises punctuation in a server's name to `_`, so a connection the log database names breaks the tie |
+| 3 | A call in Codex's own namespaces: `clock.sleep`, `web.run`, `image_gen.imagegen` | `None` and `sleep`, `web_search`, `image_generation` |
+| 3 | A call in `multi_agent_v1` or `collaboration` | `None` and `name` |
+| 3 | A call in any other namespace | `None` and `<namespace>.<name>` |
+| 4 | A flat `mcp__<server>__<tool>` | Split by Claude Code's rule |
+| 4 | Any other name | The name, with no server |
+
+A V2 collaboration call in a configured namespace, refused before it ran, has
+no item, so it keeps `<namespace>.<name>`. Matching its bare name in any
+namespace would misname a dynamic tool of the same name.
 
 ### Status
 
@@ -290,7 +339,8 @@ The Claude Code reader's discipline (ADR-0011, ADR-0029, ADR-0030):
 | `locations()` | `sessions/` and `archived_sessions/` |
 | `collect_file(path)` | A rollout under those locations: read from the offset, and return the file's session on every read. The log database and `session_index.jsonl` are read again with it, as Claude Code's connection logs are. Anything else: nothing |
 | Replaced or shorter file | Rebuilt cold |
-| Malformed complete record | That file's session is withheld and the path and line reported, never the record's content. An unread record could hide a second claim on a `call_id` |
+| Malformed complete record | That file's session is withheld and the path and line reported, never the record's content. An unread record could hide a second claim on a `call_id`. A record nested more than 256 containers deep is malformed: it decodes, but anything that walks it again would fail outside the read. Codex writes with serde_json's limit of 128 (ADR-0033) |
+| Malformed values inside a record | JSON `arguments` that do not decode, or nest past 256, are kept as written under `raw`. A timestamp that does not parse, or does not fit UTC, is no instant. A `session_index.jsonl` line that does not decode is skipped. A log row with an out-of-range time is skipped |
 | Between reads | Calls update in place by span. Responses replace by `(session, response_id)`. No turn disappears |
 
 ## Tool class and canonical arguments
@@ -304,7 +354,7 @@ The Claude Code reader's discipline (ADR-0011, ADR-0029, ADR-0030):
 | `web_search` | `web_search` | — |
 | `delegate` | `spawn_agent` | `agent`: `agent_type`, else `default`, the role Codex itself applies (Source `core/src/agent/role.rs`; C7) |
 | `mcp` | Any call with an `mcp_server` | — |
-| `other` | `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `tool_search`, `update_plan`, `request_user_input`, `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `get_goal`, `create_goal`, `update_goal`, `image_generation`. `send_input` and `resume_agent` reach an agent that already exists, as Claude Code's `SendMessage` does | — |
+| `other` | `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents`, `tool_search`, `update_plan`, `request_user_input`, `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `get_goal`, `create_goal`, `update_goal`, `image_generation`, `sleep`. The collaboration tools reach an agent that already exists, as Claude Code's `SendMessage` does | — |
 
 Codex has no file-read, file-search, file-write or web-fetch tool. It reads,
 searches and fetches through the shell, so those calls are `shell`.
@@ -393,6 +443,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0030](../adrs/0030-read-codex-rollouts-on-the-claude-code-readers-design.md) | An OpenAIDR-owned reader on the Claude Code reader's design. A record is a turn. Outcomes come only from Codex's records, refusals from its envelope. A sub-agent is named by its root. A patch's files are `edits` | `adr-sensor`'s parser; the Devin reader's rebuild-and-diff; `unknown` for every unpaired output; naming by the immediate parent |
 | [0031](../adrs/0031-codex-usage-from-token-usage-records-with-cached-input-apart.md) | One response per `token_usage_record`, cached input taken out of input, a 0 cache write is `None`, the window from `task_started` | `token_count`; input as recorded |
 | [0032](../adrs/0032-place-codex-mcp-connections-by-the-request-that-created-the-thread.md) | MCP connections placed by the request that created the thread; none for `codex exec` | Placement by time; turning on logging |
+| [0033](../adrs/0033-read-codex-against-its-own-closed-vocabularies.md) | Codex 0.163.0's closed item vocabularies as one table; a call named by its most specific record; one nesting bound on input | Any item with an id as a call; naming collaboration calls by namespace; per-site exception catches |
 
 ## Non-goals
 
@@ -410,7 +461,7 @@ Then re-measure the earlier corpus with the new reader.
 - ADR-0001 identity · ADR-0011 cursors · ADR-0013 Windows · ADR-0014 usage per
   response · ADR-0015 tokens as recorded · ADR-0021 tool class · ADR-0022
   absence flags · ADR-0023 locations · ADR-0027 accounts · ADR-0029 cache
-  bound · ADR-0030 to ADR-0032 Codex
+  bound · ADR-0030 to ADR-0033 Codex
 - openai/codex `rust-v0.163.0`: `rollout/src/policy.rs`, `rollout/src/recorder.rs`,
   `rollout/src/session_index.rs`, `protocol/src/protocol.rs`,
   `protocol/src/codex_error_info.rs`, `codex-api/src/sse/responses.rs`,

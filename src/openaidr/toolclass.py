@@ -132,11 +132,16 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "web_search": "web_search",
         "spawn_agent": "delegate",
         # These reach an agent that already exists, as Claude Code's
-        # `SendMessage` and Devin's `read_subagent` do.
+        # `SendMessage` and Devin's `read_subagent` do: Multi-Agent V1's and
+        # V2's (`CollabAgentTool`, `protocol/src/items.rs`).
         "send_input": "other",
         "resume_agent": "other",
         "wait_agent": "other",
         "close_agent": "other",
+        "send_message": "other",
+        "followup_task": "other",
+        "interrupt_agent": "other",
+        "list_agents": "other",
         "tool_search": "other",
         "update_plan": "other",
         "request_user_input": "other",
