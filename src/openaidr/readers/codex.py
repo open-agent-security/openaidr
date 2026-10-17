@@ -85,6 +85,8 @@ _ITEMS = {
     "McpToolCall": None,
     "WebSearch": "web_search",
     "CollabAgentToolCall": None,
+    "ImageView": "view_image",
+    "DynamicToolCall": None,
 }
 #: A user message is a person's when every part Codex says it holds is typed
 #: text. Codex marks what it injected (`environments.environment_context`,
@@ -773,6 +775,8 @@ def _item_call(
         arguments = {"changes": item.get("changes")}
     elif kind == "WebSearch":
         arguments = _mapping(item.get("action"))
+    elif kind == "ImageView":
+        arguments = {"path": item.get("path")}
     else:
         arguments = _mapping(item.get("arguments"))
     name = _ITEMS.get(kind) or _string(item.get("tool")) or kind
@@ -844,7 +848,7 @@ def _outcome(
             return ("error" if failed else "ok" if state == "completed" else "unknown"), None, None
         if state == "failed" or (exit_code is not None and exit_code != 0):
             return "error", None, exit_code
-        if state == "completed" or kind == "WebSearch":
+        if state == "completed" or kind in ("WebSearch", "ImageView"):
             return "ok", None, exit_code
     if exit_code is not None:
         return ("ok" if exit_code == 0 else "error"), None, exit_code
