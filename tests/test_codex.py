@@ -527,6 +527,28 @@ def test_an_execution_no_call_names_is_its_own_call(tmp_path: Path) -> None:
     )
 
 
+def test_an_interrupted_collab_agent_call_is_interrupted_not_unknown(tmp_path: Path) -> None:
+    """`CollabAgentToolCallStatus` has a real `interrupted` variant (wire value
+    `interrupted`) alongside `completed`/`failed`, which `_outcome` matched
+    neither of, falling through to `unknown` instead of the model's own
+    `interrupted` status (P2 Codex review finding on PR #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.item(
+        {
+            "type": "CollabAgentToolCall",
+            "id": "collab-1",
+            "tool": "wait_agent",
+            "arguments": {"targets": ["x"]},
+            "status": "interrupted",
+        }
+    )
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    assert _calls(_only(tmp_path))["collab-1"].status == "interrupted"
+
+
 # --- usage --------------------------------------------------------------------------
 
 
