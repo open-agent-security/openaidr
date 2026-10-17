@@ -264,6 +264,10 @@ class _Record:
 class _Output:
     body: str | None
     status: str | None
+    #: The first item's own text, read regardless of what follows it (a Code
+    #: Mode cell's status header, `core/src/tools/code_mode/output.rs`, stays
+    #: index 0 even when later items are media `_body` cannot join as text).
+    header: str | None
 
 
 @dataclass
@@ -634,7 +638,7 @@ class _Projection:
                 raise ValueError("call output has no output")
             body = payload.get("output")
         self.outputs.setdefault(call_id, []).append(
-            _Output(_body(body), _string(payload.get("status")))
+            _Output(_body(body), _string(payload.get("status")), _first_text(body))
         )
 
     def _search_context(self, payload: Mapping[str, object], key: str, at: datetime | None) -> None:
@@ -980,11 +984,16 @@ def _outcome(
             # (`core/src/tools/code_mode/mod.rs`) requires the default
             # namespace too, so a namespaced tool also named `exec` keeps its
             # own outcome instead of being read as this cell's status line.
-            state = _SCRIPT_STATES.get(body.split("\n", 1)[0].strip())
-            if state is not None:
-                return state, None, None
-            if body.startswith("Script running with cell ID"):
-                return "pending", None, None
+            # Read from the leading item alone, since a later item can be
+            # media that `_body` cannot join as text (`code_mode/output.rs`
+            # keeps the header at index 0 regardless).
+            header = output.header if output is not None else None
+            if header is not None:
+                state = _SCRIPT_STATES.get(header.split("\n", 1)[0].strip())
+                if state is not None:
+                    return state, None, None
+                if header.startswith("Script running with cell ID"):
+                    return "pending", None, None
     exit_code = item.get("exit_code")
     exit_code = exit_code if type(exit_code) is int else None
     if exit_code is None and body is not None:
@@ -1163,6 +1172,20 @@ def _body(value: object) -> str | None:
     ):
         return "\n".join(str(part["text"]) for part in value)
     return json.dumps(value, ensure_ascii=False)
+
+
+def _first_text(value: object) -> str | None:
+    """The leading text block, read on its own regardless of what follows it
+    in the list: a string as written, or a list's first item when it is a
+    text block (a Code Mode cell's status header stays first even when a
+    later item is media `_body` cannot join as text)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and value:
+        first = value[0]
+        if isinstance(first, dict) and isinstance(first.get("text"), str):
+            return str(first["text"])
+    return None
 
 
 def _text(content: object) -> str:

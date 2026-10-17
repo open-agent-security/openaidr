@@ -686,6 +686,39 @@ def test_a_code_mode_script_is_classed_and_its_tools_stay_their_own_calls(
     )
 
 
+def test_a_code_mode_cells_status_survives_a_media_item_after_it(tmp_path: Path) -> None:
+    """Code Mode's output wrapper keeps the status header at index 0 even
+    when a later item is media (`core/src/tools/code_mode/output.rs`); `_body`
+    cannot join such a list as text, since not every item has a `text` key,
+    so the cell's status must come from the first item alone (P2 Codex review
+    finding on PR #78)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.response(
+        {
+            "type": "custom_tool_call",
+            "status": "completed",
+            "call_id": "cell",
+            "name": "exec",
+            "input": "text(await tools.render());",
+        }
+    )
+    rollout.output(
+        "cell",
+        [
+            {"type": "input_text", "text": "Script completed\nWall time 0.0 seconds\nOutput:\n"},
+            {"type": "input_image", "image_url": "data:image/png;base64,iVBOR..."},
+        ],
+        kind="custom_tool_call_output",
+    )
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    call = _calls(_only(tmp_path))["cell"]
+
+    assert (call.tool_class, call.status) == ("script", "ok")
+
+
 def test_a_code_mode_status_line_is_read_only_from_a_script(tmp_path: Path) -> None:
     """Only Code Mode's `exec` writes a status line. Another custom tool whose
     output happens to open with the same words keeps the outcome it had."""
