@@ -500,6 +500,28 @@ def test_view_image_and_dynamic_tool_completion_items_join_their_call(tmp_path: 
     )
 
 
+def test_a_sleep_extension_call_is_not_a_coverage_gap(tmp_path: Path) -> None:
+    """Codex serializes a standalone sleep completion as
+    `{"type": "Extension", "kind": "clock.sleep", ...}` (confirmed against
+    Codex's own `sleep_extension_item_preserves_type_and_kind` test at
+    `rust-v0.163.0`). `_ITEMS` had no `Extension` case, so `_item()` returned
+    with no warning at all: a session that slept held no turn for it
+    (P2 Codex review finding on PR #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.item({"type": "Extension", "kind": "clock.sleep", "id": "sleep-1", "durationMs": 1000})
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    call = _calls(_only(tmp_path))["sleep-1"]
+
+    assert (call.tool_name, call.status, call.arguments) == (
+        "sleep",
+        "ok",
+        {"duration_ms": 1000},
+    )
+
+
 def test_an_execution_no_call_names_is_its_own_call(tmp_path: Path) -> None:
     """A command nested inside another tool has its own id. It becomes its own
     call, and never attaches to an outer call by position."""
