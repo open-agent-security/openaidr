@@ -86,11 +86,14 @@ class _ItemKind:
     `tool` names the built-in it stands for, None when the item names its own
     tool (`tool`). `arguments` maps the item's fields to the call's argument
     keys, an empty key spreading that field's object; with none, the item's
-    own `arguments` object is the call's.
+    own `arguments` object is the call's. `result` names the one field the
+    item records its result in: present, even empty, it is the result; absent,
+    there is none (ADR-0034).
     """
 
     tool: str | None
     arguments: tuple[tuple[str, str], ...] = ()
+    result: str | None = None
     #: The item has no status: its completion is the call succeeding.
     complete: bool = False
 
@@ -101,17 +104,21 @@ class _ItemKind:
 #: joins the call whose `call_id` is its `id`; with no such call it is its own
 #: (an execution nested inside another tool).
 _CALL_ITEMS: dict[str, _ItemKind] = {
-    "CommandExecution": _ItemKind("shell", (("command", "command"),)),
-    "FileChange": _ItemKind("apply_patch", (("changes", "changes"),)),
-    "McpToolCall": _ItemKind(None),
-    "DynamicToolCall": _ItemKind(None),
+    "CommandExecution": _ItemKind("shell", (("command", "command"),), result="aggregated_output"),
+    "FileChange": _ItemKind("apply_patch", (("changes", "changes"),), result="stdout"),
+    "McpToolCall": _ItemKind(None, result="result"),
+    "DynamicToolCall": _ItemKind(None, result="content_items"),
     "CollabAgentToolCall": _ItemKind(None),
-    "WebSearch": _ItemKind("web_search", (("action", ""),), complete=True),
+    "WebSearch": _ItemKind("web_search", (("action", ""),), result="results", complete=True),
     "ImageView": _ItemKind("view_image", (("path", "path"),), complete=True),
-    "ImageGeneration": _ItemKind("image_generation", (("revised_prompt", "revised_prompt"),)),
-    "image_gen.generation": _ItemKind("image_generation", (("revisedPrompt", "revised_prompt"),)),
+    "ImageGeneration": _ItemKind(
+        "image_generation", (("revised_prompt", "revised_prompt"),), result="result"
+    ),
+    "image_gen.generation": _ItemKind(
+        "image_generation", (("revisedPrompt", "revised_prompt"),), result="result"
+    ),
     "clock.sleep": _ItemKind("sleep", (("durationMs", "duration_ms"),), complete=True),
-    "web.search": _ItemKind("web_search", (("action", ""),), complete=True),
+    "web.search": _ItemKind("web_search", (("action", ""),), result="results", complete=True),
 }
 #: The rest of `TurnItem`: none is an invocation, so none is a call.
 #: `FunctionCallOutput` is an output the client supplied as turn input; the
@@ -791,7 +798,9 @@ class _Projection:
         )
         if not joined and call.call_id is not None:
             status, denial, exit_code = "unknown", None, None
-        body = output.body if output is not None else _item_body(item) or call.result
+        body = output.body if output is not None else _item_body(item)
+        if body is None:
+            body = call.result
         arguments = call.arguments
         if not arguments and item.get("type") == "McpToolCall":
             arguments = _mapping(item.get("arguments"))
@@ -1004,25 +1013,15 @@ def _header_exit(body: str) -> int | None:
 
 
 def _item_body(item: Mapping[str, object]) -> str | None:
-    if not item:
-        return None
-    for key in ("aggregated_output", "stdout"):
-        value = item.get(key)
-        if isinstance(value, str) and value:
-            return value
-    result = item.get("result")
-    if isinstance(result, Mapping):
-        return _body(result.get("content", result))
-    if isinstance(result, str) and result:
-        return result
-    content_items = item.get("content_items")
-    if isinstance(content_items, list) and content_items:
-        return _body(content_items)
-    results = item.get("results")
-    if isinstance(results, list):
-        # A search recorded with no matches is `[]`: a result, not an absent one.
-        return _body(results) if results else "[]"
-    return None
+    """The result the item recorded, from its own field (ADR-0034): `""` and
+    `[]` are what the call returned, a missing field or `null` is none."""
+    kind = item.get("_kind")
+    field_name = _CALL_ITEMS[kind].result if isinstance(kind, str) else None
+    value = item.get(field_name) if field_name is not None else None
+    if isinstance(value, Mapping):
+        # An MCP `CallToolResult`: its content is what the tool returned.
+        value = value.get("content", value)
+    return _body(value)
 
 
 def _error_text(item: Mapping[str, object], body: str | None) -> str | None:

@@ -8,7 +8,7 @@ file per thread, as Claude Code writes one transcript per session, so the
 reader follows it, never [Devin](devin-cli.md)'s one-store rebuild. Supersedes
 the design of the unmerged reader in open-agent-security/openaidr#35 and reuses
 its record handling. Takes the account reader from the `codex-sign-in-reader`
-branch (ADR-0027). Decisions: ADR-0030 to ADR-0033.*
+branch (ADR-0027). Decisions: ADR-0030 to ADR-0034.*
 
 ## At a glance
 
@@ -112,10 +112,13 @@ deliberately not, and anything else is reported (ADR-0033).
 | `McpToolCall` | its `server` and `tool` | its `arguments` | `result.content` |
 | `DynamicToolCall` | its `tool`, with no class (the client defines it) | its `arguments` | `content_items` |
 | `CollabAgentToolCall` | its `tool`; `wait` is `wait_agent` | — | — |
-| `WebSearch`, `web.search` | `web_search` | `action` | `results`, `[]` included |
+| `WebSearch`, `web.search` | `web_search` | `action` | `results` |
 | `ImageView` | `view_image` | `path` | — |
 | `ImageGeneration`, `image_gen.generation` | `image_generation` | `revised_prompt` | `result` |
 | `clock.sleep` | `sleep` | `duration_ms` | — |
+
+The result is that one field and no other (ADR-0034). Present, even as `""`
+or `[]`, it is what the call returned; missing or `null`, there is none.
 
 Status is the item's own: `completed` `ok`, `failed` `error`, `declined`
 `rejected` (`user-rejected`), `interrupted` `interrupted`. `WebSearch`,
@@ -165,7 +168,7 @@ client errors in one place. `codex_error_info` is a closed vocabulary (Source
 |---|---|
 | `tool_name`, `mcp_server` | [Tool names](#tool-names) |
 | `arguments` | `function_call.arguments` parsed from JSON text; `custom_tool_call.input` as `{"input": …}`. Non-object JSON gives `{"raw": …}`, reported |
-| `result`, `result_size` | The output's `output`: a string, or a list of content blocks kept whole as JSON text. Never elided |
+| `result`, `result_size` | The output's `output`: a string, or a list of content blocks kept whole as JSON text. Never elided. With no output, the item's own result field ([Completion items](#completion-items)) |
 | `error_text` | When `status` is `error`: the item's `error`, else its `stderr`, else its `aggregated_output`, else the output text |
 | `truncated` | True when the result carries Codex's own cut mark, `…N tokens truncated…` or `…N chars truncated…` (Source `utils/string/src/truncate.rs`). C2 |
 | `provider_call_id` | `call_id` |
@@ -444,6 +447,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0031](../adrs/0031-codex-usage-from-token-usage-records-with-cached-input-apart.md) | One response per `token_usage_record`, cached input taken out of input, a 0 cache write is `None`, the window from `task_started` | `token_count`; input as recorded |
 | [0032](../adrs/0032-place-codex-mcp-connections-by-the-request-that-created-the-thread.md) | MCP connections placed by the request that created the thread; none for `codex exec` | Placement by time; turning on logging |
 | [0033](../adrs/0033-read-codex-against-its-own-closed-vocabularies.md) | Codex 0.163.0's closed item vocabularies as one table; a call named by its most specific record; one nesting bound on input | Any item with an id as a call; naming collaboration calls by namespace; per-site exception catches |
+| [0034](../adrs/0034-a-codex-items-result-is-its-own-field-empty-included.md) | Each item's result is the one field the table names; empty is a result, absent is none | Trying fields in turn; empty as no result |
 
 ## Non-goals
 
@@ -461,7 +465,7 @@ Then re-measure the earlier corpus with the new reader.
 - ADR-0001 identity · ADR-0011 cursors · ADR-0013 Windows · ADR-0014 usage per
   response · ADR-0015 tokens as recorded · ADR-0021 tool class · ADR-0022
   absence flags · ADR-0023 locations · ADR-0027 accounts · ADR-0029 cache
-  bound · ADR-0030 to ADR-0033 Codex
+  bound · ADR-0030 to ADR-0034 Codex
 - openai/codex `rust-v0.163.0`: `rollout/src/policy.rs`, `rollout/src/recorder.rs`,
   `rollout/src/session_index.rs`, `protocol/src/protocol.rs`,
   `protocol/src/codex_error_info.rs`, `codex-api/src/sse/responses.rs`,
