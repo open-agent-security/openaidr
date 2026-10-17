@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from openaidr.readers.base import Window
@@ -82,6 +83,27 @@ def test_a_line_outside_any_request_is_placed_only_where_the_process_served_one_
 
     assert [c.server for c in solo.connections] == ["only"]
     assert (busy.state, busy.connections) == ("placement_ambiguous", ())
+
+
+def test_a_timestamp_out_of_range_drops_only_its_own_row(tmp_path: Path) -> None:
+    """`datetime.fromtimestamp` on SQLite's max integer raises `OSError`, not
+    a condition `place()`'s own `sqlite3.Error` catch covers; the row is
+    unreadable, not the whole log (P2 Codex review finding on PR #76)."""
+    path = write_logs(
+        tmp_path,
+        [
+            (_STARTED, started_line("only"), None, "solo"),
+            (_OTHER, "turn", "thread-1", "solo"),
+        ],
+    )
+    db = sqlite3.connect(path)
+    db.execute("UPDATE logs SET ts = ? WHERE target = ?", (2**63 - 1, _STARTED))
+    db.commit()
+    db.close()
+
+    solo = _place(tmp_path, "thread-1")
+
+    assert solo.connections == ()
 
 
 def test_failures_are_categorised_from_codexs_own_words(tmp_path: Path) -> None:

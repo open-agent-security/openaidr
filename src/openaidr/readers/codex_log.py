@@ -206,7 +206,12 @@ class CodexLogs:
 
 
 def _line(seconds: int, nanos: int, target: str, body: str) -> _Line | None:
-    at = datetime.fromtimestamp(seconds, UTC).replace(microsecond=nanos // 1000)
+    try:
+        at = datetime.fromtimestamp(seconds, UTC).replace(microsecond=nanos // 1000)
+    except (OSError, OverflowError, ValueError):
+        # An out-of-range ts or ts_nanos; this row's instant is unrepresentable,
+        # so the row is skipped like any other it cannot make sense of.
+        return None
     request = _request(body)
     if target == _STARTED and _INITIALIZED.search(body):
         span = _SERVER_SPAN.findall(body)
