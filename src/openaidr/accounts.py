@@ -383,7 +383,7 @@ def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
     else:
         try:
             config = tomllib.loads(raw)
-        except tomllib.TOMLDecodeError:
+        except (tomllib.TOMLDecodeError, RecursionError):
             return None
         store = config.get("cli_auth_credentials_store", "file")
     return root / "auth.json" if store in ("file", "auto") else None

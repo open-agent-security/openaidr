@@ -327,6 +327,21 @@ def test_an_existing_but_malformed_codex_config_is_not_defaulted(tmp_path: Path)
     assert signed_in("codex", home=home) is None
 
 
+def test_a_config_nested_past_the_decoders_limit_is_a_malformed_config(tmp_path: Path) -> None:
+    """`tomllib.loads` on a sufficiently deep but syntactically valid array
+    raises `RecursionError`, not `TOMLDecodeError`; this is a malformed
+    config like any other, not an exception that escapes `signed_in`
+    (P2 Codex review finding on PR #76)."""
+    home = _home(tmp_path)
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text(json.dumps(_codex_auth(_CODEX_CLAIMS)), "utf-8")
+    depth = 2000
+    nested = "a = " + ("[" * depth) + ("]" * depth)
+    (home / ".codex" / "config.toml").write_text(nested, "utf-8")
+
+    assert signed_in("codex", home=home) is None
+
+
 def test_codex_names_every_file_its_sign_in_depends_on(tmp_path: Path) -> None:
     """Named whether or not each exists yet."""
     home = _home(tmp_path)
