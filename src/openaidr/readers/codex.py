@@ -87,6 +87,7 @@ _ITEMS = {
     "CollabAgentToolCall": None,
     "ImageView": "view_image",
     "DynamicToolCall": None,
+    "Extension": "sleep",
 }
 #: A user message is a person's when every part Codex says it holds is typed
 #: text. Codex marks what it injected (`environments.environment_context`,
@@ -433,6 +434,11 @@ class _Projection:
         if kind == "UserMessage":
             if self.initial_prompt is None:
                 self.initial_prompt = _text(item.get("content")) or None
+            return
+        if kind == "Extension" and item.get("kind") != "clock.sleep":
+            # Image generation and web search also use this path (Source),
+            # but only the sleep shape is confirmed; anything else is left
+            # unhandled rather than guessed at.
             return
         if not isinstance(kind, str) or kind not in _ITEMS:
             return
@@ -781,6 +787,8 @@ def _item_call(
         arguments = _mapping(item.get("action"))
     elif kind == "ImageView":
         arguments = {"path": item.get("path")}
+    elif kind == "Extension":
+        arguments = {"duration_ms": item.get("durationMs")}
     else:
         arguments = _mapping(item.get("arguments"))
     name = _ITEMS.get(kind) or _string(item.get("tool")) or kind
@@ -854,7 +862,7 @@ def _outcome(
             return ("error" if failed else "ok" if state == "completed" else "unknown"), None, None
         if state == "failed" or (exit_code is not None and exit_code != 0):
             return "error", None, exit_code
-        if state == "completed" or kind in ("WebSearch", "ImageView"):
+        if state == "completed" or kind in ("WebSearch", "ImageView", "Extension"):
             return "ok", None, exit_code
     if exit_code is not None:
         return ("ok" if exit_code == 0 else "error"), None, exit_code
