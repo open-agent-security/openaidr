@@ -157,3 +157,19 @@ def test_codex_patch_edits_read_the_changes_codex_recorded() -> None:
         {"path": "/w/.env", "kind": "add", "new_text": "KEY=1\n"},
         {"path": "/w/app.py", "kind": "update", "new_text": "y"},
     ]
+
+
+def test_an_added_line_starting_with_plus_plus_is_not_mistaken_for_the_header() -> None:
+    """Only the diff's own "--- a" / "+++ b" header, by position, is excluded;
+    an added line that happens to start with "++" (e.g. "++counter;") encodes
+    as a diff line starting with "+++" too, but it is content, not a second
+    header (P2 Codex review finding on PR #76)."""
+    changes = {
+        "/w/app.py": {
+            "type": "update",
+            "unified_diff": "--- a\n+++ b\n@@\n-counter;\n+++counter;\n",
+        }
+    }
+    assert canonical_arguments("codex", "apply_patch", None, {"changes": changes})["edits"] == [
+        {"path": "/w/app.py", "kind": "update", "new_text": "++counter;"},
+    ]
