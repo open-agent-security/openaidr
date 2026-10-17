@@ -173,8 +173,10 @@ output entirely.
 For long-lived consumers, `IncrementalCollector` takes an agent kind and one
 changed path. Claude Code and Codex cold-read that file once, then project
 only newly appended, newline-terminated records, and return what that file
-holds now. Each keeps those projections in an LRU of at most 128 files and 16
-MiB of source bytes
+holds now. Each keeps those projections in an LRU bounded to 128 files and a
+16 MiB source-byte budget, except that the transcript just read is never
+evicted to make room — so one active transcript larger than the byte budget
+on its own still stays cached rather than losing its incremental read
 ([ADR-0029](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0029-bound-the-incremental-projection-cache.md),
 which supersedes
 [ADR-0011](https://github.com/open-agent-security/openaidr/blob/main/docs/adrs/0011-keep-append-cursors-in-memory.md)).
