@@ -61,7 +61,7 @@ branch (ADR-0027). Decisions: ADR-0030, ADR-0031, ADR-0032.*
 |---|---|
 | `session_meta` | First line. `id`, `session_id` (the root thread), `parent_thread_id`, `timestamp`, `cwd`, `originator`, `cli_version`, `source`, `thread_source`, `agent_nickname`, `model_provider`, `base_instructions`, `history_mode`, `git {commit_hash, branch, repository_url}` |
 | `turn_context` | Per turn: `turn_id`, `cwd`, `model`, `approval_policy`, `approvals_reviewer`, `sandbox_policy.type`, `effort` |
-| `response_item` | `message` (`developer`, `user`, `assistant`), `reasoning`, `function_call`, `function_call_output`, `custom_tool_call`, `custom_tool_call_output`, `tool_search_call`, `tool_search_output`, `web_search_call`. `local_shell_call` (Source) |
+| `response_item` | `message` (`developer`, `user`, `assistant`), `reasoning`, `function_call`, `function_call_output`, `custom_tool_call`, `custom_tool_call_output`, `tool_search_call`, `tool_search_output`, `web_search_call`, `image_generation_call`. `local_shell_call` (Source) |
 | `event_msg` | `item_completed` with a typed item: `UserMessage`, `AgentMessage`, `CommandExecution`, `FileChange`, `McpToolCall`, `WebSearch`, `CollabAgentToolCall`, `ContextCompaction`. Also `task_started`, `task_complete` (with `error` on failure), `turn_aborted`, `token_count` |
 | `token_usage_record` | One per model response: `response_id`, `turn_id`, `usage` |
 | `compacted` | One per compaction |
