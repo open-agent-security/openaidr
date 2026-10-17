@@ -464,6 +464,41 @@ def test_a_hosted_image_generation_call_is_not_a_coverage_gap(tmp_path: Path) ->
     assert calls["ig_1"].arguments == {"revised_prompt": "a cat wearing a hat"}
 
 
+def test_view_image_and_dynamic_tool_completion_items_join_their_call(tmp_path: Path) -> None:
+    """`ImageView` (a paginated `view_image` result) and `DynamicToolCall` (an
+    app-server dynamic tool invocation) are completion items `_ITEMS` did not
+    recognize, so each was silently dropped instead of becoming its own call,
+    the way `CommandExecution` or `McpToolCall` already does (P2 Codex review
+    finding on PR #76)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.item({"type": "ImageView", "id": "view-1", "path": "file:///work/screenshot.png"})
+    rollout.item(
+        {
+            "type": "DynamicToolCall",
+            "id": "dyn-1",
+            "tool": "custom_widget",
+            "arguments": {"x": 1},
+            "status": "completed",
+        }
+    )
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    calls = _calls(_only(tmp_path))
+
+    assert (calls["view-1"].tool_name, calls["view-1"].status, calls["view-1"].arguments) == (
+        "view_image",
+        "ok",
+        {"path": "file:///work/screenshot.png"},
+    )
+    assert (calls["dyn-1"].tool_name, calls["dyn-1"].status, calls["dyn-1"].arguments) == (
+        "custom_widget",
+        "ok",
+        {"x": 1},
+    )
+
+
 def test_an_execution_no_call_names_is_its_own_call(tmp_path: Path) -> None:
     """A command nested inside another tool has its own id. It becomes its own
     call, and never attaches to an outer call by position."""
