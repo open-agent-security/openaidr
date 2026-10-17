@@ -8,7 +8,7 @@ file per thread, as Claude Code writes one transcript per session, so the
 reader follows it, never [Devin](devin-cli.md)'s one-store rebuild. Supersedes
 the design of the unmerged reader in open-agent-security/openaidr#35 and reuses
 its record handling. Takes the account reader from the `codex-sign-in-reader`
-branch (ADR-0027). Decisions: ADR-0030 to ADR-0034.*
+branch (ADR-0027). Decisions: ADR-0030 to ADR-0035.*
 
 ## At a glance
 
@@ -94,6 +94,10 @@ text.
 - **A completion with no call record is its own turn**, keyed by its record:
   an execution nested inside another tool has its own id. It is never attached
   to an outer call by position.
+- **A record belongs to the turn it names** (`turn_id` on the event, or on the
+  response item's metadata), and to the turn in force only when it names none.
+  Codex completes a call late, after a newer turn began, and names its own
+  turn (ADR-0035).
 - **Child threads start from their own first line.** A child that inherits its
   parent's history marks where its own begins; copied parent records are not
   the child's.
@@ -112,7 +116,7 @@ deliberately not, and anything else is reported (ADR-0033).
 | `McpToolCall` | its `server` and `tool` | its `arguments` | `result.content` |
 | `DynamicToolCall` | its `tool`, with no class (the client defines it) | its `arguments` | `content_items` |
 | `CollabAgentToolCall` | its `tool`; `wait` is `wait_agent` | — | — |
-| `WebSearch`, `web.search` | `web_search` | `action` | `results` |
+| `WebSearch`, `web.search` | `web_search` | `action` | `results`, kept whole as JSON (ADR-0035) |
 | `ImageView` | `view_image` | `path` | — |
 | `ImageGeneration`, `image_gen.generation` | `image_generation` | `revised_prompt` | `result` |
 | `clock.sleep` | `sleep` | `duration_ms` | — |
@@ -448,6 +452,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0032](../adrs/0032-place-codex-mcp-connections-by-the-request-that-created-the-thread.md) | MCP connections placed by the request that created the thread; none for `codex exec` | Placement by time; turning on logging |
 | [0033](../adrs/0033-read-codex-against-its-own-closed-vocabularies.md) | Codex 0.163.0's closed item vocabularies as one table; a call named by its most specific record; one nesting bound on input | Any item with an id as a call; naming collaboration calls by namespace; per-site exception catches |
 | [0034](../adrs/0034-a-codex-items-result-is-its-own-field-empty-included.md) | Each item's result is the one field the table names; empty is a result, absent is none | Trying fields in turn; empty as no result |
+| [0035](../adrs/0035-a-codex-record-belongs-to-the-turn-it-names.md) | A record belongs to the turn it names; a web search's results are kept whole | The turn in force for every record; joining text blocks in `results` |
 
 ## Non-goals
 
@@ -465,7 +470,7 @@ Then re-measure the earlier corpus with the new reader.
 - ADR-0001 identity · ADR-0011 cursors · ADR-0013 Windows · ADR-0014 usage per
   response · ADR-0015 tokens as recorded · ADR-0021 tool class · ADR-0022
   absence flags · ADR-0023 locations · ADR-0027 accounts · ADR-0029 cache
-  bound · ADR-0030 to ADR-0034 Codex
+  bound · ADR-0030 to ADR-0035 Codex
 - openai/codex `rust-v0.163.0`: `rollout/src/policy.rs`, `rollout/src/recorder.rs`,
   `rollout/src/session_index.rs`, `protocol/src/protocol.rs`,
   `protocol/src/codex_error_info.rs`, `codex-api/src/sse/responses.rs`,

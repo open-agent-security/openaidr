@@ -88,12 +88,14 @@ class _ItemKind:
     keys, an empty key spreading that field's object; with none, the item's
     own `arguments` object is the call's. `result` names the one field the
     item records its result in: present, even empty, it is the result; absent,
-    there is none (ADR-0034).
+    there is none (ADR-0034). `opaque` keeps that result whole as JSON, never
+    read as text blocks.
     """
 
     tool: str | None
     arguments: tuple[tuple[str, str], ...] = ()
     result: str | None = None
+    opaque: bool = False
     #: The item has no status: its completion is the call succeeding.
     complete: bool = False
 
@@ -109,7 +111,9 @@ _CALL_ITEMS: dict[str, _ItemKind] = {
     "McpToolCall": _ItemKind(None, result="result"),
     "DynamicToolCall": _ItemKind(None, result="content_items"),
     "CollabAgentToolCall": _ItemKind(None),
-    "WebSearch": _ItemKind("web_search", (("action", ""),), result="results", complete=True),
+    "WebSearch": _ItemKind(
+        "web_search", (("action", ""),), result="results", opaque=True, complete=True
+    ),
     "ImageView": _ItemKind("view_image", (("path", "path"),), complete=True),
     "ImageGeneration": _ItemKind(
         "image_generation", (("revised_prompt", "revised_prompt"),), result="result"
@@ -118,7 +122,9 @@ _CALL_ITEMS: dict[str, _ItemKind] = {
         "image_generation", (("revisedPrompt", "revised_prompt"),), result="result"
     ),
     "clock.sleep": _ItemKind("sleep", (("durationMs", "duration_ms"),), complete=True),
-    "web.search": _ItemKind("web_search", (("action", ""),), result="results", complete=True),
+    "web.search": _ItemKind(
+        "web_search", (("action", ""),), result="results", opaque=True, complete=True
+    ),
 }
 #: The rest of `TurnItem`: none is an invocation, so none is a call.
 #: `FunctionCallOutput` is an output the client supplied as turn input; the
@@ -455,7 +461,7 @@ class _Projection:
                         "stdout": payload.get("stdout"),
                         "stderr": payload.get("stderr"),
                     },
-                    {},
+                    payload,
                     key,
                     at,
                 )
@@ -478,7 +484,7 @@ class _Projection:
                         "error": result.get("Err") if failed else None,
                         "duration": payload.get("duration"),
                     },
-                    {},
+                    payload,
                     key,
                     at,
                 )
@@ -497,7 +503,7 @@ class _Projection:
                         "aggregated_output": payload.get("aggregated_output"),
                         "duration": payload.get("duration"),
                     },
-                    {},
+                    payload,
                     key,
                     at,
                 )
@@ -534,7 +540,10 @@ class _Projection:
         if call_id not in self.calls:
             # An execution no call record names: its own turn, never attached to
             # another call by position.
-            self._call_record(key, at, _item_call(item, call_id, self.cwd, self.turn))
+            # The turn the event names, so a late completion keeps its own
+            # turn's end and response (ADR-0035); else the turn in force.
+            turn = _string(event.get("turn_id")) or self.turn
+            self._call_record(key, at, _item_call(item, call_id, self.cwd, turn))
         # A later snapshot of the same execution replaces the earlier one.
         self.items[call_id] = item
 
@@ -1016,8 +1025,11 @@ def _item_body(item: Mapping[str, object]) -> str | None:
     """The result the item recorded, from its own field (ADR-0034): `""` and
     `[]` are what the call returned, a missing field or `null` is none."""
     kind = item.get("_kind")
-    field_name = _CALL_ITEMS[kind].result if isinstance(kind, str) else None
-    value = item.get(field_name) if field_name is not None else None
+    shape = _CALL_ITEMS[kind] if isinstance(kind, str) else None
+    value = item.get(shape.result) if shape is not None and shape.result is not None else None
+    if shape is not None and shape.opaque and value is not None:
+        # Codex keeps it opaque so new fields pass through; so does this.
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, Mapping):
         # An MCP `CallToolResult`: its content is what the tool returned.
         value = value.get("content", value)

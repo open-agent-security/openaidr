@@ -279,7 +279,9 @@ def test_a_hosted_image_generation_item_joins_its_call(tmp_path: Path) -> None:
     assert list(_calls(session)) == ["ig1"]
 
 
-@pytest.mark.parametrize("results", [[], [{"title": "a"}]])
+@pytest.mark.parametrize(
+    "results", [[], [{"title": "a"}], [{"text": "Sunny", "url": "https://w.test", "title": "W"}]]
+)
 @pytest.mark.parametrize("kind", ["WebSearch", "Extension"])
 def test_a_web_searchs_results_are_its_result_even_when_empty(
     kind: str, results: list[object], tmp_path: Path
@@ -313,6 +315,46 @@ def test_a_web_search_with_no_results_recorded_has_no_result(tmp_path: Path) -> 
     session, _ = _session(rollout, tmp_path)
 
     assert _calls(session)["w1"].result is None
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_a_late_completion_belongs_to_the_turn_it_names(legacy: bool, tmp_path: Path) -> None:
+    """Codex completes a call after a newer turn began and names the call's own
+    turn on the event (`ItemCompletedEvent.turn_id`, and each legacy `*_end`
+    event's). The call takes that turn: its ended state and its response, never
+    the newer turn's (ADR-0035)."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.complete()
+    rollout.turn("t2")
+    if legacy:
+        rollout.event(
+            {
+                "type": "exec_command_end",
+                "call_id": "late",
+                "turn_id": "t1",
+                "command": ["ls"],
+                "exit_code": 0,
+                "aggregated_output": "",
+            }
+        )
+    else:
+        rollout.event(
+            {
+                "type": "item_completed",
+                "thread_id": "t",
+                "turn_id": "t1",
+                "item": {"type": "DynamicToolCall", "id": "late", "tool": "w", "arguments": {}},
+            }
+        )
+    rollout.assistant("next")
+    rollout.usage("r2")
+    session, _ = _session(rollout, tmp_path)
+
+    late = next(turn for turn in session.turns if turn.tool_calls)
+
+    assert late.response_id is None
+    assert late.tool_calls[0].status != "pending"
 
 
 #: The field each call item records its result in, and an empty value of that
