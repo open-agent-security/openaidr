@@ -847,6 +847,8 @@ def _outcome(
     if kind is not None:
         if state == "declined":
             return "rejected", "user-rejected", exit_code
+        if state == "interrupted":
+            return "interrupted", None, exit_code
         if kind == "McpToolCall":
             failed = state == "failed" or _mapping(item.get("result")).get("isError") is True
             return ("error" if failed else "ok" if state == "completed" else "unknown"), None, None
