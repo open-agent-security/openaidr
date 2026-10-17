@@ -553,7 +553,11 @@ class _Projection:
                 and name.startswith("mcp__")
                 and description
             ):
-                parts.append(ContextPart(name=name.removeprefix("mcp__"), text=description))
+                parts.append(
+                    ContextPart(
+                        name=name.removeprefix("mcp__").removesuffix("__"), text=description
+                    )
+                )
         if parts:
             text = "\n\n".join(part.text for part in parts)
             self.context.append(
