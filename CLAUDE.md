@@ -175,12 +175,22 @@ the alternative we rejected? If yes, write the ADR.
 full ADR. The cost of one Read is much smaller than the cost of
 re-deriving or re-litigating a decision.
 
-**Supersede, never edit.** Accepted ADRs are immutable. If a later
-decision contradicts an existing ADR, write a NEW ADR with
+**Supersede or amend, never edit.** Accepted ADRs are immutable. If a later
+decision contradicts an existing ADR, write a NEW ADR that supersedes or
+amends it, as the next rule decides. For a supersession, put
 `supersedes: NNNN` in its frontmatter, and update the old one's
 frontmatter to `status: superseded` + `superseded-by: NNNN`. Old PRs
 need to remain readable against the rules in effect at the time —
 silently editing an accepted ADR breaks that contract.
+
+**Amend or supersede: one test.** Ask if any numbered decision in the old
+ADR still binds. If one does, amend: put `amends: NNNN` on the new ADR and
+`amended-by: NNNN` on the old one, and both stay active. If none does,
+supersede. Only this test decides. The size of the change, the importance
+of the replaced clause, and the old ADR's "When to revisit" text do not
+change the result. A reviewer reports the choice only when the finding
+names every numbered decision in the old ADR and shows that none still
+binds.
 
 ## Commits and PRs
 
@@ -357,9 +367,18 @@ review catches the glaring issues, and later reviews check only what changed.
 - Batch related fixes into one tested update before requesting re-review.
   Avoid duplicate review requests for the same head.
 - An automated fixer pushes ordinary commits to the existing PR branch and
-  runs every required gate. It does not bypass gates, merge, rebase, or
-  force-push, or change workflows, permissions, credentials, or branch
-  protection. Report an environment failure or required rebase as a blocker.
+  runs every required gate. It does not bypass gates, merge, or change
+  workflows, permissions, credentials, or branch protection. It force-pushes
+  only after a rebase, as the next rule says. Report an environment failure
+  as a blocker.
+- When a PR branch conflicts with its base branch, the automated fixer
+  rebases it onto the current base branch. The base branch is normally
+  `main`. It resolves the conflicts, runs every required gate, and pushes
+  with `git push --force-with-lease`. It does not merge the base branch into
+  the PR branch. PR branches are rarely shared, so rewritten history is
+  acceptable. Report a conflict as a blocker when both sides change the same
+  logic and each resolution loses behavior. A rebase with no other change is
+  not a fix round.
 - After pushing fixes, wait for CI and a completed review of the current
   head. Silence, an older review, or a running review is not clearance.
 - Stop and ask for human input when the same failure repeats without progress.
