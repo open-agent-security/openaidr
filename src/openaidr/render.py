@@ -58,7 +58,7 @@ def render_text(collection: Collection, detail: bool = False) -> str:
     lines: list[str] = []
     if detail:
         for session in collection.sessions:
-            lines.extend(_session_lines(session, detail))
+            lines.extend(_session_lines(session))
     if not collection.sessions:
         lines.append("No sessions found.")
     lines.extend(_summary_lines(collection))
@@ -322,7 +322,7 @@ def _summary_lines(collection: Collection) -> list[str]:
     return lines
 
 
-def _session_lines(session: Session, detail: bool = False) -> list[str]:
+def _session_lines(session: Session) -> list[str]:
     started = session.started_at.isoformat() if session.started_at else "unknown start"
     kind = session.agent_kind or "unmapped kind"
     calls = sum(len(t.tool_calls) for t in session.turns)
@@ -335,8 +335,6 @@ def _session_lines(session: Session, detail: bool = False) -> list[str]:
         f"{session.turn_count} turns  {calls} calls"
     )
     lines = [header]
-    if not detail:
-        return lines
     for turn in session.turns:
         for call in turn.tool_calls:
             name = f"{call.mcp_server}/{call.tool_name}" if call.mcp_server else call.tool_name
