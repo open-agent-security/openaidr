@@ -6,11 +6,14 @@ that fails at runtime, and nothing else in the gate set catches it.
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from openaidr import __version__
 from openaidr.__main__ import main
+
+_README = Path(__file__).parents[1] / "README.md"
 
 
 def test_version_flag_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
@@ -18,6 +21,13 @@ def test_version_flag_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
         main(["--version"])
     assert exc.value.code == 0
     assert __version__ in capsys.readouterr().out
+
+
+def test_readme_version_example_matches_the_package() -> None:
+    """The install example prints a real `--version` line. A hardcoded release
+    there drifts, and nothing else in the gate set reads the README."""
+    example = f"$ openaidr --version\nopenaidr {__version__}\n"
+    assert example in _README.read_text(encoding="utf-8")
 
 
 def test_installed_console_script_runs() -> None:
