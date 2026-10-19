@@ -116,7 +116,7 @@ That installs an `openaidr` command:
 
 ```console
 $ openaidr --version
-openaidr 0.6.3
+openaidr 0.7.0
 ```
 
 `openaidr sessions` prints what each agent on this machine actually did —
