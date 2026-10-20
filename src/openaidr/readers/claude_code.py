@@ -1110,7 +1110,9 @@ def _mcp_tool_counts(event: AgentEvent) -> Counter[tuple[str, str]]:
         for tool in message.tools:
             server, name = _server_and_tool(tool)
             if server is not None:
-                counts[(server, name)] += 1
+                # Keyed by the log's spelling of the server, so a plugin server's
+                # count agrees with its hyphenated log directory (`_log_server_key`).
+                counts[(_log_server_key(server), name)] += 1
     return counts
 
 
@@ -1327,7 +1329,7 @@ def _tool_calls(
         # informative is the one shape that never receives it: three identical
         # rejected calls reached consumers as three `pending` with the failure
         # stripped off, and the loop read as silence.
-        outcome = mcp.take(server, name) if server is not None else None
+        outcome = mcp.take(_log_server_key(server), name) if server is not None else None
         # `ok is None` means the client reported the call still running and
         # nothing ever followed -- from the log's own vantage point, not an
         # outcome to assert. Leaving `status` unchanged in that case is exactly
@@ -1393,7 +1395,7 @@ def _tool_calls(
                 # could be placed for this particular call. A call withheld for
                 # overlap still ran over a known connection; only its status
                 # and duration are genuinely ambiguous.
-                transport=mcp.transport_for(server),
+                transport=mcp.transport_for(_log_server_key(server) if server else None),
                 tool_class=tool_class(ClaudeCodeReader.agent_kind, name, server),
                 canonical_arguments=canonical_arguments(
                     ClaudeCodeReader.agent_kind, name, server, arguments
@@ -1442,6 +1444,28 @@ def _server_and_tool(tool: ToolUsage) -> tuple[str | None, str]:
     if tool.server_name:
         return tool.server_name, name
     return server, name
+
+
+def _log_server_key(server: str) -> str:
+    """The server name as the MCP connection log's directory spells it.
+
+    Claude Code names a plugin-bundled server `plugin_<plugin>_<server>` inside a
+    tool name but `plugin-<plugin>-<server>` in its `mcp-logs-` directory, so the
+    transcript-derived server (`_server_and_tool`) and the log-derived server
+    (the directory name, `claude_code_mcp.py`) never join for a plugin server
+    without reconciling the two. The divergence is only ever the `plugin_`
+    prefix's separators: the cache directory replaces every character outside
+    `[A-Za-z0-9-]` with `-`, so for a plugin server mapping the transcript form
+    forward with `_`->`-` reproduces the directory form exactly, including when
+    the plugin or server name carries its own underscores. A non-plugin server's
+    name is used verbatim in both places, so it is returned untouched -- its own
+    hyphens must not be disturbed. The directory form is lossy (a hyphen may be
+    an original hyphen or a mapped separator) and must never be parsed back; this
+    maps forward, which is deterministic.
+    """
+    if not server.startswith("plugin_"):
+        return server
+    return server.replace("_", "-")
 
 
 #: The `toolUseResult` field that states a built-in file tool succeeded, by tool
