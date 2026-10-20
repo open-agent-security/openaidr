@@ -175,6 +175,53 @@ def test_overlapping_calls_to_the_same_tool_withhold_their_ordinal_outcomes(
     assert connection.transport == "stdio", "the connection fact is unaffected"
 
 
+def test_a_plugin_server_joins_its_log_across_the_name_divergence(tmp_path: Path) -> None:
+    """A plugin-bundled server names itself two ways, and the join must reconcile.
+
+    Claude Code calls a plugin server's tool `mcp__plugin_<plugin>_<server>__<tool>`
+    in the transcript, but files its connection log under
+    `mcp-logs-plugin-<plugin>-<server>`, with the separators hyphenated. A verified
+    scratch run confirms the directory replaces every `_` in the identity with `-`,
+    including a `_` inside a plugin or server name. Without reconciling the two, a
+    plugin server's transport never reaches its call, so no downstream consumer can
+    tell the call left the host. The `under_score` server name carries the edge the
+    forward map must survive.
+    """
+    root, cache = tmp_path / "projects", tmp_path / "cache"
+    records = [
+        user_text(SESSION, "u0", "2026-01-01T00:00:00Z", "go"),
+        assistant_tool_use(SESSION, "anchor", "2026-01-01T00:00:01Z", "toolu_anchor", "Read"),
+        tool_result(SESSION, "ranchor", "2026-01-01T00:00:02Z", "toolu_anchor", "x"),
+        assistant_tool_use(
+            SESSION,
+            "a0",
+            "2026-01-01T00:00:01Z",
+            "toolu_0",
+            "mcp__plugin_incident-tools_under_score__create_ticket",
+            arguments={"q": "query-0"},
+        ),
+        tool_result(SESSION, "r0", "2026-01-01T00:00:02Z", "toolu_0", "done"),
+    ]
+    write_session(root, "project", records)
+    log.write_server_log(
+        cache,
+        "plugin-incident-tools-under-score",
+        [
+            log.http_transport(SESSION, "http://127.0.0.1:8766/mcp"),
+            log.connected(SESSION, transport="http"),
+            log.calling(SESSION, "create_ticket"),
+            log.completed(SESSION, "create_ticket", ms=4),
+        ],
+    )
+    (session,) = _collect(root, cache)
+    assert session.mcp_log_state == "applied"
+    (call,) = _mcp_calls([session])
+    assert (call.status, call.transport) == ("ok", "http")
+    # The displayed server keeps the transcript's own spelling; only the join key
+    # is reconciled, so the component a consumer reports is unchanged.
+    assert call.mcp_server == "plugin_incident-tools_under_score"
+
+
 def test_a_count_disagreement_withholds_outcomes_and_keeps_connections(tmp_path: Path) -> None:
     """The guard, and why it is not simply "use what is there".
 
