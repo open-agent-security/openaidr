@@ -349,7 +349,7 @@ class _Projection:
         if self.meta is None:
             if kind != "session_meta" or not _string(payload.get("id")):
                 raise ValueError("first record is not a session_meta with an id")
-            self._meta(payload, line, at)
+            self._meta(payload, at)
             return
         if kind == "session_meta":
             # A copy inside history the thread inherited; its first is its own.
@@ -385,7 +385,7 @@ class _Projection:
         elif kind == "compacted":
             self._compacted(payload, at)
 
-    def _meta(self, payload: dict[str, object], line: int, at: datetime | None) -> None:
+    def _meta(self, payload: dict[str, object], at: datetime | None) -> None:
         self.meta = payload
         self.cwd = _string(payload.get("cwd"))
         self._seen(_instant(payload.get("timestamp")) or at)
@@ -574,7 +574,7 @@ class _Projection:
         elif kind in _CALLS:
             self._call_record(key, at, _response_call(kind, payload, self.cwd, turn))
         elif kind in _OUTPUTS:
-            self._output(kind, payload, key, at)
+            self._output(kind, payload, at)
         elif kind.endswith(("_call", "_output")):
             self.warnings.add(f"response item {kind!r} is not read; tool coverage is incomplete")
 
@@ -621,17 +621,15 @@ class _Projection:
         if awaits and record.turn is not None:
             self.awaiting.setdefault(record.turn, []).append(index)
 
-    def _output(
-        self, kind: str, payload: Mapping[str, object], key: str, at: datetime | None
-    ) -> None:
+    def _output(self, kind: str, payload: Mapping[str, object], at: datetime | None) -> None:
         call_id = _string(payload.get("call_id"))
         if call_id is None:
             if kind == "tool_search_output":
-                self._search_context(payload, key, at)
+                self._search_context(payload, at)
                 return
             raise ValueError("call output has no call_id")
         if kind == "tool_search_output":
-            self._search_context(payload, key, at)
+            self._search_context(payload, at)
             body: object = payload.get("tools", [])
         else:
             if "output" not in payload:
@@ -641,7 +639,7 @@ class _Projection:
             _Output(_body(body), _string(payload.get("status")), _first_text(body))
         )
 
-    def _search_context(self, payload: Mapping[str, object], key: str, at: datetime | None) -> None:
+    def _search_context(self, payload: Mapping[str, object], at: datetime | None) -> None:
         """A tool search names each MCP server it found and that server's own instructions."""
         tools = payload.get("tools")
         if not isinstance(tools, list):
