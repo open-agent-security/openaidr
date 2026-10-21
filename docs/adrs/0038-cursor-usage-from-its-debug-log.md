@@ -23,6 +23,12 @@ surface, and a line for each MCP server that failed to load. A sub-agent's
 usage lines carry the id of the call that started it. Cursor keeps the 50
 newest logs and none older than 7 days.
 
+The usage lines come from the agent loop that runs in the CLI, as it does in
+the local-inference build. The standard CLI runs that loop on Cursor's server
+and writes no usage line. In print mode its `agent_cli.turn.outcome` line
+carries the turn's totals instead, with input already net of the cache
+(Source; Seen in the local-inference build, which writes both).
+
 ## Decision
 
 The reader takes usage, the entrypoint, client error times and MCP connection
@@ -35,6 +41,10 @@ failures from the debug log, `readers/cursor_log.py`.
 2. **Input excludes the cache.** `input_tokens` is `inputTokens` minus cache
    reads and writes, as for Codex (ADR-0031). A cache write of 0 is `None`.
 3. **A turn links to a response only when the counts agree** for its request.
+4. **A turn's totals are one response only where no usage line states it.**
+   Its id is `<request_id>:turn`, its input is taken as stated, and its model is
+   the `model_intent` tag. Where usage lines exist, the totals are their sum
+   and add nothing.
 
 ## Alternatives considered
 
@@ -49,9 +59,11 @@ failures from the debug log, `readers/cursor_log.py`.
 
 ## Consequences
 
-Cursor responses carry real tokens while the log is kept. A session read after
-its log was pruned has no responses; a consumer that filed them earlier keeps
-them. A session run with `CURSOR_AGENT_DISABLE_DEBUG_LOG` has none, and its
+Cursor responses carry real tokens while the log is kept: per response where
+the loop runs in the CLI, per turn in the standard CLI's print mode. The
+standard CLI's terminal UI writes no totals, so its sessions have no responses
+(the spec's C10). A session read after its log was pruned has no responses;
+a consumer that filed them earlier keeps them. A session run with `CURSOR_AGENT_DISABLE_DEBUG_LOG` has none, and its
 `mcp_log_state` says so. A successful MCP connection writes no line, so only
 failures are connections.
 

@@ -1,10 +1,11 @@
 """Reads the Cursor CLI's debug log: usage, entrypoints, client errors, MCP failures.
 
 Cursor writes no token usage to its chat store. Its debug log, on by default,
-writes one line for each model response with the provider's counts, and names
-the conversation and request each turn belongs to (ADR-0038). One file per
-process, under `<os tmp>/cursor-agent-logs-<uid>/`, append-only; Cursor keeps
-the 50 newest and none older than 7 days.
+names the conversation and request each turn belongs to, and states usage in
+one of two ways (ADR-0038): a line for each model response where the agent loop
+runs in the CLI, or the turn's totals on its outcome where it runs on Cursor's
+server. One file per process, under `<os tmp>/cursor-agent-logs-<uid>/`,
+append-only; Cursor keeps the 50 newest and none older than 7 days.
 
 A line is `[<ISO time>] <channel> <JSON>`. Only these are read:
 
@@ -13,7 +14,9 @@ A line is `[<ISO time>] <channel> <JSON>`. Only these are read:
 - `Setting token details for client token ring`: one model response. With
   `toolName: "TASK"` and a `toolId`, the response is a sub-agent's: the child
   that call started.
-- `agent_cli.turn.outcome` with `outcome: "error"`: a client error's time.
+- `agent_cli.turn.outcome`: with `outcome: "error"`, a client error's time;
+  with `input_tokens` and the other counts, the turn's totals. Print mode
+  writes them; input is already net of the cache.
 - `Failed to load MCP server`, and the `MCP HTTP exchange failed` lines before
   it: a connection that failed.
 
@@ -89,14 +92,20 @@ class Usage:
     #: The call that started the sub-agent this response is a sub-agent's,
     #: or None for a main conversation's.
     subagent_call: str | None = None
+    #: A turn's totals from its outcome, rather than one response's line. Its
+    #: input is already net of the cache.
+    turn_total: bool = False
 
     @property
     def response_id(self) -> str:
         """`<request_id>:<n>`, with the starting call between them for a
         sub-agent's response: its lines carry its parent's request, so without
         it a child's first response and its parent's would share an id, and a
-        consumer that files each response once would drop one of them."""
+        consumer that files each response once would drop one of them. A
+        turn's totals are `<request_id>:turn`."""
         request = self.request_id or "request"
+        if self.turn_total:
+            return f"{request}:turn"
         if self.subagent_call is not None:
             return f"{request}:{self.subagent_call}:{self.ordinal}"
         return f"{request}:{self.ordinal}"
@@ -126,6 +135,7 @@ class _File:
     requests: dict[str, list[str]] = field(default_factory=dict)
     usage: dict[str, list[Usage]] = field(default_factory=dict)
     subagent_usage: dict[str, list[Usage]] = field(default_factory=dict)
+    totals: dict[str, list[Usage]] = field(default_factory=dict)
     errors: dict[str, list[Outcome]] = field(default_factory=dict)
     failures: dict[str, MCPConnection] = field(default_factory=dict)
     transports: dict[str, str] = field(default_factory=dict)
@@ -216,7 +226,28 @@ class _File:
 
     def _outcome(self, metadata: dict[str, object], at: datetime | None) -> None:
         conversation = _string(metadata.get("conversation_id"))
-        if conversation is None or metadata.get("outcome") != "error":
+        if conversation is None:
+            return
+        counts = {
+            name: _tag_count(metadata.get(name))
+            for name in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
+        }
+        if counts["input_tokens"] is not None or counts["output_tokens"] is not None:
+            self.totals.setdefault(conversation, []).append(
+                Usage(
+                    request_id=_string(metadata.get("request_id")),
+                    ordinal=0,
+                    model=_string(metadata.get("model_intent")),
+                    occurred_at=at,
+                    input_tokens=counts["input_tokens"],
+                    output_tokens=counts["output_tokens"],
+                    cache_read_tokens=counts["cache_read_tokens"],
+                    cache_write_tokens=counts["cache_write_tokens"],
+                    max_tokens=None,
+                    turn_total=True,
+                )
+            )
+        if metadata.get("outcome") != "error":
             return
         self.errors.setdefault(conversation, []).append(
             Outcome(
@@ -324,6 +355,7 @@ class CursorLogs:
         if root_state is not None:
             return Placement(state=root_state)
         usage: list[Usage] = []
+        totals: list[Usage] = []
         requests: list[str] = []
         errors: list[Outcome] = []
         connections: dict[str, MCPConnection] = {}
@@ -348,6 +380,7 @@ class CursorLogs:
                 continue
             placed = True
             usage.extend(state.usage.get(conversation, ()))
+            totals.extend(state.totals.get(conversation, ()))
             requests.extend(state.requests.get(conversation, ()))
             errors.extend(state.errors.get(conversation, ()))
             if surface is None:
@@ -355,6 +388,13 @@ class CursorLogs:
             connections.update(state.failures)
         if not placed:
             return Placement(state="no_log_for_session")
+        # A turn's totals stand for its responses only where no line states
+        # them: where both exist, the totals are the lines' sum (ADR-0038).
+        stated = {line.request_id for line in usage}
+        unstated = [total for total in totals if total.request_id not in stated]
+        if unstated:
+            usage.extend(unstated)
+            usage.sort(key=lambda u: u.occurred_at or datetime.min.replace(tzinfo=UTC))
         times = [u.occurred_at for u in usage if u.occurred_at] + [
             e.occurred_at for e in errors if e.occurred_at
         ]
@@ -394,3 +434,10 @@ def _count(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
     return value
+
+
+def _tag_count(value: object) -> int | None:
+    """A count from a structured log's tags, which Cursor writes as strings."""
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return _count(value)
