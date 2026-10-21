@@ -290,7 +290,6 @@ class _Projection:
     #: Per Codex turn, the records waiting for the response that produced them.
     awaiting: dict[str, list[int]] = field(default_factory=dict)
     responses: dict[str, ModelResponse] = field(default_factory=dict)
-    response_turns: dict[str, str | None] = field(default_factory=dict)
     context: list[ContextItem] = field(default_factory=list)
     compactions: list[Compaction] = field(default_factory=list)
     refusals: list[ProviderRefusal] = field(default_factory=list)
@@ -704,7 +703,6 @@ class _Projection:
             ),
             context_window=self.windows.get(turn) if turn is not None else None,
         )
-        self.response_turns[response_id] = turn
         for index in self.awaiting.pop(turn, []) if turn is not None else []:
             self.records[index].response_id = response_id
 
