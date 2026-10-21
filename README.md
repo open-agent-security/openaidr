@@ -16,13 +16,15 @@ normalises it into one session model with stable span identity.
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
 
-**Today it reads three kinds: Claude Code, Devin and Codex** (`devin`, which
+**Today it reads four kinds: Claude Code, Devin, Codex and Cursor** (`devin`, which
 covers Devin CLI, Devin Desktop's local agent and editors driving it over ACP:
 one agent, one session store; `codex`, which covers Codex CLI, `codex exec`, and
 the IDE extension and Codex app through `codex app-server`, from
-[`docs/specs/codex.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/codex.md)).
-Cursor is the intended next kind and is not read yet — a session from it is
-absent from the output entirely, not collected and marked. The parsing dependency supports more formats
+[`docs/specs/codex.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/codex.md);
+`cursor`, which covers the Cursor CLI in the terminal, in print mode and over
+ACP, from
+[`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md)).
+The Cursor desktop app's own chats are not read yet. The parsing dependency supports more formats
 than this package instantiates, which is a distinction worth holding onto; what
 each additional kind would cost is measured in
 [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage).
@@ -116,7 +118,7 @@ That installs an `openaidr` command:
 
 ```console
 $ openaidr --version
-openaidr 0.7.1
+openaidr 0.8.0
 ```
 
 `openaidr sessions` prints what each agent on this machine actually did —
@@ -164,11 +166,11 @@ emitted for Claude Code or Devin: neither Claude Code source records a stop,
 and Devin's result reasons do not include one. Codex emits it, from a
 completion item's own status and from output Codex marks aborted.
 
-Not yet read: **Cursor**. What it would cost is measured in
-[Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage)
-rather than assumed, including why it cannot be added through the dependency
-alone without breaking span identity. A Cursor session is absent from the
-output entirely.
+Cursor is read from the CLI's chat stores, with per-response tokens, the
+entrypoint and MCP connection failures from its debug log
+([`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md)).
+Its statuses come from Cursor's typed outcome, `interrupted` included. The
+desktop app's chats are not read yet.
 
 For long-lived consumers, `IncrementalCollector` takes an agent kind and one
 changed path. Claude Code and Codex cold-read that file once, then project
