@@ -781,6 +781,7 @@ class _Projection:
             turns=tuple(turns),
             agent_version=_string(self.meta.get("cli_version")),
             entrypoint=_entrypoint(self.meta),
+            originator=_string(self.meta.get("originator")),
             git_branch=_string(git.get("branch")),
             initial_prompt=self.initial_prompt,
             context_items=tuple(self.context),
