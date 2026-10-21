@@ -471,9 +471,11 @@ def _session(
 
     name = _string(meta.get("name"))
     title = _string(meta_json.get("title")) or (name if name != _DEFAULT_NAME else None)
-    times = [t.occurred_at for t in turns if t.occurred_at] + [
-        r.occurred_at for r in responses if r.occurred_at
-    ]
+    times = (
+        [t.occurred_at for t in turns if t.occurred_at]
+        + [r.occurred_at for r in responses if r.occurred_at]
+        + [completed for _, completed in store.steps.calls.values() if completed is not None]
+    )
     updated = _ms(_int(meta_json.get("updatedAtMs")))
     if updated is not None:
         times.append(updated)
@@ -679,13 +681,19 @@ def _with_errors(
     """A turn with role `error` for each turn that ended in a client error: the
     transcript's own text, the log's time paired by order. With no transcript
     row, the log's text."""
-    texts: list[str] = list(rows) if rows else [o.text for o in outcomes if o.text]
+    if rows:
+        texts: list[str] = list(rows)
+        aligned = outcomes
+    else:
+        with_text = [(o.text, o) for o in outcomes if o.text]
+        texts = [text for text, _ in with_text]
+        aligned = tuple(o for _, o in with_text)
     if not texts:
         return turns
     paired = len(rows) == len(outcomes) or not rows
     result = list(turns)
     for index, text in enumerate(texts):
-        at = outcomes[index].occurred_at if paired and index < len(outcomes) else None
+        at = aligned[index].occurred_at if paired and index < len(aligned) else None
         error = Turn(
             position=0,
             key=f"e{index + 1}",
@@ -775,8 +783,11 @@ class CursorReader:
             targets.append(path.parent / STORE)
             root_state = self._refresh_logs(failures)
         elif path.is_relative_to(self._log_root) and path.name.endswith(".log"):
+            before_conversations, before_calls = self._logs.names(path)
             root_state = self._refresh_logs(failures)
             conversations, calls = self._logs.names(path)
+            conversations |= before_conversations
+            calls |= before_calls
             stores, discovery = self._discover()
             failures.extend(discovery)
             for store in stores:
