@@ -30,7 +30,8 @@ failures from the debug log, `readers/cursor_log.py`.
 
 1. **A usage line is one response.** It belongs to the conversation of the
    turn in force; a line with a `toolId` belongs to the sub-agent that call
-   started. Its id is `<request_id>:<n>`.
+   started. Its id is `<request_id>:<n>`, and `<request_id>:<call id>:<n>`
+   for a sub-agent, whose lines carry its parent's request.
 2. **Input excludes the cache.** `input_tokens` is `inputTokens` minus cache
    reads and writes, as for Codex (ADR-0031). A cache write of 0 is `None`.
 3. **A turn links to a response only when the counts agree** for its request.

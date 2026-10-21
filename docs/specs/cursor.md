@@ -181,7 +181,7 @@ line for each model response (ADR-0038):
 |---|---|
 | File | `<os tmp>/cursor-agent-logs-<uid>/session-<ISO>-<pid>-<n>.log`, one for each process, mode 0600, append-only. Cursor keeps the 50 newest and none older than 7 days. `CURSOR_AGENT_DISABLE_DEBUG_LOG` turns it off (Source, Seen) |
 | Placement | An `agent_cli.turn.start` line names `conversation_id`, `request_id` and `surface`. A usage line belongs to the conversation of the turn in force. A line with `toolName: "TASK"` belongs to the sub-agent its `toolId` started: the child whose `subagentInfo.toolCallId` is that id |
-| Identity | `response_id` is `<request_id>:<n>`, `n` counting that session's usage lines in the request. The log only grows, so `n` does not move |
+| Identity | `response_id` is `<request_id>:<n>`, `n` counting that session's usage lines in the request. A sub-agent's is `<request_id>:<call id>:<n>`: its lines carry its parent's request, and the same id in two sessions reads as one response filed twice. The log only grows, so `n` does not move |
 | Tokens | `inputTokens` **includes** cache reads and writes (Seen: 35,106 input with 35,100 read). `input_tokens` is `inputTokens − cacheReadTokens − cacheWriteTokens`; a cache write of 0 is `None`, as for Codex (its ADR-0031) |
 | Context window | `maxTokens` when above 0 |
 | Turn link | When a request has as many usage lines as the session has assistant messages in it, each message's `response_id` is the line at its position. Otherwise none is linked |
