@@ -423,6 +423,7 @@ def test_a_kind_with_nothing_to_ask_has_no_query(tmp_path: Path, kind: str) -> N
     [
         ("claude-code", (".claude/.config.json", ".claude.json")),
         ("devin", (".local/share/devin/credentials.toml",)),
+        ("cursor", (".cursor/cli-config.json",)),
     ],
 )
 def test_each_kind_names_every_file_its_sign_in_depends_on(
@@ -431,21 +432,21 @@ def test_each_kind_names_every_file_its_sign_in_depends_on(
     """A consumer asks again when any of these changes. Devin's is a network
     call, so asking only then is the difference between once and on every
     pass. Named whether or not each exists yet."""
-    for variable in ("CLAUDE_CONFIG_DIR", "XDG_DATA_HOME"):
+    for variable in ("CLAUDE_CONFIG_DIR", "XDG_DATA_HOME", "CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME"):
         monkeypatch.delenv(variable, raising=False)
     home = _home(tmp_path)
 
     assert sign_in_records(kind, home=home) == tuple(home / r for r in relatives)
 
 
-@pytest.mark.parametrize("kind", ["cursor"])
+@pytest.mark.parametrize("kind", ["windsurf"])
 def test_a_kind_with_no_reader_names_no_file(tmp_path: Path, kind: str) -> None:
-    """Cursor's sign-in is read with its sessions, which this package does not
-    read yet (ADR-0027 clause 1)."""
+    """A kind's sign-in is read with its sessions, and this package reads no
+    sessions of this one (ADR-0027 clause 1)."""
     assert sign_in_records(kind, home=_home(tmp_path)) == ()
 
 
-@pytest.mark.parametrize("kind", ["cursor"])
+@pytest.mark.parametrize("kind", ["windsurf"])
 def test_a_kind_with_no_reader_is_signed_in_as_no_one(tmp_path: Path, kind: str) -> None:
     assert signed_in(kind, home=_home(tmp_path)) is None
 

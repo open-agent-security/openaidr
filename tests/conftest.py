@@ -24,3 +24,16 @@ def _no_real_codex_home(
     reason: `default_readers()` reads `CODEX_HOME`, else `~/.codex`."""
     monkeypatch.setenv("CODEX_HOME", str(tmp_path_factory.mktemp("codex-home")))
     monkeypatch.delenv("OPENAIDR_CODEX_ROOT", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_cursor_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Point Cursor's roots and its debug log directory at empty directories for
+    every test: `default_readers()` reads `CURSOR_CONFIG_DIR`, else `~/.cursor`,
+    and the debug log under `TMPDIR`."""
+    monkeypatch.setenv("CURSOR_CONFIG_DIR", str(tmp_path_factory.mktemp("cursor-config")))
+    monkeypatch.setenv("CURSOR_DATA_DIR", str(tmp_path_factory.mktemp("cursor-data")))
+    monkeypatch.setenv("TMPDIR", str(tmp_path_factory.mktemp("tmp")))
+    monkeypatch.delenv("OPENAIDR_CURSOR_ROOT", raising=False)

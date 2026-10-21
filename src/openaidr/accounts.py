@@ -181,6 +181,34 @@ def _codex_signs_in_with_chatgpt(document: Mapping[str, object]) -> bool:
     return not any(document.get(name) is not None for name in _CODEX_NON_CHATGPT_FIELDS)
 
 
+def _cursor(config_dir: Path | None, home: Path) -> Account | None:
+    """`authInfo` in the Cursor CLI's `cli-config.json`, which the CLI writes
+    after a sign-in: the user's id, email and name. Nothing in it is a
+    credential; the tokens live in a separate `auth.json`, never read here.
+    `account_id` is the numeric `userId` Cursor assigns, else its `authId`."""
+    document = _json(_cursor_root(config_dir, home) / "cli-config.json")
+    info = document.get("authInfo") if isinstance(document, dict) else None
+    if not isinstance(info, dict):
+        return None
+    user = info.get("userId")
+    if isinstance(user, int) and not isinstance(user, bool):
+        account_id: str | None = str(user)
+    else:
+        account_id = user if isinstance(user, str) and user else None
+    if account_id is None:
+        auth = info.get("authId")
+        account_id = auth if isinstance(auth, str) and auth else None
+    if account_id is None:
+        return None
+    names = _strings(info)
+    return Account(
+        kind="cursor",
+        account_id=account_id,
+        display_name=names.get("displayName"),
+        email=names.get("email"),
+    )
+
+
 def _devin(config_dir: Path | None, home: Path) -> Account | None:
     """Devin keeps no record of the person on disk: its configuration names
     the organization, its session store has no user column, and its
@@ -278,6 +306,7 @@ def _sections(text: str) -> dict[str, dict[str, str]]:
 _READERS: dict[str, Callable[[Path | None, Path], Account | None]] = {
     "claude-code": _claude_code,
     "codex": _codex,
+    "cursor": _cursor,
     "devin": _devin,
 }
 
@@ -306,6 +335,8 @@ def sign_in_records(
         return (root / "config.toml", root / "auth.json")
     if kind == "devin":
         return (_devin_data_root(home) / "credentials.toml",)
+    if kind == "cursor":
+        return (_cursor_root(config_dir, home) / "cli-config.json",)
     return ()
 
 
@@ -387,6 +418,18 @@ def _codex_record(config_dir: Path | None, home: Path) -> Path | None:
             return None
         store = config.get("cli_auth_credentials_store", "file")
     return root / "auth.json" if store in ("file", "auto") else None
+
+
+def _cursor_root(config_dir: Path | None, home: Path) -> Path:
+    """Cursor's configuration root, as its reader resolves it
+    (`readers/cursor.py`): `CURSOR_CONFIG_DIR`, else `XDG_CONFIG_HOME/cursor`."""
+    if config_dir is not None:
+        return config_dir
+    named = _named_dir("CURSOR_CONFIG_DIR")
+    if named is not None:
+        return named
+    xdg = _named_dir("XDG_CONFIG_HOME")
+    return xdg / "cursor" if xdg is not None else home / ".cursor"
 
 
 def _codex_root(config_dir: Path | None, home: Path) -> Path:

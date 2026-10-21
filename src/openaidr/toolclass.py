@@ -160,6 +160,41 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "image_generation": "other",
         "sleep": "other",
     },
+    # The Cursor CLI's model-facing tools, as the request 2026.10.19 sends the
+    # model declares them. They differ by model family: `gpt-5.5` gets
+    # `ReadFile`, `rg`, `ApplyPatch` and `Subagent`, `claude-sonnet-4-5` gets
+    # `Read`, `Grep`, `Write`, `StrReplace` and `Task`. Both spellings are here.
+    # `CallMcpTool` names its own server and tool, so the reader gives it an
+    # MCP server and it is `mcp` above any table.
+    "cursor": {
+        "Shell": "shell",
+        "AwaitShell": "shell_control",
+        "WriteShellStdin": "shell_control",
+        "ReadFile": "file_read",
+        "Read": "file_read",
+        "Glob": "file_search",
+        "rg": "file_search",
+        "Grep": "file_search",
+        "LS": "file_search",
+        "Write": "file_write",
+        "Delete": "file_write",
+        "StrReplace": "file_edit",
+        "ApplyPatch": "file_edit",
+        "EditNotebook": "file_edit",
+        "WebSearch": "web_search",
+        "WebFetch": "web_fetch",
+        "Fetch": "web_fetch",
+        "Subagent": "delegate",
+        "Task": "delegate",
+        "TodoWrite": "other",
+        "AskQuestion": "other",
+        "SwitchMode": "other",
+        "CreatePlan": "other",
+        "GetMcpTools": "other",
+        "FetchMcpResource": "other",
+        "ListMcpResources": "other",
+        "GenerateImage": "other",
+    },
 }
 
 #: `(canonical key, recorded key)` pairs per tool, in preference order. Only
@@ -206,6 +241,24 @@ _ARGUMENT_KEYS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "shell_command": (("command", "command"),),
         "view_image": (("path", "path"),),
         "spawn_agent": (("agent", "agent_type"),),
+    },
+    # The keys the Cursor CLI's tool schemas declare, as the probe's calls
+    # recorded them.
+    "cursor": {
+        "Shell": (("command", "command"),),
+        "ReadFile": (("path", "path"),),
+        "Read": (("path", "path"),),
+        "Glob": (("path", "target_directory"),),
+        "rg": (("path", "path"),),
+        "Grep": (("path", "path"),),
+        "Write": (("path", "path"), ("content", "contents")),
+        "Delete": (("path", "path"),),
+        "StrReplace": (("path", "path"), ("new_text", "new_string")),
+        "EditNotebook": (("path", "target_notebook"), ("new_text", "new_string")),
+        "WebFetch": (("url", "url"),),
+        "Fetch": (("url", "url"),),
+        "Subagent": (("agent", "subagent_type"),),
+        "Task": (("agent", "subagent_type"),),
     },
 }
 
@@ -331,6 +384,10 @@ _DERIVED: dict[str, dict[str, Callable[[Mapping[str, object]], dict[str, object]
         "local_shell": _argv_command,
         "apply_patch": _patch_edits,
         "spawn_agent": _default_role,
+    },
+    # Cursor's `ApplyPatch` takes Codex's patch grammar under `patch`.
+    "cursor": {
+        "ApplyPatch": lambda arguments: _patch_edits({"input": arguments.get("patch")}),
     },
 }
 
