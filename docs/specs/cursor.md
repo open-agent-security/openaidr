@@ -18,7 +18,7 @@ for each session. Decisions: ADR-0037 and ADR-0038.*
 | Data root | `$CURSOR_DATA_DIR`, else `~/.cursor`. Holds `projects/` |
 | Backed by `adr-sensor` | No. Its Cursor parser reads the desktop's bubbles, keys turns by position, keeps no result bodies and opens the store read-write (ADR-0037) |
 | Platforms | Linux and macOS. Windows deferred (ADR-0013) |
-| Main gaps | No usage once the debug log is pruned (7 days or 50 files). No MCP connection success, only failures. The desktop app. Each has an entry in [Open facts](#open-facts) |
+| Main gaps | No usage once the debug log is pruned (7 days or 50 files). The standard CLI's terminal UI writes no usage (C10). No MCP connection success, only failures. The desktop app. Each has an entry in [Open facts](#open-facts) |
 
 ## Evidence
 
@@ -167,8 +167,9 @@ identifier Cursor resolves.
 
 ## Model responses
 
-Cursor writes no usage to its store or its transcript. Its debug log writes one
-line for each model response (ADR-0038):
+Cursor writes no usage to its store or its transcript. Its debug log states it
+in one of two ways (ADR-0038). Where the agent loop runs in the CLI (the
+local-inference build), it writes one line for each model response:
 
 ```
 [<ISO time>] logger {"message":"Setting token details for client token ring",
@@ -184,7 +185,8 @@ line for each model response (ADR-0038):
 | Identity | `response_id` is `<request_id>:<n>`, `n` counting that session's usage lines in the request. A sub-agent's is `<request_id>:<call id>:<n>`: its lines carry its parent's request, and the same id in two sessions reads as one response filed twice. The log only grows, so `n` does not move |
 | Tokens | `inputTokens` **includes** cache reads and writes (Seen: 35,106 input with 35,100 read). `input_tokens` is `inputTokens − cacheReadTokens − cacheWriteTokens`; a cache write of 0 is `None`, as for Codex (its ADR-0031) |
 | Context window | `maxTokens` when above 0 |
-| Turn link | When a request has as many usage lines as the session has assistant messages in it, each message's `response_id` is the line at its position. Otherwise none is linked |
+| Turn totals | Where the agent loop runs on Cursor's server (the standard CLI), no usage line is written. In print mode, the turn's `agent_cli.turn.outcome` line carries its totals as strings: `input_tokens` (already net of the cache), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `model_intent`, the model the person chose (Source; Seen in the local-inference build, which writes both). A request with no usage line for the session is one response from its totals: `response_id` `<request_id>:turn`, input as stated, `model` from `model_intent`. A request with usage lines takes no response from its totals, which are the lines' sum (Seen: 5,492 input less 4,119 read is the stated 1,373) |
+| Turn link | When a request has as many usage lines as the session has assistant messages in it, each message's `response_id` is the line at its position. Otherwise none is linked. A turn's totals count as one line |
 | `final` | True |
 
 ## Client errors
@@ -249,7 +251,7 @@ the envelope (C9).
 | Compactions | Unconfirmed (C6) |
 | Client errors | Recorded (role `error`) |
 | MCP connections | Partial: failures only |
-| Responses and tokens | Recorded while the debug log is kept; input normalised |
+| Responses and tokens | Recorded while the debug log is kept: per response where the loop runs in the CLI, per turn in the standard CLI's print mode, absent in its terminal UI (C10); input normalised |
 | Context window | Partial: when Cursor states `maxTokens` |
 | Turn time | Recorded |
 | Sub-agent sessions | Recorded |
@@ -280,6 +282,7 @@ committed.
 | C7 | The macOS layout against Linux, and `XDG_CONFIG_HOME` in practice | Platform coverage |
 | C8 | Background sub-agents running at once in one process | Placement of their usage |
 | C9 | A desktop `state.vscdb` from 3.x | Reading the desktop app |
+| C10 | Whether the standard CLI's terminal UI and ACP sessions write turn totals anywhere. Its only `setTokenUsage` calls are in the print-mode runner (Source), so they are read as absent | Usage outside print mode |
 
 ## Decisions
 

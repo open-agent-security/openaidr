@@ -613,7 +613,8 @@ def _status(case: str | None, body: Mapping[str, object], mcp: bool) -> tuple[St
 
 def _responses(usage: tuple[Usage, ...], sidechain: bool) -> tuple[ModelResponse, ...]:
     """One response for each usage line, input taken out of the cache counts
-    (ADR-0038), in the order the log wrote them."""
+    (ADR-0038), in the order the log wrote them. A turn's totals are one
+    response, their input already net of the cache."""
     responses: list[ModelResponse] = []
     seen: set[str] = set()
     for line in usage:
@@ -622,8 +623,8 @@ def _responses(usage: tuple[Usage, ...], sidechain: bool) -> tuple[ModelResponse
             continue
         seen.add(response_id)
         cached = (line.cache_read_tokens or 0) + (line.cache_write_tokens or 0)
-        uncached = None
-        if line.input_tokens is not None:
+        uncached = line.input_tokens
+        if line.input_tokens is not None and not line.turn_total:
             uncached = max(line.input_tokens - cached, 0)
         responses.append(
             ModelResponse(

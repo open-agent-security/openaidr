@@ -446,6 +446,81 @@ def test_each_usage_line_is_a_response_with_input_apart_from_the_cache(
     assert session.mcp_log_state == "applied"
 
 
+def test_without_usage_lines_a_turns_totals_are_its_one_response(home: Path, logs: Path) -> None:
+    """The standard CLI runs the agent loop on Cursor's server and writes no
+    usage line; print mode puts the turn's totals on its outcome instead."""
+    c = Conversation("a1")
+    c.user("go")
+    c.call("Shell", {"command": "ls"}, SHELL_OK)
+    c.say("done")
+    c.write(home / "chats")
+    start, end = T0 + timedelta(seconds=1), T0 + timedelta(seconds=3)
+    cs.write_log(
+        logs,
+        [
+            cs.turn_start(start, "a1", "req-1"),
+            cs.turn_outcome(
+                end,
+                "a1",
+                "req-1",
+                input_tokens=1373,
+                output_tokens=120,
+                cache_read=4119,
+                model_intent="claude-4.5-sonnet",
+            ),
+        ],
+    )
+
+    session = _read(home, logs)["cursor:a1"]
+
+    (response,) = session.responses
+    assert response.response_id == "req-1:turn"
+    assert response.request_id == "req-1"
+    assert response.model == "claude-4.5-sonnet"
+    assert response.occurred_at == end
+    assert response.final is True
+    assert response.usage.input_tokens == 1373
+    assert response.usage.cache_read_input_tokens == 4119
+    assert response.usage.cache_creation_input_tokens is None
+    assert response.usage.output_tokens == 120
+
+
+def test_a_turns_totals_add_nothing_where_its_usage_lines_exist(home: Path, logs: Path) -> None:
+    """The local-inference build writes both: its lines are the responses, and
+    the totals are their sum, so counting both would count every token twice."""
+    c = Conversation("a1")
+    c.user("go")
+    c.say("done")
+    c.user("again")
+    c.say("done again")
+    c.write(home / "chats")
+    at = T0 + timedelta(seconds=1)
+    cs.write_log(
+        logs,
+        [
+            cs.turn_start(at, "a1", "req-1"),
+            cs.usage(at, "gpt-5.5", input_tokens=2672, output_tokens=60, cache_read=2004),
+            cs.turn_outcome(at, "a1", "req-1", input_tokens=668, output_tokens=60, cache_read=2004),
+            cs.turn_start(at, "a1", "req-2"),
+            cs.turn_outcome(at, "a1", "req-2", input_tokens=50, output_tokens=5),
+        ],
+    )
+
+    ids = [r.response_id for r in _read(home, logs)["cursor:a1"].responses]
+    assert ids == ["req-1:1", "req-2:turn"]
+
+
+def test_a_turn_with_no_totals_and_no_usage_lines_has_no_response(home: Path, logs: Path) -> None:
+    c = Conversation("a1")
+    c.user("go")
+    c.say("done")
+    c.write(home / "chats")
+    at = T0 + timedelta(seconds=1)
+    cs.write_log(logs, [cs.turn_start(at, "a1", "req-1")])
+
+    assert _read(home, logs)["cursor:a1"].responses == ()
+
+
 def test_a_turn_links_to_its_response_only_when_the_counts_agree(home: Path, logs: Path) -> None:
     c = Conversation("a1")
     c.user("go")

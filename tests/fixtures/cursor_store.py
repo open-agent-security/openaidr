@@ -308,6 +308,40 @@ def turn_error(at: datetime, conversation: str, request: str, text: str) -> str:
     )
 
 
+def turn_outcome(
+    at: datetime,
+    conversation: str,
+    request: str,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read: int = 0,
+    cache_write: int = 0,
+    model_intent: str | None = None,
+) -> str:
+    """A turn that ended, with the turn's token totals as print mode writes
+    them: strings, and input already net of the cache."""
+    metadata: dict[str, object] = {
+        "turn_type": "new",
+        "request_id": request,
+        "conversation_id": conversation,
+        "surface": "headless",
+        "outcome": "success",
+        "turn_number": "1",
+        "input_tokens": str(input_tokens),
+        "output_tokens": str(output_tokens),
+        "cache_read_tokens": str(cache_read),
+        "cache_write_tokens": str(cache_write),
+    }
+    if model_intent is not None:
+        metadata["model_intent"] = model_intent
+    return _line(
+        at,
+        "structured-log.info",
+        {"key": "agent_cli", "message": "agent_cli.turn.outcome", "metadata": metadata},
+    )
+
+
 def mcp_failed(at: datetime, identifier: str, error: str, transport: str | None = "sse") -> str:
     lines = ""
     if transport is not None:
