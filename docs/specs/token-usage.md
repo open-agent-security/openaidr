@@ -323,8 +323,8 @@ truncated or replaced file is rebuilt cold, as it is today.
 - **Read a sub-agent's `.meta.json`** (agent type, description, the tool call
   that launched it), or a workflow run's journal or script. Nothing here needs
   them. They can be added on their own evidence.
-- **Read other agent kinds' usage.** Cursor is not read yet. Its format must
-  be measured, as this one was, when its reader lands.
+- **Read other agent kinds' usage.** Cursor's is read from its debug log, as
+  [Cursor](cursor.md#model-responses) measures it.
 - **Read provider-side usage reports.** This package reads what is on disk.
 
 ## Compatibility
