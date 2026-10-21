@@ -1,5 +1,5 @@
 ---
-id: 0039
+id: 0040
 title: Preserve native client metadata without changing runtime identity
 status: proposed
 date: 2026-10-21
