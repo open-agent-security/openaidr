@@ -55,6 +55,7 @@ def _sessions(args: argparse.Namespace) -> int:
     root = os.environ.get("OPENAIDR_CLAUDE_ROOT")
     devin_root = os.environ.get("OPENAIDR_DEVIN_ROOT")
     codex_root = os.environ.get("OPENAIDR_CODEX_ROOT")
+    cursor_root = os.environ.get("OPENAIDR_CURSOR_ROOT")
     collection = collect(
         parse_kind_filter(args.agent_kind),
         Window(since=since),
@@ -62,6 +63,7 @@ def _sessions(args: argparse.Namespace) -> int:
             root=Path(root) if root else None,
             devin_root=Path(devin_root) if devin_root else None,
             codex_root=Path(codex_root) if codex_root else None,
+            cursor_root=Path(cursor_root) if cursor_root else None,
         ),
     )
     output = (

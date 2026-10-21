@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from openaidr.collector import IncrementalCollector, collect
 from openaidr.kinds import parse_kind_filter
 from openaidr.readers.base import Window
@@ -340,11 +342,11 @@ def test_an_unknown_agent_kind_is_a_reported_failure(tmp_path: Path) -> None:
     path = tmp_path / "session.jsonl"
     path.write_text("", encoding="utf-8")
 
-    collection = IncrementalCollector(root=tmp_path).collect("cursor", path)
+    collection = IncrementalCollector(root=tmp_path).collect("windsurf", path)
 
     assert collection.sessions == []
     assert len(collection.failures) == 1
-    assert "cursor" in collection.failures[0].message
+    assert "windsurf" in collection.failures[0].message
 
 
 def test_an_incremental_reader_failure_is_reported_not_raised(tmp_path: Path) -> None:
@@ -596,14 +598,25 @@ def test_a_watcher_given_only_the_locations_finds_every_kinds_sessions(tmp_path:
     assert found == {"claude-code:s1", "claude-code:s1:agent-abc", "devin:otter"}
 
 
-def test_each_kinds_root_reaches_its_reader(tmp_path: Path) -> None:
+def test_each_kinds_root_reaches_its_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
     collector = IncrementalCollector(
-        tmp_path / "claude", devin_root=tmp_path / "devin", codex_root=tmp_path / "codex"
+        tmp_path / "claude",
+        devin_root=tmp_path / "devin",
+        codex_root=tmp_path / "codex",
+        cursor_root=tmp_path / "cursor",
     )
     assert collector.locations() == {
         "claude-code": (tmp_path / "claude",),
         "devin": ((tmp_path / "devin").resolve(),),
         "codex": (tmp_path / "codex" / "sessions", tmp_path / "codex" / "archived_sessions"),
+        "cursor": (
+            tmp_path / "cursor" / "chats",
+            tmp_path / "cursor" / "projects",
+            tmp_path / "tmp" / f"cursor-agent-logs-{os.getuid()}",
+        ),
     }
 
 
