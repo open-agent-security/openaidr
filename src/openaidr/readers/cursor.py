@@ -617,7 +617,7 @@ def _responses(usage: tuple[Usage, ...], sidechain: bool) -> tuple[ModelResponse
     responses: list[ModelResponse] = []
     seen: set[str] = set()
     for line in usage:
-        response_id = f"{line.request_id or 'request'}:{line.ordinal}"
+        response_id = line.response_id
         if response_id in seen:
             continue
         seen.add(response_id)
@@ -667,7 +667,7 @@ def _link(turns: list[Turn], segments: list[list[int]], placement: Placement) ->
                 tool_calls=turn.tool_calls,
                 permission_mode=turn.permission_mode,
                 occurred_at=turn.occurred_at,
-                response_id=f"{line.request_id or 'request'}:{line.ordinal}",
+                response_id=line.response_id,
             )
     return linked
 

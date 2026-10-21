@@ -550,7 +550,10 @@ def test_a_sub_agent_is_its_roots_child_with_its_own_usage(home: Path, logs: Pat
     assert not any(t.is_sidechain for t in main.turns)
     assert sub.working_directory == "/work/app"
     assert sub.entrypoint == "headless"
-    assert [t.response_id for t in sub.turns] == [None, "req-1:1", "req-1:2"]
+    assert [t.response_id for t in sub.turns] == [None, f"req-1:{call}:1", f"req-1:{call}:2"]
+    # One response, one id, across every session: the child's are not its parent's.
+    ids = [r.response_id for s in (main, sub) for r in s.responses]
+    assert len(ids) == len(set(ids))
 
 
 # --- client errors and MCP failures --------------------------------------------

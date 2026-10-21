@@ -86,6 +86,20 @@ class Usage:
     cache_read_tokens: int | None
     cache_write_tokens: int | None
     max_tokens: int | None
+    #: The call that started the sub-agent this response is a sub-agent's,
+    #: or None for a main conversation's.
+    subagent_call: str | None = None
+
+    @property
+    def response_id(self) -> str:
+        """`<request_id>:<n>`, with the starting call between them for a
+        sub-agent's response: its lines carry its parent's request, so without
+        it a child's first response and its parent's would share an id, and a
+        consumer that files each response once would drop one of them."""
+        request = self.request_id or "request"
+        if self.subagent_call is not None:
+            return f"{request}:{self.subagent_call}:{self.ordinal}"
+        return f"{request}:{self.ordinal}"
 
 
 @dataclass(frozen=True)
@@ -195,6 +209,7 @@ class _File:
             cache_read_tokens=_count(metadata.get("cacheReadTokens")),
             cache_write_tokens=_count(metadata.get("cacheWriteTokens")),
             max_tokens=maximum if maximum else None,
+            subagent_call=child,
         )
         target = self.subagent_usage if child is not None else self.usage
         target.setdefault(owner, []).append(usage)
