@@ -23,7 +23,7 @@ from openaidr.readers.base import (
 )
 from openaidr.readers.claude_code import ClaudeCodeReader
 from openaidr.readers.codex import CodexReader
-from openaidr.readers.cursor import CursorReader
+from openaidr.readers.cursor import CursorReader, default_data_root
 from openaidr.readers.devin_cli import DevinCliReader
 
 
@@ -52,8 +52,14 @@ def default_readers(
         ClaudeCodeReader(root=root),
         DevinCliReader(root=devin_root),
         CodexReader(root=codex_root),
-        CursorReader(root=cursor_root),
+        CursorReader(root=cursor_root, data_root=_cursor_data_root(cursor_root)),
     ]
+
+
+def _cursor_data_root(cursor_root: Path | None) -> Path | None:
+    """`cursor_root` overrides only the config root; the data root still
+    follows `CURSOR_DATA_DIR`, else `~/.cursor`, independently of it."""
+    return default_data_root() if cursor_root is not None else None
 
 
 def default_incremental_readers(
@@ -68,7 +74,7 @@ def default_incremental_readers(
         ClaudeCodeReader(root=root),
         DevinCliReader(root=devin_root),
         CodexReader(root=codex_root),
-        CursorReader(root=cursor_root),
+        CursorReader(root=cursor_root, data_root=_cursor_data_root(cursor_root)),
     ]
 
 

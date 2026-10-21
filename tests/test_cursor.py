@@ -397,6 +397,41 @@ def test_a_turn_takes_its_steps_time_and_a_call_its_duration(home: Path, logs: P
     )
 
 
+def test_last_activity_at_takes_a_calls_completion_not_only_its_start(
+    home: Path, logs: Path
+) -> None:
+    """A sub-agent store has no `meta.json`, so a long call's own time is the
+    only signal: the newest step is when it finished, not when it started."""
+    parent = Conversation("p1")
+    parent.user("go")
+    call = parent.call(
+        "Task",
+        {"prompt": "look", "subagent_type": "explore"},
+        {"success": {"agentId": "c1"}},
+        case=19,
+    )
+    parent.write(home / "chats")
+    child = Conversation(
+        "c1",
+        subagent={
+            "parentAgentId": "p1",
+            "rootParentAgentId": "p1",
+            "toolCallId": call,
+            "typeName": "explore",
+        },
+    )
+    child.user("look")
+    child.call("Shell", {"command": "sleep 10"}, SHELL_OK, duration=10_000)
+    child.write(home / "chats")
+
+    sub = _read(home, logs)["cursor:p1:c1"]
+
+    call_turn = sub.turns[-1]
+    assert call_turn.occurred_at is not None
+    assert call_turn.tool_calls[0].duration_ms == 10_000
+    assert sub.last_activity_at == call_turn.occurred_at + timedelta(milliseconds=10_000)
+
+
 # --- usage from the debug log --------------------------------------------------
 
 
@@ -678,6 +713,26 @@ def test_with_no_transcript_the_logs_error_text_is_the_error_turn(home: Path, lo
     assert _read(home, logs)["cursor:a1"].turns[-1].text == "Rate limited"
 
 
+def test_an_untexted_error_does_not_misalign_a_later_errors_time(home: Path, logs: Path) -> None:
+    """With no transcript, a textless error outcome is dropped before pairing
+    times, so a later error keeps its own time rather than an earlier one's."""
+    c = Conversation("a1")
+    c.user("go")
+    c.write(home / "chats")
+    second_at = T0 + timedelta(seconds=10)
+    cs.write_log(
+        logs,
+        [
+            cs.turn_start(T0, "a1", "req-1"),
+            cs.turn_error(T0 + timedelta(seconds=5), "a1", "req-1", None),
+            cs.turn_error(second_at, "a1", "req-2", "Rate limited"),
+        ],
+    )
+
+    error = _read(home, logs)["cursor:a1"].turns[-1]
+    assert (error.text, error.occurred_at) == ("Rate limited", second_at)
+
+
 def test_a_server_that_failed_to_load_is_a_failed_connection(home: Path, logs: Path) -> None:
     c = Conversation("a1")
     c.user("go")
@@ -806,6 +861,30 @@ def test_a_cold_read_matches_what_the_incremental_reads_returned(home: Path, log
         held.update({s.session_id: s for s in reader.collect_file(path)[0]})
 
     assert held == _read(home, logs)
+
+
+def test_a_deleted_log_still_rebuilds_the_session_it_had_enriched(home: Path, logs: Path) -> None:
+    """A watcher reports a log's deletion by naming it again in `collect_file`.
+    The session it enriched must still be rebuilt, this time without it."""
+    reader = _reader(home, logs)
+    c = Conversation("a1")
+    c.user("go")
+    c.write(home / "chats")
+    log = cs.write_log(
+        logs,
+        [
+            cs.turn_start(T0, "a1", "req-1"),
+            cs.usage(T0, "gpt-5.5", input_tokens=10, output_tokens=1),
+        ],
+    )
+    first, _ = reader.collect_file(log)
+    assert [r.usage.output_tokens for s in first for r in s.responses] == [1]
+
+    log.unlink()
+    again, _ = reader.collect_file(log)
+
+    assert [s.session_id for s in again] == ["cursor:a1"]
+    assert again[0].responses == ()
 
 
 def test_the_window_keeps_sessions_active_since_it(home: Path, logs: Path) -> None:

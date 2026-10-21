@@ -602,6 +602,7 @@ def test_each_kinds_root_reaches_its_reader(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
+    monkeypatch.setenv("CURSOR_DATA_DIR", str(tmp_path / "cursor-data"))
     collector = IncrementalCollector(
         tmp_path / "claude",
         devin_root=tmp_path / "devin",
@@ -614,7 +615,7 @@ def test_each_kinds_root_reaches_its_reader(
         "codex": (tmp_path / "codex" / "sessions", tmp_path / "codex" / "archived_sessions"),
         "cursor": (
             tmp_path / "cursor" / "chats",
-            tmp_path / "cursor" / "projects",
+            tmp_path / "cursor-data" / "projects",
             tmp_path / "tmp" / f"cursor-agent-logs-{os.getuid()}",
         ),
     }

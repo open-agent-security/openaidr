@@ -288,23 +288,21 @@ def usage(
     )
 
 
-def turn_error(at: datetime, conversation: str, request: str, text: str) -> str:
+def turn_error(at: datetime, conversation: str, request: str, text: str | None) -> str:
+    metadata: dict[str, object] = {
+        "request_id": request,
+        "conversation_id": conversation,
+        "surface": "headless",
+        "outcome": "error",
+        "error_type": "non_retriable",
+        "error_code": "unknown",
+    }
+    if text is not None:
+        metadata["error_text"] = text
     return _line(
         at,
         "structured-log.info",
-        {
-            "key": "agent_cli",
-            "message": "agent_cli.turn.outcome",
-            "metadata": {
-                "request_id": request,
-                "conversation_id": conversation,
-                "surface": "headless",
-                "outcome": "error",
-                "error_type": "non_retriable",
-                "error_code": "unknown",
-                "error_text": text,
-            },
-        },
+        {"key": "agent_cli", "message": "agent_cli.turn.outcome", "metadata": metadata},
     )
 
 
