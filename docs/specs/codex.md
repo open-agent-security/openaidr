@@ -483,3 +483,23 @@ Then re-measure the earlier corpus with the new reader.
   `utils/string/src/truncate.rs`
 - Prior work: open-agent-security/openaidr#35 (reader), the
   `codex-sign-in-reader` branch (account)
+
+## Native client metadata
+
+`Session.originator` preserves a nonempty string from `session_meta.originator`.
+Missing, empty and non-string values become `None`.
+The field is appended to the model with a default.
+It does not change positional arguments, runtime kind, session IDs or span IDs.
+Cold and incremental reads preserve the same value.
+
+The string describes the recorded client; it authenticates nothing.
+Unknown strings remain recorded strings and establish no capability.
+The field stays outside `public_descriptor()` and default JSON rendering.
+Consumers interpret a native client name independently of collection.
+
+An inspected local desktop rollout records `originator: codex_work_desktop` and `source: vscode`.
+It contains messages and response usage, with no tool calls.
+The test fixture reconstructs the envelope without private transcript content.
+Synthetic tool scenarios test parser compatibility, not desktop hook dispatch.
+
+Decision: [ADR-0039](../adrs/0039-preserve-native-client-metadata-without-changing-runtime-identity.md).
