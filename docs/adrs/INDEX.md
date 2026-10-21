@@ -68,3 +68,4 @@ against the rules in effect at the time.
 
 - [0005](0005-mcp-ordinal-join-preconditions.md) — superseded by [0006](0006-incomplete-log-scoped-by-project.md): its third precondition scoped an incomplete read by server name alone, which let one project's unreadable log withhold a same-named server's outcomes in an unrelated project.
 - [0011](0011-keep-append-cursors-in-memory.md) — superseded by [0029](0029-bound-the-incremental-projection-cache.md): it retained every transcript's projection for the life of the process with no bound, so a long-lived reader's memory grew with every session it had ever seen rather than with its active working set.
+- [0039](0039-preserve-native-client-metadata-without-changing-runtime-identity.md) — **Preserve native client metadata without changing runtime identity.** Append local-only originator metadata to the session model. Keep kind, entrypoint, spans and public descriptors unchanged.
