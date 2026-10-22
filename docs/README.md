@@ -38,6 +38,8 @@
   outcomes from completion items, denials from Codex's rejection envelope, usage
   per response with cached input separated, and MCP connections placed by the
   request that created the thread. On the Claude Code reader's design.
+- [Cursor](specs/cursor.md) — a fourth agent kind, `cursor`. The CLI is read
+  from its chat stores and its debug log. The desktop app's chats are not read.
 
 ## Decisions
 
