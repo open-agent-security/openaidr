@@ -328,9 +328,9 @@ rows. No other log body is read.
 
 ## Who is signed in
 
-`signed_in("codex")` reads `auth.json` under the data root (ADR-0027; the
-reader on the `codex-sign-in-reader` branch). With `auth_mode` ChatGPT, the
-account is the `id_token` claim `chatgpt_user_id` (else `user_id`). The email
+`signed_in("codex")` reads `auth.json` under the data root (ADR-0027).
+With `auth_mode` ChatGPT, the account is the `id_token` claim
+`chatgpt_user_id` (else `user_id`). The email
 is the top-level `email` claim, else the profile's, and the plan is
 `chatgpt_plan_type`. The token's signature is not checked. Signed in with an
 API key there is no person, so the answer is `None`. With
