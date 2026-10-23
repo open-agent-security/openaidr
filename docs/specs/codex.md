@@ -457,6 +457,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0034](../adrs/0034-a-codex-items-result-is-its-own-field-empty-included.md) | Each item's result is the one field the table names; empty is a result, absent is none | Trying fields in turn; empty as no result |
 | [0035](../adrs/0035-a-codex-record-belongs-to-the-turn-it-names.md) | A record belongs to the turn it names; a web search's results are kept whole | The turn in force for every record; joining text blocks in `results` |
 | [0036](../adrs/0036-a-code-mode-cell-is-a-script-and-its-tools-are-their-own-calls.md) | A Code Mode cell is classed `script` and its status is its own status line; the tools it runs stay their own calls | Dropping the cell; folding nested calls into it; `other`; joining by position |
+| [0039](../adrs/0039-preserve-native-client-metadata-without-changing-runtime-identity.md) | Append local-only `Session.originator` metadata; kind, entrypoint, spans and public descriptors stay unchanged | Create an agent kind for each client name; replace the entrypoint with the originator; interpret known clients inside collection; add arbitrary originators to the public descriptor |
 
 ## Non-goals
 
@@ -483,3 +484,23 @@ Then re-measure the earlier corpus with the new reader.
   `utils/string/src/truncate.rs`
 - Prior work: open-agent-security/openaidr#35 (reader), the
   `codex-sign-in-reader` branch (account)
+
+## Native client metadata
+
+`Session.originator` preserves a nonempty string from `session_meta.originator`.
+Missing, empty and non-string values become `None`.
+The field is appended to the model with a default.
+It does not change positional arguments, runtime kind, session IDs or span IDs.
+Cold and incremental reads preserve the same value.
+
+The string describes the recorded client; it authenticates nothing.
+Unknown strings remain recorded strings and establish no capability.
+The field stays outside `public_descriptor()` and default JSON rendering.
+Consumers interpret a native client name independently of collection.
+
+An inspected local desktop rollout records `originator: codex_work_desktop` and `source: vscode`.
+It contains messages and response usage, with no tool calls.
+The test fixture reconstructs the envelope without private transcript content.
+Synthetic tool scenarios test parser compatibility, not desktop hook dispatch.
+
+Decision: [ADR-0039](../adrs/0039-preserve-native-client-metadata-without-changing-runtime-identity.md).

@@ -536,6 +536,8 @@ class Session:
     #: The same, for sub-agents: whether a sub-agent this session started
     #: would have been collected as a session of its own.
     subagents_recorded: bool = False
+    #: The native client name, as recorded; descriptive and local-only.
+    originator: str | None = None
 
     @property
     def turn_count(self) -> int:
