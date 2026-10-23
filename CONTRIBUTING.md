@@ -174,9 +174,9 @@ they must not appear in the model, collector, renderer or CLI.
 
 ### 4. Register it
 
-Add it to `default_readers` in
+Add it to `_shipped_readers` in
 [`src/openaidr/collector.py`](src/openaidr/collector.py).
-`default_incremental_readers` returns that same list.
+`default_readers` and `default_incremental_readers` both return that list.
 The `--agent-kind` filter, the collector, the renderer and the CLI need no other change.
 
 ### 5. Test it
