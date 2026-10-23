@@ -35,6 +35,30 @@ class Collection:
     failures: list[ReaderFailure] = field(default_factory=list)
 
 
+def _shipped_readers(
+    root: Path | None,
+    devin_root: Path | None,
+    codex_root: Path | None,
+    cursor_root: Path | None,
+    cursor_user_data_root: Path | None,
+) -> tuple[ClaudeCodeReader, DevinCliReader, CodexReader, CursorReader]:
+    """One new reader per kind this package ships.
+
+    Both public lists are this tuple. A second copy would let a new kind
+    reach the cold pass and miss the incremental one, or the reverse.
+    """
+    return (
+        ClaudeCodeReader(root=root),
+        DevinCliReader(root=devin_root),
+        CodexReader(root=codex_root),
+        CursorReader(
+            root=cursor_root,
+            data_root=_cursor_data_root(cursor_root),
+            user_data_root=cursor_user_data_root,
+        ),
+    )
+
+
 def default_readers(
     root: Path | None = None,
     devin_root: Path | None = None,
@@ -50,16 +74,10 @@ def default_readers(
     Cursor's is its configuration root, where `chats/` lives;
     `cursor_user_data_root` is its desktop app's user data directory.
     """
-    return [
-        ClaudeCodeReader(root=root),
-        DevinCliReader(root=devin_root),
-        CodexReader(root=codex_root),
-        CursorReader(
-            root=cursor_root,
-            data_root=_cursor_data_root(cursor_root),
-            user_data_root=cursor_user_data_root,
-        ),
-    ]
+    shipped: tuple[Reader, ...] = _shipped_readers(
+        root, devin_root, codex_root, cursor_root, cursor_user_data_root
+    )
+    return list(shipped)
 
 
 def _cursor_data_root(cursor_root: Path | None) -> Path | None:
@@ -76,17 +94,15 @@ def default_incremental_readers(
     cursor_root: Path | None = None,
     cursor_user_data_root: Path | None = None,
 ) -> list[IncrementalReader]:
-    """The stateful readers this package ships: one per kind."""
-    return [
-        ClaudeCodeReader(root=root),
-        DevinCliReader(root=devin_root),
-        CodexReader(root=codex_root),
-        CursorReader(
-            root=cursor_root,
-            data_root=_cursor_data_root(cursor_root),
-            user_data_root=cursor_user_data_root,
-        ),
-    ]
+    """The stateful readers this package ships: one per kind.
+
+    The same readers `default_readers` builds. Each one keeps the cursors
+    an incremental read needs.
+    """
+    shipped: tuple[IncrementalReader, ...] = _shipped_readers(
+        root, devin_root, codex_root, cursor_root, cursor_user_data_root
+    )
+    return list(shipped)
 
 
 class IncrementalCollector:
