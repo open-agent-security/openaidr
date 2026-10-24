@@ -402,7 +402,7 @@ def test_an_unchanged_mcp_cache_reuses_the_previous_index(tmp_path: Path, monkey
     assert len(folded) == parsed_first
 
 
-def test_an_mcp_cache_change_rebuilds_the_index(tmp_path: Path, monkeypatch) -> None:
+def test_an_mcp_cache_change_rebuilds_the_index(tmp_path: Path) -> None:
     from openaidr.readers.claude_code_mcp import _IncrementalMCPLogReader
 
     cache = tmp_path / "cache"

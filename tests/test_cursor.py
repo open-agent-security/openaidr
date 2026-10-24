@@ -897,7 +897,7 @@ def test_the_window_keeps_sessions_active_since_it(home: Path, logs: Path) -> No
     assert reader.collect(Window(since=T0 + timedelta(days=1)))[0] == []
 
 
-def test_the_default_readers_read_cursor_from_its_named_root(home: Path, logs: Path) -> None:
+def test_the_default_readers_read_cursor_from_its_named_root(home: Path) -> None:
     c = Conversation("a1")
     c.user("go")
     c.write(home / "chats")
