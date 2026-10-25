@@ -130,19 +130,16 @@ class Conversation:
         *,
         result: str = "",
         raw_errors: list[str] | None = None,
-        text: str | None = None,
         case: int = 1,
-        call_id: str | None = None,
         duration: int = 50,
     ) -> str:
         """An assistant message with one tool call, and its result when
         `output` (Cursor's typed outcome) is given."""
-        call_id = call_id or self.next_id("call_")
+        call_id = self.next_id("call_")
         message_id = self.next_id("msg-")
-        content: list[dict[str, object]] = []
-        if text:
-            content.append({"type": "text", "text": text})
-        content.append({"type": "tool-call", "toolCallId": call_id, "toolName": tool, "args": args})
+        content: list[dict[str, object]] = [
+            {"type": "tool-call", "toolCallId": call_id, "toolName": tool, "args": args}
+        ]
         self.messages.append({"role": "assistant", "content": content, "id": message_id})
         started = self.tick()
         completed = started + timedelta(milliseconds=duration)
@@ -176,7 +173,7 @@ class Conversation:
             )
         return call_id
 
-    def write(self, chats: Path, *, meta_json: bool = True) -> Path:
+    def write(self, chats: Path) -> Path:
         """Write the store under `chats/<hash>/<agent_id>/`; returns its path."""
         directory = chats / hashlib.md5(self.cwd.encode()).hexdigest() / self.agent_id
         directory.mkdir(parents=True, exist_ok=True)
@@ -219,7 +216,7 @@ class Conversation:
             connection.commit()
         finally:
             connection.close()
-        if meta_json and self.subagent is None:
+        if self.subagent is None:
             sidecar: dict[str, object] = {
                 "schemaVersion": 1,
                 "createdAtMs": ms(self.started),
@@ -367,11 +364,9 @@ def mcp_failed(at: datetime, identifier: str, error: str, transport: str | None 
     )
 
 
-def write_log(
-    log_root: Path, lines: list[str], *, name: str = "session-2026-10-21T00-00-00-000Z-100-1.log"
-) -> Path:
+def write_log(log_root: Path, lines: list[str]) -> Path:
     log_root.mkdir(parents=True, exist_ok=True)
-    path = log_root / name
+    path = log_root / "session-2026-10-21T00-00-00-000Z-100-1.log"
     header = (
         f"--- Cursor Agent Debug Session {T0.isoformat()} ---\n"
         + json.dumps({"event": "debug-session-start", "pid": 100})
