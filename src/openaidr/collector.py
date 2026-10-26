@@ -41,18 +41,24 @@ def default_readers(
     *,
     codex_root: Path | None = None,
     cursor_root: Path | None = None,
+    cursor_user_data_root: Path | None = None,
 ) -> list[Reader]:
     """The readers this package ships: one per kind.
 
     `root` is Claude Code's, kept positional for existing callers; each other
     kind's root has its own keyword. Codex's is its home, `CODEX_HOME`.
-    Cursor's is its configuration root, where `chats/` lives.
+    Cursor's is its configuration root, where `chats/` lives;
+    `cursor_user_data_root` is its desktop app's user data directory.
     """
     return [
         ClaudeCodeReader(root=root),
         DevinCliReader(root=devin_root),
         CodexReader(root=codex_root),
-        CursorReader(root=cursor_root, data_root=_cursor_data_root(cursor_root)),
+        CursorReader(
+            root=cursor_root,
+            data_root=_cursor_data_root(cursor_root),
+            user_data_root=cursor_user_data_root,
+        ),
     ]
 
 
@@ -68,13 +74,18 @@ def default_incremental_readers(
     *,
     codex_root: Path | None = None,
     cursor_root: Path | None = None,
+    cursor_user_data_root: Path | None = None,
 ) -> list[IncrementalReader]:
     """The stateful readers this package ships: one per kind."""
     return [
         ClaudeCodeReader(root=root),
         DevinCliReader(root=devin_root),
         CodexReader(root=codex_root),
-        CursorReader(root=cursor_root, data_root=_cursor_data_root(cursor_root)),
+        CursorReader(
+            root=cursor_root,
+            data_root=_cursor_data_root(cursor_root),
+            user_data_root=cursor_user_data_root,
+        ),
     ]
 
 

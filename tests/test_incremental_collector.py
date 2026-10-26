@@ -603,6 +603,7 @@ def test_each_kinds_root_reaches_its_reader(
 ) -> None:
     monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
     monkeypatch.setenv("CURSOR_DATA_DIR", str(tmp_path / "cursor-data"))
+    monkeypatch.setenv("VSCODE_APPDATA", str(tmp_path / "appdata"))
     collector = IncrementalCollector(
         tmp_path / "claude",
         devin_root=tmp_path / "devin",
@@ -617,6 +618,8 @@ def test_each_kinds_root_reaches_its_reader(
             tmp_path / "cursor" / "chats",
             tmp_path / "cursor-data" / "projects",
             tmp_path / "tmp" / f"cursor-agent-logs-{os.getuid()}",
+            tmp_path / "appdata" / "Cursor" / "User" / "globalStorage",
+            tmp_path / "appdata" / "Cursor" / "logs",
         ),
     }
 
