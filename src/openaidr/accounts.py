@@ -383,7 +383,12 @@ def sign_in_records(
     if kind == "devin":
         return (_devin_data_root(home) / "credentials.toml",)
     if kind == "cursor":
-        return (_cursor_root(config_dir, home) / "cli-config.json", _cursor_state_db(home))
+        state_db = _cursor_state_db(home)
+        return (
+            _cursor_root(config_dir, home) / "cli-config.json",
+            state_db,
+            Path(f"{state_db}-wal"),
+        )
     return ()
 
 
