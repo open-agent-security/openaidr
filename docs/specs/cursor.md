@@ -241,7 +241,7 @@ teamId, teamName}` (Source). `account_id` is `userId`, else `authId`. No plan.
 | Rule | Detail |
 |---|---|
 | Unit | A session: one store and its `meta.json`, plus the log lines and transcript rows that name it |
-| `collect_file(path)` | A store, its WAL or its `meta.json`: that session. A debug log: every session the log names. A transcript: its session. Any other path: nothing. Each session named is rebuilt, and returned when its digest differs from the one last returned (ADR-0018's comparison, scoped to the sessions the event names) |
+| `collect_file(path)` | A store, its WAL or its `meta.json`: that session. A debug log: every session the log names. A transcript: its session. An MCP server's `SERVER_METADATA.json`: every session, since none names the project directory it belongs to. Any other path: nothing. Each session named is rebuilt, and returned when its digest differs from the one last returned (ADR-0018's comparison, scoped to the sessions the event names) |
 | The invariant | After any event, a consumer that replaced the sessions returned holds what a cold read returns |
 | Between reads | Responses replace by `(session, response_id)`. Turns replace wholesale: compaction can drop older ones |
 

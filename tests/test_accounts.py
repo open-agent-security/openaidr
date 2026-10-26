@@ -423,7 +423,14 @@ def test_a_kind_with_nothing_to_ask_has_no_query(tmp_path: Path, kind: str) -> N
     [
         ("claude-code", (".claude/.config.json", ".claude.json")),
         ("devin", (".local/share/devin/credentials.toml",)),
-        ("cursor", (".cursor/cli-config.json", ".config/Cursor/User/globalStorage/state.vscdb")),
+        (
+            "cursor",
+            (
+                ".cursor/cli-config.json",
+                ".config/Cursor/User/globalStorage/state.vscdb",
+                ".config/Cursor/User/globalStorage/state.vscdb-wal",
+            ),
+        ),
     ],
 )
 def test_each_kind_names_every_file_its_sign_in_depends_on(

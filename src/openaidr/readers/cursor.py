@@ -1023,6 +1023,20 @@ class CursorReader:
                 [self._read(store, root_state, failures) for store in targets]
                 + [s for s in self._desktop_sessions(failures) if s.session_id == desktop]
             ), failures
+        elif (
+            path.is_relative_to(self._data_root / PROJECTS)
+            and path.name == SERVER_METADATA
+            and path.parent.parent.name == MCPS
+        ):
+            # An MCP identifier's name can change for any project, and a
+            # store names no project directory to narrow this to.
+            root_state = self._refresh_logs(failures)
+            stores, discovery = self._discover()
+            failures.extend(discovery)
+            return self._changed(
+                [self._read(store, root_state, failures) for store in stores]
+                + self._desktop_sessions(failures)
+            ), failures
         else:
             return [], []
         return self._changed(
