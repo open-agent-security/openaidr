@@ -559,13 +559,28 @@ def write_ide_log(
 # --- the transcript ----------------------------------------------------------
 
 
-def write_transcript(
-    data_root: Path, cwd: str, agent_id: str, rows: list[dict[str, object]]
-) -> Path:
+def _project(data_root: Path, cwd: str) -> Path:
     slug = "".join(c if c.isalnum() else "-" for c in cwd)
     while "--" in slug:
         slug = slug.replace("--", "-")
-    directory = data_root / "projects" / slug.strip("-") / "agent-transcripts" / agent_id
+    return data_root / "projects" / slug.strip("-")
+
+
+def write_server_metadata(data_root: Path, cwd: str, identifier: str, name: str) -> Path:
+    """The desktop app's record of one MCP server it loaded for a workspace, as
+    3.27.12 wrote it: `projects/<slug>/mcps/<identifier>/SERVER_METADATA.json`."""
+    directory = _project(data_root, cwd) / "mcps" / identifier
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "SERVER_METADATA.json"
+    document = {"serverIdentifier": identifier, "serverName": name}
+    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    return path
+
+
+def write_transcript(
+    data_root: Path, cwd: str, agent_id: str, rows: list[dict[str, object]]
+) -> Path:
+    directory = _project(data_root, cwd) / "agent-transcripts" / agent_id
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{agent_id}.jsonl"
     path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")

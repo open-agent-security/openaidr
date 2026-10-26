@@ -19,7 +19,7 @@ for each session. Decisions: ADR-0037, ADR-0038 and ADR-0039.*
 | Data root | `$CURSOR_DATA_DIR`, else `~/.cursor`. Holds `projects/` |
 | Backed by `adr-sensor` | No. Its Cursor parser reads the desktop's bubbles, keys turns by position, keeps no result bodies and opens the store read-write (ADR-0037) |
 | Platforms | Linux and macOS. Windows deferred (ADR-0013) |
-| Main gaps | No usage once the debug log is pruned (7 days or 50 files). The standard CLI's terminal UI writes no usage (C10). No MCP connection success, only failures. The desktop app has usage only where its agent loop runs on the machine (C11). Each has an entry in [Open facts](#open-facts) |
+| Main gaps | No usage once the debug log is pruned (7 days or 50 files). The standard CLI's terminal UI writes no usage (C10). No MCP connection success, only failures. The desktop app has usage only where its agent loop runs on the machine (C11). A desktop turn that never ends stops usage placement in its window (C13). Each has an entry in [Open facts](#open-facts) |
 
 ## Evidence
 
@@ -143,6 +143,16 @@ The status is Cursor's typed outcome, never the result text.
 `tool_name` is the model-facing name. `CallMcpTool` is the exception: it is
 named by its `toolName` argument, with `mcp_server` its `server` argument, the
 identifier Cursor resolves.
+
+The identifier is not always the server's configured name. The desktop app
+calls a server from `~/.cursor/mcp.json` `user-<name>` (Seen (desktop)). For
+each server it loads, the client writes
+`<data root>/projects/<slug>/mcps/<identifier>/SERVER_METADATA.json`, with
+`serverIdentifier` and `serverName` (Seen (desktop)). The slug is the
+working directory's, as for the transcripts. `mcp_server` is the
+`serverName` that this file gives for the identifier. With no file, the
+identifier stays. A file that cannot be read is a `ReaderFailure`, and the
+identifier stays. `MCPConnection.server` stays the identifier.
 
 | Names | Class | Canonical arguments |
 |---|---|---|
@@ -306,7 +316,7 @@ the CLI's debug log states:
 | File | `<user data>/logs/<YYYYMMDDTHHMMSS>/window<N>/exthost/<extension>/Cursor Structured Logs.log`. Cursor keeps the current launch's folder and the nine before it (Source) |
 | Line | `<local date> <local time>.<ms> [<level>] <JSON>`. The time has no zone: it is the machine's own. Counts are strings |
 | Turn | `agent.turn.start` and `agent.turn.outcome` name `conversation_id` and `request_id`. A turn is open from its start to its outcome |
-| Usage line | One model response, written when the response and the tools it called finish. It names no conversation. It belongs to the one turn open in that file. When two turns are open, or none, it is not placed |
+| Usage line | One model response, written when the response and the tools it called finish. It names no conversation. It belongs to the one turn open in that file. When two turns are open, or none, it is not placed. A turn that never writes its outcome stays open until the file ends (C13) |
 | Sub-agent | The child runs between `subagent proxy: delegating to renderer` and `subagent proxy: renderer settled`, both with the starting call's `toolId`. A usage line inside one such span is the child's. Inside two at once, it is not placed |
 | Identity | As the CLI's: `<request_id>:<n>`, and `<request_id>:<call id>:<n>` for a sub-agent |
 | Tokens | As the CLI's: `inputTokens` includes the cache, so input is `inputTokens − cacheReadTokens − cacheWriteTokens` |
@@ -375,7 +385,7 @@ committed.
 | C2 | Cursor's own wording for a usage limit, a rate limit and a content-policy stop, in `turn_ended` and `turn.outcome` | Block notices |
 | C3 | The `surface` of an interactive session, and whether one process serves more than one conversation | Entrypoint, placement |
 | C4 | A hook denial, an Auto-review denial and a user abort, end to end | `denial_kind`, `interrupted` |
-| C5 | A line that records a successful MCP connection, and the identifier-to-name map in `projects/<slug>/mcps/` | `MCPConnection` |
+| C5 | A line that records a successful MCP connection. The identifier-to-name map in `projects/<slug>/mcps/` is Seen (desktop) and read ([Tool names](#tool-names)) | `MCPConnection` |
 | C6 | A compaction: `summary_archives` and the summary message | `Compaction` |
 | C7 | The macOS layout against Linux, and `XDG_CONFIG_HOME` in practice | Platform coverage |
 | C8 | Background sub-agents running at once in one process | Placement of their usage |
@@ -383,6 +393,7 @@ committed.
 | C10 | Whether the standard CLI's terminal UI and ACP sessions write turn totals anywhere. Its only `setTokenUsage` calls are in the print-mode runner (Source), so they are read as absent | Usage outside print mode |
 | C11 | Whether the standard, signed-in desktop app writes usage lines: where its agent host is on (`cursor_agent_host`), the loop may run on the machine | Desktop usage |
 | C12 | A conversation started by an automation or a background agent | The desktop entrypoint |
+| C13 | A desktop turn that never writes `agent.turn.outcome`. 3.27.12 wrote none for a turn left at an approval while a person started a new agent (Seen (desktop)). Every usage line after it in that window is not placed, until the window reloads. Each `Gateway request settled` line names its `requestId` and `outputTokens`, and may place a usage line by request instead | Desktop usage placement |
 
 ## Decisions
 
