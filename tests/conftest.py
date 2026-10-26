@@ -32,8 +32,11 @@ def _no_real_cursor_home(
 ) -> None:
     """Point Cursor's roots and its debug log directory at empty directories for
     every test: `default_readers()` reads `CURSOR_CONFIG_DIR`, else `~/.cursor`,
-    and the debug log under `TMPDIR`."""
+    the debug log under `TMPDIR`, and the desktop app's user data under
+    `VSCODE_APPDATA`, else `~/.config/Cursor`."""
     monkeypatch.setenv("CURSOR_CONFIG_DIR", str(tmp_path_factory.mktemp("cursor-config")))
     monkeypatch.setenv("CURSOR_DATA_DIR", str(tmp_path_factory.mktemp("cursor-data")))
     monkeypatch.setenv("TMPDIR", str(tmp_path_factory.mktemp("tmp")))
+    monkeypatch.setenv("VSCODE_APPDATA", str(tmp_path_factory.mktemp("appdata")))
+    monkeypatch.delenv("VSCODE_PORTABLE", raising=False)
     monkeypatch.delenv("OPENAIDR_CURSOR_ROOT", raising=False)

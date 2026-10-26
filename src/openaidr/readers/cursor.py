@@ -23,6 +23,7 @@ debug log (`cursor_log`, ADR-0038).
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import getpass
 import hashlib
@@ -32,7 +33,8 @@ import re
 import socket
 import sqlite3
 import stat
-from collections.abc import Callable, Mapping
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,6 +52,8 @@ from openaidr.model import (
     span_id,
 )
 from openaidr.readers.base import ReaderFailure, Window
+from openaidr.readers.cursor_ide_log import LOG_NAME as IDE_LOG_NAME
+from openaidr.readers.cursor_ide_log import CursorIdeLogs
 from openaidr.readers.cursor_log import (
     CursorLogs,
     Outcome,
@@ -68,6 +72,17 @@ TRANSCRIPTS = "agent-transcripts"
 
 #: The files beside a store whose change can change its session.
 _STORE_FILES = frozenset({STORE, f"{STORE}-wal", META_JSON})
+#: The desktop app's database, under its user data directory (ADR-0039).
+GLOBAL_STORAGE = Path("User") / "globalStorage"
+STATE_DB = "state.vscdb"
+IDE_LOGS = "logs"
+_STATE_FILES = frozenset({STATE_DB, f"{STATE_DB}-wal"})
+#: `cursorDiskKV` keys: a conversation, a blob, and a root's older pointer.
+_COMPOSER = "composerData:"
+_BLOB = "agentKv:blob:"
+_CHECKPOINT = "agentKv:checkpoint:"
+#: The entrypoint of a conversation a person started in the desktop app.
+_IDE = "ide"
 #: How long a pass waits for a store Cursor is writing before it reports it busy.
 _BUSY_SECONDS = 2.0
 #: The name Cursor gives a conversation nobody named (`agent-kv`).
@@ -149,6 +164,22 @@ def default_data_root() -> Path:
     """Cursor's data root, where `projects/` and the transcripts live."""
     named = os.environ.get("CURSOR_DATA_DIR")
     return Path(named).expanduser() if named else Path.home() / ".cursor"
+
+
+def default_user_data_root() -> Path:
+    """The desktop app's user data directory, resolved in Cursor's own order:
+    `$VSCODE_PORTABLE/user-data`, else `$VSCODE_APPDATA/Cursor`, else the
+    platform's application data directory and `Cursor`."""
+    portable = os.environ.get("VSCODE_PORTABLE")
+    if portable:
+        return Path(portable).expanduser() / "user-data"
+    appdata = os.environ.get("VSCODE_APPDATA")
+    if appdata:
+        return Path(appdata).expanduser() / "Cursor"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Cursor"
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    return (Path(xdg).expanduser() if xdg else Path.home() / ".config") / "Cursor"
 
 
 # --- protobuf wire format, the few fields the reader needs -------------------
@@ -275,42 +306,199 @@ def _read_store(path: Path) -> _Store | None:
         root_data = blob(root_id)
         if root_data is None:
             return None
-        warnings: list[str] = []
-        root = _fields(root_data)
-        messages: list[tuple[str, dict[str, object]]] = []
-        for identifier in _all_bytes(root, _ROOT_PROMPT_MESSAGES):
-            data = blob(identifier)
-            if data is None:
-                warnings.append(f"prompt message {identifier.hex()[:12]} is missing")
-                continue
-            try:
-                message = json.loads(data)
-            except (ValueError, UnicodeError, RecursionError):
-                warnings.append(f"prompt message {identifier.hex()[:12]} is not JSON")
-                continue
-            if isinstance(message, dict):
-                messages.append((identifier.hex(), message))
-        steps = _Steps()
-        for identifier in _all_bytes(root, _ROOT_TURNS):
-            data = blob(identifier)
-            if data is None:
-                continue
-            try:
-                _read_turn(data, blob, steps)
-            except ValueError:
-                warnings.append(f"turn {identifier.hex()[:12]} does not decode")
-        uris = [_text(value) for value in _all_bytes(root, _ROOT_WORKSPACE_URIS)]
-        return _Store(
-            agent_id=agent_id,
-            meta=meta,
-            messages=messages,
-            steps=steps,
-            workspace=_path_of(next((uri for uri in uris if uri), None)),
-            started_at=_ms(_first(root, _ROOT_STARTED_MS)),
-            warnings=warnings,
-        )
+        return _decode(agent_id, meta, root_data, blob)
     finally:
         connection.close()
+
+
+def _decode(
+    agent_id: str,
+    meta: dict[str, object],
+    root_data: bytes,
+    blob: Callable[[bytes | str], bytes | None],
+) -> _Store:
+    """A conversation from its root and its blobs, wherever they are kept: the
+    CLI's store or the desktop app's database (ADR-0039). Raises `ValueError`
+    on a root that does not decode."""
+    warnings: list[str] = []
+    root = _fields(root_data)
+    messages: list[tuple[str, dict[str, object]]] = []
+    for identifier in _all_bytes(root, _ROOT_PROMPT_MESSAGES):
+        data = blob(identifier)
+        if data is None:
+            warnings.append(f"prompt message {identifier.hex()[:12]} is missing")
+            continue
+        try:
+            message = json.loads(data)
+        except (ValueError, UnicodeError, RecursionError):
+            warnings.append(f"prompt message {identifier.hex()[:12]} is not JSON")
+            continue
+        if isinstance(message, dict):
+            messages.append((identifier.hex(), message))
+    steps = _Steps()
+    for identifier in _all_bytes(root, _ROOT_TURNS):
+        data = blob(identifier)
+        if data is None:
+            continue
+        try:
+            _read_turn(data, blob, steps)
+        except ValueError:
+            warnings.append(f"turn {identifier.hex()[:12]} does not decode")
+    uris = [_text(value) for value in _all_bytes(root, _ROOT_WORKSPACE_URIS)]
+    return _Store(
+        agent_id=agent_id,
+        meta=meta,
+        messages=messages,
+        steps=steps,
+        workspace=_path_of(next((uri for uri in uris if uri), None)),
+        started_at=_ms(_first(root, _ROOT_STARTED_MS)),
+        warnings=warnings,
+    )
+
+
+@dataclass
+class _Composer:
+    """One desktop conversation: its decoded store, and what `composerData`
+    names beside it in the CLI sidecar's names."""
+
+    store: _Store
+    meta_json: dict[str, object]
+    entrypoint: str | None
+    parent: str | None
+    call: str | None
+
+
+def _read_desktop(
+    path: Path, cache: Mapping[str, tuple[str, _Composer | None]]
+) -> tuple[dict[str, tuple[str, _Composer | None]], list[str]]:
+    """Every conversation in the desktop app's database, by id, with the
+    SHA-256 of its `composerData` value. One whose value is unchanged since
+    `cache` reads no blobs. Raises `sqlite3.Error` or `OSError`."""
+    connection = sqlite3.connect(
+        f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=_BUSY_SECONDS
+    )
+    try:
+        connection.execute("BEGIN")
+        # `;` follows `:`, so this is every key that starts with the prefix.
+        rows = connection.execute(
+            "SELECT key, value FROM cursorDiskKV WHERE key >= ? AND key < ?",
+            (_COMPOSER, _COMPOSER[:-1] + ";"),
+        ).fetchall()
+
+        def value(key: str) -> object:
+            found = connection.execute(
+                "SELECT value FROM cursorDiskKV WHERE key = ?", (key,)
+            ).fetchone()
+            return found[0] if found is not None else None
+
+        def blob(identifier: bytes | str) -> bytes | None:
+            key = identifier.hex() if isinstance(identifier, bytes) else identifier
+            return _blob_bytes(value(_BLOB + key))
+
+        composers: dict[str, tuple[str, _Composer | None]] = {}
+        warnings: list[str] = []
+        for key, raw in rows:
+            composer_id = key[len(_COMPOSER) :]
+            data = raw.encode("utf-8") if isinstance(raw, str) else raw
+            if not composer_id or not isinstance(data, bytes):
+                continue
+            digest = hashlib.sha256(data).hexdigest()
+            cached = cache.get(composer_id)
+            if cached is not None and cached[0] == digest:
+                composers[composer_id] = cached
+                continue
+            composer: _Composer | None = None
+            try:
+                composer = _composer(composer_id, data, value, blob)
+            except (ValueError, UnicodeError, RecursionError, TypeError) as error:
+                warnings.append(f"conversation {composer_id}: {error}")
+            composers[composer_id] = (digest, composer)
+        return composers, warnings
+    finally:
+        connection.close()
+
+
+def _composer(
+    composer_id: str,
+    data: bytes,
+    value: Callable[[str], object],
+    blob: Callable[[bytes | str], bytes | None],
+) -> _Composer | None:
+    """One `composerData` value as a conversation, or None before it has one.
+    Its facts take the CLI meta row's names, so one projection serves both."""
+    document = json.loads(data)
+    if not isinstance(document, dict):
+        raise TypeError("composerData is not an object")
+    root_data = _desktop_root(document, composer_id, value, blob)
+    if not root_data:
+        return None
+    info = _mapping(document.get("subagentInfo"))
+    root = _string(info.get("rootParentConversationId"))
+    parent = _string(info.get("parentComposerId"))
+    call = _string(info.get("toolCallId"))
+    meta: dict[str, object] = {
+        "agentId": composer_id,
+        "name": _string(document.get("name")),
+        "createdAt": _int(document.get("createdAt")),
+        "lastUsedModel": _string(_mapping(document.get("modelConfig")).get("modelName")),
+    }
+    if root is not None:
+        meta["subagentInfo"] = {
+            "rootParentAgentId": root,
+            "parentAgentId": parent,
+            "toolCallId": call,
+        }
+    uri = _mapping(_mapping(document.get("workspaceIdentifier")).get("uri"))
+    meta_json: dict[str, object] = {
+        "cwd": _string(uri.get("fsPath")),
+        "updatedAtMs": _int(document.get("lastUpdatedAt")),
+    }
+    # A conversation an automation or a background agent made may have no
+    # person behind it, and none was seen (spec C12).
+    started_by_program = document.get("createdFromBackgroundAgent") or document.get(
+        "createdFromLocalScheduledTask"
+    )
+    return _Composer(
+        store=_decode(composer_id, meta, root_data, blob),
+        meta_json=meta_json,
+        entrypoint=None if started_by_program else _IDE,
+        parent=parent,
+        call=call,
+    )
+
+
+def _desktop_root(
+    document: Mapping[str, object],
+    composer_id: str,
+    value: Callable[[str], object],
+    blob: Callable[[bytes | str], bytes | None],
+) -> bytes | None:
+    """The root: `conversationState` as Cursor decodes it, `~` and base64 else
+    hex; before data version 11, the blob `agentKv:checkpoint:<id>` names."""
+    state = document.get("conversationState")
+    if isinstance(state, str) and state:
+        if state.startswith("~"):
+            return base64.b64decode(state[1:])
+        return bytes.fromhex(state)
+    pointer = value(_CHECKPOINT + composer_id)
+    if isinstance(pointer, bytes):
+        pointer = pointer.decode("ascii", errors="replace")
+    if not isinstance(pointer, str) or not pointer:
+        return None
+    return blob(pointer)
+
+
+def _blob_bytes(data: object) -> bytes | None:
+    """A blob row's bytes. Cursor writes binary, or hex text in older rows,
+    and one zero byte for an empty blob."""
+    if isinstance(data, bytes):
+        return b"" if data == b"\x00" else data
+    if isinstance(data, str):
+        try:
+            return bytes.fromhex(data)
+        except ValueError:
+            return None
+    return None
 
 
 def _read_turn(data: bytes, blob: Callable[[bytes | str], bytes | None], steps: _Steps) -> None:
@@ -732,7 +920,8 @@ def _with_errors(
 
 class CursorReader:
     """Reads the Cursor CLI's chat stores, with usage and MCP failures placed
-    from its debug log."""
+    from its debug log, and the desktop app's conversations from its state
+    database, with usage placed from its structured log (ADR-0039)."""
 
     agent_kind = "cursor"
 
@@ -742,6 +931,7 @@ class CursorReader:
         *,
         data_root: Path | None = None,
         log_root: Path | None = None,
+        user_data_root: Path | None = None,
     ) -> None:
         self._root = (root if root is not None else default_root()).absolute()
         # Cursor keeps both trees in `~/.cursor` unless relocated, so a root a
@@ -751,18 +941,30 @@ class CursorReader:
         self._data_root = data_root.absolute()
         self._log_root = (log_root if log_root is not None else default_log_root()).absolute()
         self._logs = CursorLogs(self._log_root)
+        self._user_data = (
+            user_data_root if user_data_root is not None else default_user_data_root()
+        ).absolute()
+        self._ide_logs = CursorIdeLogs(self._user_data / IDE_LOGS)
+        self._composers: dict[str, tuple[str, _Composer | None]] = {}
         self._digests: dict[str, str] = {}
 
     def locations(self) -> tuple[Path, ...]:
-        """Where the stores, the transcripts and the debug logs live."""
-        return (self._root / CHATS, self._data_root / PROJECTS, self._log_root)
+        """Where the stores, the transcripts and the debug logs live, and the
+        desktop app's database and structured logs."""
+        return (
+            self._root / CHATS,
+            self._data_root / PROJECTS,
+            self._log_root,
+            self._user_data / GLOBAL_STORAGE,
+            self._user_data / IDE_LOGS,
+        )
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
         stores, failures = self._discover()
         root_state = self._refresh_logs(failures)
+        read = [self._read(path, root_state, failures) for path in stores]
         sessions: list[Session] = []
-        for path in stores:
-            session = self._read(path, root_state, failures)
+        for session in [*read, *self._desktop_sessions(failures)]:
             if session is None:
                 continue
             if window.since is not None and (
@@ -779,6 +981,10 @@ class CursorReader:
         failures: list[ReaderFailure] = []
         chats = self._root / CHATS
         targets: list[Path] = []
+        if (path.parent == self._user_data / GLOBAL_STORAGE and path.name in _STATE_FILES) or (
+            path.is_relative_to(self._user_data / IDE_LOGS) and path.name == IDE_LOG_NAME
+        ):
+            return self._changed(self._desktop_sessions(failures)), failures
         if path.is_relative_to(chats) and path.name in _STORE_FILES:
             targets.append(path.parent / STORE)
             root_state = self._refresh_logs(failures)
@@ -803,11 +1009,22 @@ class CursorReader:
             stores, discovery = self._discover()
             failures.extend(discovery)
             targets.extend(store for store in stores if store.parent.name == path.stem)
+            # The desktop app writes its transcripts to the same place.
+            desktop = f"{SOURCE}:{path.stem}"
+            return self._changed(
+                [self._read(store, root_state, failures) for store in targets]
+                + [s for s in self._desktop_sessions(failures) if s.session_id == desktop]
+            ), failures
         else:
             return [], []
+        return self._changed(
+            [self._read(store, root_state, failures) for store in targets]
+        ), failures
+
+    def _changed(self, sessions: Sequence[Session | None]) -> list[Session]:
+        """The sessions whose digest differs from the one last returned."""
         changed: list[Session] = []
-        for store in targets:
-            session = self._read(store, root_state, failures)
+        for session in sessions:
             if session is None:
                 continue
             digest = hashlib.sha256(repr(session).encode("utf-8")).hexdigest()
@@ -815,7 +1032,62 @@ class CursorReader:
                 continue
             self._digests[session.session_id] = digest
             changed.append(session)
-        return changed, failures
+        return changed
+
+    def _desktop_sessions(self, failures: list[ReaderFailure]) -> list[Session]:
+        """Every desktop conversation, decoded from its database and placed on
+        its structured logs. No database is no sessions and no failure."""
+        failures.extend(self._failure(message) for message in self._ide_logs.refresh())
+        path = self._user_data / GLOBAL_STORAGE / STATE_DB
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            self._composers = {}
+            return []
+        except OSError as error:
+            failures.append(self._failure(f"{path}: {error}"))
+            return []
+        if not stat.S_ISREG(info.st_mode):
+            failures.append(self._failure(f"{path}: not a regular file"))
+            return []
+        try:
+            self._composers, warnings = _read_desktop(path, self._composers)
+        except sqlite3.OperationalError as error:
+            text = str(error)
+            if "locked" in text or "busy" in text:
+                failures.append(self._failure(f"{path}: database busy; not read this pass"))
+            elif "no such table" in text:
+                failures.append(self._failure(f"{path}: unsupported schema ({text})"))
+            else:
+                failures.append(self._failure(f"{path}: {text}"))
+            return []
+        except (sqlite3.Error, OSError) as error:
+            failures.append(self._failure(f"{path}: {error}"))
+            return []
+        failures.extend(self._failure(f"{path}: {warning}") for warning in warnings)
+        sessions: list[Session] = []
+        for composer_id, (_, composer) in sorted(self._composers.items()):
+            if composer is None:
+                continue
+            failures.extend(
+                self._failure(f"{path}: conversation {composer_id}: {warning}")
+                for warning in composer.store.warnings
+            )
+            parent = self._composers.get(composer.parent or "", ("", None))[1]
+            parent_cwd = (
+                _string(parent.meta_json.get("cwd")) or parent.store.workspace
+                if parent is not None
+                else None
+            )
+            cwd = _string(composer.meta_json.get("cwd")) or composer.store.workspace or parent_cwd
+            placement = dataclasses.replace(
+                self._ide_logs.place(composer_id, composer.call), surface=composer.entrypoint
+            )
+            rows = (
+                self._transcript_errors(composer_id, cwd, failures) if composer.call is None else []
+            )
+            sessions.append(_session(composer.store, composer.meta_json, cwd, placement, rows))
+        return sessions
 
     def _refresh_logs(self, failures: list[ReaderFailure]) -> str | None:
         state, messages = self._logs.refresh()
