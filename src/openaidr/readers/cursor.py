@@ -69,6 +69,10 @@ PROJECTS = "projects"
 STORE = "store.db"
 META_JSON = "meta.json"
 TRANSCRIPTS = "agent-transcripts"
+#: The client's record of each MCP server it loaded for a project: the
+#: identifier a call names, and the name the server's configuration gives it.
+MCPS = "mcps"
+SERVER_METADATA = "SERVER_METADATA.json"
 
 #: The files beside a store whose change can change its session.
 _STORE_FILES = frozenset({STORE, f"{STORE}-wal", META_JSON})
@@ -550,6 +554,7 @@ def _session(
     cwd: str | None,
     placement: Placement,
     transcript_errors: list[str],
+    servers: Mapping[str, str],
 ) -> Session:
     meta = store.meta
     info = meta.get("subagentInfo")
@@ -623,7 +628,7 @@ def _session(
         if role != "assistant":
             continue
         text = _joined(content)
-        calls = [call for call in (_call(part) for part in _parts(content)) if call is not None]
+        calls = [call for call in (_call(part, servers) for part in _parts(content)) if call]
         if not text and not calls:
             continue
         times = [store.steps.calls.get(c.call_id, (None, None))[0] for c in calls]
@@ -698,7 +703,7 @@ def _session(
     )
 
 
-def _call(part: Mapping[str, object]) -> _Call | None:
+def _call(part: Mapping[str, object], servers: Mapping[str, str]) -> _Call | None:
     if part.get("type") != "tool-call":
         return None
     call_id = _string(part.get("toolCallId"))
@@ -710,6 +715,9 @@ def _call(part: Mapping[str, object]) -> _Call | None:
         server = _string(arguments.get("server"))
         tool = _string(arguments.get("toolName"))
         if server is not None and tool is not None:
+            # The desktop app names a server by an identifier of its own,
+            # `user-<name>` for `~/.cursor/mcp.json`; a configuration names it.
+            server = servers.get(server, server)
             return _Call(call_id, tool, server, dict(_mapping(arguments.get("arguments"))))
     return _Call(call_id, name, None, dict(arguments))
 
@@ -1066,6 +1074,7 @@ class CursorReader:
             return []
         failures.extend(self._failure(f"{path}: {warning}") for warning in warnings)
         sessions: list[Session] = []
+        servers: dict[str, dict[str, str]] = {}
         for composer_id, (_, composer) in sorted(self._composers.items()):
             if composer is None:
                 continue
@@ -1086,7 +1095,12 @@ class CursorReader:
             rows = (
                 self._transcript_errors(composer_id, cwd, failures) if composer.call is None else []
             )
-            sessions.append(_session(composer.store, composer.meta_json, cwd, placement, rows))
+            if cwd is not None and cwd not in servers:
+                servers[cwd] = self._server_names(cwd, failures)
+            names = servers.get(cwd or "", {})
+            sessions.append(
+                _session(composer.store, composer.meta_json, cwd, placement, rows, names)
+            )
         return sessions
 
     def _refresh_logs(self, failures: list[ReaderFailure]) -> str | None:
@@ -1145,7 +1159,8 @@ class CursorReader:
                 placement = dataclasses.replace(placement, surface=surface)
         cwd = _string(meta_json.get("cwd")) or store.workspace or parent_cwd
         rows = self._transcript_errors(store.agent_id, cwd, failures) if call is None else []
-        return _session(store, meta_json, cwd, placement, rows)
+        names = self._server_names(cwd, failures) if cwd is not None else {}
+        return _session(store, meta_json, cwd, placement, rows, names)
 
     def _meta_json(self, path: Path, failures: list[ReaderFailure]) -> dict[str, object]:
         try:
@@ -1164,8 +1179,7 @@ class CursorReader:
         transcript's `turn_ended` rows."""
         if cwd is None:
             return []
-        slug = re.sub(r"[^A-Za-z0-9]+", "-", cwd).strip("-")
-        path = self._data_root / PROJECTS / slug / TRANSCRIPTS / agent_id / f"{agent_id}.jsonl"
+        path = self._project(cwd) / TRANSCRIPTS / agent_id / f"{agent_id}.jsonl"
         try:
             raw = path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -1188,6 +1202,40 @@ class CursorReader:
             ):
                 rows.append(row["error"])
         return rows
+
+    def _project(self, cwd: str) -> Path:
+        return self._data_root / PROJECTS / re.sub(r"[^A-Za-z0-9]+", "-", cwd).strip("-")
+
+    def _server_names(self, cwd: str, failures: list[ReaderFailure]) -> dict[str, str]:
+        """Each MCP server identifier the client recorded for the project at
+        `cwd`, mapped to the name its configuration gives it."""
+        directory = self._project(cwd) / MCPS
+        try:
+            entries = sorted(os.listdir(directory))
+        except FileNotFoundError:
+            return {}
+        except OSError as error:
+            failures.append(self._failure(f"{directory}: {error}; servers are named by identifier"))
+            return {}
+        names: dict[str, str] = {}
+        for entry in entries:
+            path = directory / entry / SERVER_METADATA
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            except (OSError, ValueError, UnicodeError, RecursionError) as error:
+                failures.append(
+                    self._failure(f"{path}: {error}; its server is named by its identifier")
+                )
+                continue
+            if not isinstance(document, dict):
+                continue
+            identifier = _string(document.get("serverIdentifier"))
+            name = _string(document.get("serverName"))
+            if identifier is not None and name is not None:
+                names[identifier] = name
+        return names
 
     def _discover(self) -> tuple[list[Path], list[ReaderFailure]]:
         """Every `store.db` two levels under `chats/`, and every directory that

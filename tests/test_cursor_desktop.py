@@ -78,6 +78,66 @@ def test_a_desktop_conversation_is_a_session_read_with_the_clis_decoder(
     assert session.mcp_log_state == "not_attempted"
 
 
+def test_an_mcp_call_names_the_server_its_configuration_names(
+    tmp_path: Path, user_data: Path
+) -> None:
+    # The panel calls a server from `~/.cursor/mcp.json` by an identifier of its
+    # own, `user-<name>`, and records the pair under the workspace's project.
+    c = Conversation("c1", cwd="/work/app")
+    c.user("list the directories")
+    for server in ("user-filesystem", "user-retired"):
+        c.call(
+            "CallMcpTool",
+            {"server": server, "toolName": "list_allowed_directories", "arguments": {}},
+            {"success": {"content": [{"text": {"text": "/work/app"}}]}},
+            result="/work/app",
+            case=15,
+        )
+    c.write_desktop(user_data)
+    data_root = tmp_path / "home" / ".cursor"
+    cs.write_server_metadata(data_root, "/work/app", "user-filesystem", "filesystem")
+
+    found, retired = _calls(_read(tmp_path, user_data)["cursor:c1"])
+
+    assert (found.mcp_server, found.tool_name, found.tool_class) == (
+        "filesystem",
+        "list_allowed_directories",
+        "mcp",
+    )
+    # A server with no record keeps the identifier Cursor resolved.
+    assert retired.mcp_server == "user-retired"
+
+
+def test_an_unreadable_server_record_keeps_the_identifier_and_is_reported(
+    tmp_path: Path, user_data: Path
+) -> None:
+    c = Conversation("c1", cwd="/work/app")
+    c.user("list the directories")
+    c.call(
+        "CallMcpTool",
+        {"server": "user-filesystem", "toolName": "list_allowed_directories", "arguments": {}},
+        {"success": {"content": [{"text": {"text": "/work/app"}}]}},
+        result="/work/app",
+        case=15,
+    )
+    c.write_desktop(user_data)
+    record = cs.write_server_metadata(
+        tmp_path / "home" / ".cursor", "/work/app", "user-filesystem", "filesystem"
+    )
+    record.write_text("{not json", encoding="utf-8")
+
+    sessions, failures = _reader(tmp_path, user_data).collect(Window(since=None))
+
+    [call] = _calls({s.session_id: s for s in sessions}["cursor:c1"])
+    assert call.mcp_server == "user-filesystem"
+    assert [f.message for f in failures] == [
+        (
+            f"{record}: Expecting property name enclosed in double quotes: line 1 column 2"
+            " (char 1); its server is named by its identifier"
+        )
+    ]
+
+
 @pytest.mark.parametrize("state", ["base64", "hex", "checkpoint"])
 def test_the_root_is_read_however_cursor_keeps_it(
     tmp_path: Path, user_data: Path, state: str

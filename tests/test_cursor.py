@@ -254,6 +254,26 @@ def test_a_refused_shell_call_carries_its_working_directory(home: Path, logs: Pa
     assert call.working_directory == "/work/app"
 
 
+def test_an_mcp_identifier_the_client_recorded_is_named_by_its_configuration(
+    home: Path, logs: Path
+) -> None:
+    c = Conversation("a1", cwd="/work/app")
+    c.user("go")
+    c.call(
+        "CallMcpTool",
+        {"server": "user-probe", "toolName": "echo", "arguments": {}},
+        {"success": {"content": [{"text": {"text": "echo"}}]}},
+        result="echo",
+        case=15,
+    )
+    c.write(home / "chats")
+    cs.write_server_metadata(home, "/work/app", "user-probe", "probe")
+
+    [call] = _calls(_read(home, logs)["cursor:a1"])
+
+    assert call.mcp_server == "probe"
+
+
 def test_an_mcp_call_is_named_by_its_server_and_tool(home: Path, logs: Path) -> None:
     c = Conversation("a1")
     c.user("go")
