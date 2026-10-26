@@ -423,7 +423,7 @@ def test_a_kind_with_nothing_to_ask_has_no_query(tmp_path: Path, kind: str) -> N
     [
         ("claude-code", (".claude/.config.json", ".claude.json")),
         ("devin", (".local/share/devin/credentials.toml",)),
-        ("cursor", (".cursor/cli-config.json",)),
+        ("cursor", (".cursor/cli-config.json", ".config/Cursor/User/globalStorage/state.vscdb")),
     ],
 )
 def test_each_kind_names_every_file_its_sign_in_depends_on(
@@ -432,8 +432,16 @@ def test_each_kind_names_every_file_its_sign_in_depends_on(
     """A consumer asks again when any of these changes. Devin's is a network
     call, so asking only then is the difference between once and on every
     pass. Named whether or not each exists yet."""
-    for variable in ("CLAUDE_CONFIG_DIR", "XDG_DATA_HOME", "CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME"):
+    for variable in (
+        "CLAUDE_CONFIG_DIR",
+        "XDG_DATA_HOME",
+        "CURSOR_CONFIG_DIR",
+        "XDG_CONFIG_HOME",
+        "VSCODE_APPDATA",
+        "VSCODE_PORTABLE",
+    ):
         monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr("sys.platform", "linux")
     home = _home(tmp_path)
 
     assert sign_in_records(kind, home=home) == tuple(home / r for r in relatives)
