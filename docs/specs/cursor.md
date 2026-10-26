@@ -1,24 +1,25 @@
 # OpenAIDR — Cursor
 
-*Implemented (2026-10-21). A fourth agent kind, `cursor`, with an
-OpenAIDR-owned reader (`readers/cursor.py`, `readers/cursor_log.py`). Extends
+*Implemented (2026-10-21; the desktop app 2026-10-26). A fourth agent kind,
+`cursor`, with an OpenAIDR-owned reader (`readers/cursor.py`,
+`readers/cursor_log.py`, `readers/cursor_ide_log.py`). Extends
 [Session collection](session-collection.md) and [Token usage](token-usage.md).
 **The Claude Code reader is the reference design**: Cursor keeps one store for
 each conversation, a sub-agent's included, as Claude Code keeps one transcript
-for each session. Decisions: ADR-0037 and ADR-0038.*
+for each session. Decisions: ADR-0037, ADR-0038 and ADR-0039.*
 
 ## At a glance
 
 | | |
 |---|---|
-| Covers | The Cursor CLI (`agent`, `cursor-agent`) in the terminal, in print mode (`-p`) and over ACP. Its sub-agents. The local-inference build (`agent-local`) writes the same files |
-| Not covered | **The desktop app's own chats.** They live in `state.vscdb`, in a different envelope (see [The desktop app](#the-desktop-app)). **Cloud agents**, which run on Cursor's servers |
-| Reads | `<config root>/chats/<md5(cwd)>/<id>/store.db` (read-only) and its `meta.json` for messages, calls, outcomes and times. The debug log `<tmp>/cursor-agent-logs-<uid>/session-*.log` for per-response tokens, the entrypoint, client errors and MCP connection failures. `<data root>/projects/<slug>/agent-transcripts/` for client errors. `<config root>/cli-config.json` for the account |
+| Covers | The Cursor CLI (`agent`, `cursor-agent`) in the terminal, in print mode (`-p`) and over ACP. Its sub-agents. The local-inference build (`agent-local`) writes the same files. **The desktop app's agent panel** (3.x), its sub-agents included (see [The desktop app](#the-desktop-app)) |
+| Not covered | **Cloud agents**, which run on Cursor's servers. Desktop conversations from before the agent store (no root), Tab and inline edits |
+| Reads | `<config root>/chats/<md5(cwd)>/<id>/store.db` (read-only) and its `meta.json` for messages, calls, outcomes and times. The debug log `<tmp>/cursor-agent-logs-<uid>/session-*.log` for per-response tokens, the entrypoint, client errors and MCP connection failures. `<data root>/projects/<slug>/agent-transcripts/` for client errors. `<config root>/cli-config.json` for the account. For the desktop app: `<user data>/User/globalStorage/state.vscdb` (read-only) and its structured log `<user data>/logs/*/window*/exthost/*/Cursor Structured Logs.log` |
 | Config root | `$CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`. `default_readers(cursor_root=…)` overrides it |
 | Data root | `$CURSOR_DATA_DIR`, else `~/.cursor`. Holds `projects/` |
 | Backed by `adr-sensor` | No. Its Cursor parser reads the desktop's bubbles, keys turns by position, keeps no result bodies and opens the store read-write (ADR-0037) |
 | Platforms | Linux and macOS. Windows deferred (ADR-0013) |
-| Main gaps | No usage once the debug log is pruned (7 days or 50 files). The standard CLI's terminal UI writes no usage (C10). No MCP connection success, only failures. The desktop app. Each has an entry in [Open facts](#open-facts) |
+| Main gaps | No usage once the debug log is pruned (7 days or 50 files). The standard CLI's terminal UI writes no usage (C10). No MCP connection success, only failures. The desktop app has usage only where its agent loop runs on the machine (C11). Each has an entry in [Open facts](#open-facts) |
 
 ## Evidence
 
@@ -36,9 +37,18 @@ for each session. Decisions: ADR-0037 and ADR-0038.*
 - **Real stores, earlier.** Six desktop conversations, 2,165 bubbles and 1,448
   calls ([Session collection](session-collection.md#codex-and-cursor-are-the-intended-next-kinds)).
   Marked **Measured**.
-- **Not checked: a signed-in session.** The standard CLI needs a Cursor
-  account. The server then runs the agent loop and writes the same blobs. Real
-  model names, real error wording and real cache counts are unconfirmed.
+- **The shipped desktop app, run against a mock model.** Cursor `3.27.12`
+  (linux/x64, commit `df132ff`) ran under Xvfb in an isolated home, with its
+  `localMode` build flag set, as Cursor's Private Inference build sets it.
+  Its own agent loop then runs in its `cursor-agent-exec` extension against
+  `CURSOR_LOCAL_AGENT_BASE_URL`. The mock scripted shell calls, writes, reads,
+  MCP calls and a sub-agent. Everything marked **Seen (desktop)** comes from
+  the `state.vscdb` and logs it wrote. The store code is the same in every
+  build; only where the loop runs differs.
+- **Not checked: a signed-in session.** The standard CLI and the standard
+  desktop app need a Cursor account. The server then runs the agent loop and
+  writes the same blobs. Real model names, real error wording and real cache
+  counts are unconfirmed.
 
 ## The chat store
 
@@ -227,13 +237,101 @@ teamId, teamName}` (Source). `account_id` is `userId`, else `authId`. No plan.
 
 ## The desktop app
 
-The desktop app (3.26.13) keeps its chats in
-`<user data>/globalStorage/state.vscdb`, table `cursorDiskKV`:
-`agentKv:checkpoint:<composerId>` names the root blob, and `agentKv:blob:<hex>`
-holds the same protobuf root and JSON prompt messages (Source). Its usage is
-`composerData.turnTokenUsage`, the last turn only (Source). It is not read yet:
-no desktop session ran here. One decoder serves it once a real store confirms
-the envelope (C9).
+The desktop app's agent panel (a "composer" in Cursor's code) runs the same
+agent loop and keeps the same blobs as the CLI, in one database for all of its
+conversations (Seen (desktop)). The reader decodes them with the CLI's code;
+only the container differs (ADR-0039).
+
+### Where it lives
+
+| | |
+|---|---|
+| User data | `$VSCODE_PORTABLE/user-data`, else `$VSCODE_APPDATA/Cursor`, else `$XDG_CONFIG_HOME/Cursor` or `~/.config/Cursor` on Linux, `~/Library/Application Support/Cursor` on macOS. This is the order Cursor resolves it (Source). `default_readers(cursor_user_data_root=…)` overrides it |
+| Store | `<user data>/User/globalStorage/state.vscdb`, SQLite in WAL mode. Opened `mode=ro`; one read transaction for each pass |
+| Table | `cursorDiskKV(key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)` |
+
+### Keys read
+
+| Key | Value |
+|---|---|
+| `composerData:<composerId>` | One conversation: JSON. Fields read are below |
+| `agentKv:blob:<hex>` | The same content-addressed blobs as the CLI's `blobs` table: the root, the JSON prompt messages and the protobuf turns and steps |
+| `agentKv:checkpoint:<composerId>` | Hex of the root blob id. Written before `composerData` data version 11; Cursor moves it into `conversationState` when it next loads the conversation (Source). Read only when `conversationState` is absent |
+
+`bubbleId:<composerId>:<bubbleId>` rows are the panel's own projection of the
+same conversation, with Cursor's tool names and result strings but not the
+typed outcome. They are not read (ADR-0039).
+
+### `composerData`
+
+| Field | Read as |
+|---|---|
+| `conversationState` | The root: `~` and the base64 of the `ConversationStateStructure`, else its hex, as Cursor itself decodes it (Source). `~` alone, or an empty root, is no conversation yet |
+| `composerId` | The agent id: the session is `cursor:<composerId>` |
+| `subagentInfo` | `rootParentConversationId`, `parentComposerId` and `toolCallId`. A sub-agent is `cursor:<rootParentConversationId>:<composerId>`, as for the CLI |
+| `name` | The title. Cursor names a conversation from its first message |
+| `createdAt`, `lastUpdatedAt` | Milliseconds: the start when the root has none, and an activity time |
+| `modelConfig.modelName` | The model, when no response states one. `default` is Cursor's Auto |
+| `workspaceIdentifier.uri.fsPath` | The working directory, else the root's first workspace URI; a sub-agent takes its parent's |
+
+The root, the prompt messages, the turns, the identity rules, the tool table,
+the statuses and the call fields are the CLI's, exactly
+([The chat store](#the-chat-store) to [Tool calls](#tool-calls)). The desktop
+app's model-facing tool names are the `claude-*` family's (`Read`, `Write`,
+`StrReplace`, `Task`) whatever the model (Seen (desktop)).
+
+### Entrypoint
+
+`ide`. The store holds only the desktop app's own conversations, and a person
+starts each one there. Cursor records no surface for them. A conversation with
+`createdFromBackgroundAgent` or `createdFromLocalScheduledTask` set has no
+entrypoint: a program may have started it, and no such conversation was seen
+(C12).
+
+### Usage, client errors and times
+
+The desktop app writes no token usage to the store: a bubble's `tokenCount` is
+never filled, and the turn's totals (`turnTokenUsage`) are kept in memory only
+(Source). Its structured log, one file for each window and launch, states what
+the CLI's debug log states:
+
+```
+2026-10-26 12:49:46.050 [info] {"level":"debug","key":"agent_exec","message":"Setting token details for client token ring",
+  "metadata":{"modelName":"default","usedTokens":"1240","maxTokens":"0","inputTokens":"1200","outputTokens":"40",
+  "cacheReadTokens":"600","cacheWriteTokens":"0", …}}
+```
+
+| | |
+|---|---|
+| File | `<user data>/logs/<YYYYMMDDTHHMMSS>/window<N>/exthost/<extension>/Cursor Structured Logs.log`. Cursor keeps the current launch's folder and the nine before it (Source) |
+| Line | `<local date> <local time>.<ms> [<level>] <JSON>`. The time has no zone: it is the machine's own. Counts are strings |
+| Turn | `agent.turn.start` and `agent.turn.outcome` name `conversation_id` and `request_id`. A turn is open from its start to its outcome |
+| Usage line | One model response, written when the response and the tools it called finish. It names no conversation. It belongs to the one turn open in that file. When two turns are open, or none, it is not placed |
+| Sub-agent | The child runs between `subagent proxy: delegating to renderer` and `subagent proxy: renderer settled`, both with the starting call's `toolId`. A usage line inside one such span is the child's. Inside two at once, it is not placed |
+| Identity | As the CLI's: `<request_id>:<n>`, and `<request_id>:<call id>:<n>` for a sub-agent |
+| Tokens | As the CLI's: `inputTokens` includes the cache, so input is `inputTokens − cacheReadTokens − cacheWriteTokens` |
+| Client error | `agent.turn.outcome` with `outcome: "error"` names its time and `error_text`. The transcript's `turn_ended` row, where there is one, gives the text, as for the CLI |
+| `mcp_log_state` | `not_attempted`. The desktop app's MCP logs are not read |
+
+The usage line is written by the agent loop. **The loop runs on the machine
+only in the Private Inference (local) build and where Cursor's agent host
+runs it.** In the standard app, the loop runs on Cursor's server, the line is
+not written, and a desktop session has no responses (C11).
+
+### Who is signed in
+
+`ItemTable` in the same database, when `cli-config.json` names no one:
+`cursorAuth/stripeMembershipAuthId` is the account id, `cursorAuth/cachedEmail`
+the email and `cursorAuth/stripeMembershipType` the plan. The tokens beside
+them are never read. When `cli-config.json` names the same `authId`, its
+account takes the desktop app's plan.
+
+### Growing sessions
+
+| Rule | Detail |
+|---|---|
+| `collect_file(path)` | `state.vscdb` or its WAL: every desktop conversation whose `composerData` changed since the last read, and its sub-agents. A structured log: every desktop conversation. A transcript: its conversation, from either store |
+| Cache | Each conversation's decoded store is kept against the SHA-256 of its `composerData` value, so an unchanged conversation reads no blobs |
 
 ## Coverage by agent kind
 
@@ -243,7 +341,7 @@ the envelope (C9).
 | Model, per response | Recorded (debug log) |
 | Working directory | Recorded |
 | Agent version | Absent |
-| Entrypoint | Recorded (debug log) |
+| Entrypoint | Recorded (debug log); `ide` for the desktop app |
 | Git branch | Absent |
 | Initial prompt | Recorded |
 | Title | Partial: a name Cursor or the person set |
@@ -251,7 +349,7 @@ the envelope (C9).
 | Compactions | Unconfirmed (C6) |
 | Client errors | Recorded (role `error`) |
 | MCP connections | Partial: failures only |
-| Responses and tokens | Recorded while the debug log is kept: per response where the loop runs in the CLI, per turn in the standard CLI's print mode, absent in its terminal UI (C10); input normalised |
+| Responses and tokens | Recorded while the debug log is kept: per response where the loop runs in the CLI, per turn in the standard CLI's print mode, absent in its terminal UI (C10); input normalised. The desktop app: per response from its structured log where its loop runs on the machine, else absent (C11) |
 | Context window | Partial: when Cursor states `maxTokens` |
 | Turn time | Recorded |
 | Sub-agent sessions | Recorded |
@@ -264,7 +362,7 @@ the envelope (C9).
 | Duration | Recorded |
 | Attributed skill, plugin | Absent |
 | MCP transport per call | Absent |
-| Signed-in account | Recorded (`cli-config.json`) |
+| Signed-in account | Recorded (`cli-config.json`, else the desktop app's `ItemTable`, which also names the plan) |
 
 ## Open facts
 
@@ -281,8 +379,10 @@ committed.
 | C6 | A compaction: `summary_archives` and the summary message | `Compaction` |
 | C7 | The macOS layout against Linux, and `XDG_CONFIG_HOME` in practice | Platform coverage |
 | C8 | Background sub-agents running at once in one process | Placement of their usage |
-| C9 | A desktop `state.vscdb` from 3.x | Reading the desktop app |
+| ~~C9~~ | ~~A desktop `state.vscdb` from 3.x~~ Closed: 3.27.12 wrote one (Seen (desktop)) | Reading the desktop app |
 | C10 | Whether the standard CLI's terminal UI and ACP sessions write turn totals anywhere. Its only `setTokenUsage` calls are in the print-mode runner (Source), so they are read as absent | Usage outside print mode |
+| C11 | Whether the standard, signed-in desktop app writes usage lines: where its agent host is on (`cursor_agent_host`), the loop may run on the machine | Desktop usage |
+| C12 | A conversation started by an automation or a background agent | The desktop entrypoint |
 
 ## Decisions
 
@@ -290,6 +390,7 @@ committed.
 |---|---|---|
 | [0037](../adrs/0037-read-cursor-from-its-chat-store-prompt-messages.md) | An OpenAIDR-owned reader of the CLI's chat store. A prompt message is a turn; Cursor's typed outcome is the status; one kind for the CLI and the desktop app | `adr-sensor`'s parser; the transcript JSONL; the protobuf steps as the only source; two kinds |
 | [0038](../adrs/0038-cursor-usage-from-its-debug-log.md) | Usage, the entrypoint, client error times and MCP failures come from Cursor's debug log, placed by the conversation each turn names | Context fill as input tokens; the `stop` hook; print mode's stdout; estimating from text |
+| [0039](../adrs/0039-read-the-cursor-desktop-app-from-its-state-database.md) | The desktop app is a second container for the CLI's decoder: `composerData` and `agentKv:blob` rows in `state.vscdb`. Its usage comes from its structured log, placed only when one turn is open. Its entrypoint is `ide` | The bubbles; `adr-sensor`'s parser; a second kind; context fill as usage; placing a line by the turn last started |
 
 ## Non-goals
 
