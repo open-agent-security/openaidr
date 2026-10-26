@@ -39,7 +39,8 @@
   per response with cached input separated, and MCP connections placed by the
   request that created the thread. On the Claude Code reader's design.
 - [Cursor](specs/cursor.md) — a fourth agent kind, `cursor`. The CLI is read
-  from its chat stores and its debug log. The desktop app's chats are not read.
+  from its chat stores and its debug log. The desktop app's agent panel is read
+  from its `state.vscdb` and its structured log, with the same decoder.
 
 ## Decisions
 

@@ -22,9 +22,9 @@ one agent, one session store; `codex`, which covers Codex CLI, `codex exec`, and
 the IDE extension and Codex app through `codex app-server`, from
 [`docs/specs/codex.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/codex.md);
 `cursor`, which covers the Cursor CLI in the terminal, in print mode and over
-ACP, from
+ACP, and the desktop app's agent panel, from
 [`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md)).
-The Cursor desktop app's own chats are not read yet. The parsing dependency supports more formats
+The parsing dependency supports more formats
 than this package instantiates, which is a distinction worth holding onto; what
 each additional kind would cost is measured in
 [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage).
@@ -170,7 +170,9 @@ Cursor is read from the CLI's chat stores, with per-response tokens, the
 entrypoint and MCP connection failures from its debug log
 ([`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md)).
 Its statuses come from Cursor's typed outcome, `interrupted` included. The
-desktop app's chats are not read yet.
+desktop app's conversations are read from its `state.vscdb` with the same
+decoder, with usage from its structured log where its agent loop runs on the
+machine.
 
 For long-lived consumers, `IncrementalCollector` takes an agent kind and one
 changed path. Claude Code and Codex cold-read that file once, then project
