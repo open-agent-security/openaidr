@@ -23,6 +23,8 @@ import json
 import os
 import re
 import shutil
+import sqlite3
+import sys
 import tomllib
 import unicodedata
 from collections.abc import Callable, Mapping
@@ -185,27 +187,72 @@ def _cursor(config_dir: Path | None, home: Path) -> Account | None:
     """`authInfo` in the Cursor CLI's `cli-config.json`, which the CLI writes
     after a sign-in: the user's id, email and name. Nothing in it is a
     credential; the tokens live in a separate `auth.json`, never read here.
-    `account_id` is the numeric `userId` Cursor assigns, else its `authId`."""
+    `account_id` is the numeric `userId` Cursor assigns, else its `authId`.
+
+    When the CLI names no one, the desktop app's sign-in (`_cursor_desktop`).
+    When both name the same `authId`, the CLI's account takes the desktop
+    app's plan, which the CLI does not record."""
+    desktop = _cursor_desktop(home)
     document = _json(_cursor_root(config_dir, home) / "cli-config.json")
     info = document.get("authInfo") if isinstance(document, dict) else None
     if not isinstance(info, dict):
-        return None
+        return desktop
     user = info.get("userId")
     if isinstance(user, int) and not isinstance(user, bool):
         account_id: str | None = str(user)
     else:
         account_id = user if isinstance(user, str) and user else None
+    auth = info.get("authId")
+    auth_id = auth if isinstance(auth, str) and auth else None
     if account_id is None:
-        auth = info.get("authId")
-        account_id = auth if isinstance(auth, str) and auth else None
+        account_id = auth_id
     if account_id is None:
-        return None
+        return desktop
     names = _strings(info)
+    same = desktop is not None and auth_id is not None and desktop.account_id == auth_id
     return Account(
         kind="cursor",
         account_id=account_id,
         display_name=names.get("displayName"),
         email=names.get("email"),
+        plan=desktop.plan if same and desktop is not None else None,
+    )
+
+
+#: The desktop app's sign-in, in `ItemTable`. The tokens beside these rows are
+#: never read.
+_CURSOR_DESKTOP_AUTH = "cursorAuth/stripeMembershipAuthId"
+_CURSOR_DESKTOP_EMAIL = "cursorAuth/cachedEmail"
+_CURSOR_DESKTOP_PLAN = "cursorAuth/stripeMembershipType"
+
+
+def _cursor_desktop(home: Path) -> Account | None:
+    """Who the desktop app is signed in as: the `authId` its membership was
+    fetched for, the cached email and the membership type, which is the plan.
+    The app writes them after a sign-in and clears them at a sign-out."""
+    path = _cursor_state_db(home)
+    try:
+        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=2.0)
+    except (sqlite3.Error, OSError, ValueError):
+        return None
+    try:
+        rows = connection.execute(
+            "SELECT key, value FROM ItemTable WHERE key IN (?, ?, ?)",
+            (_CURSOR_DESKTOP_AUTH, _CURSOR_DESKTOP_EMAIL, _CURSOR_DESKTOP_PLAN),
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    finally:
+        connection.close()
+    values = _strings({key: value for key, value in rows if isinstance(key, str)})
+    account_id = values.get(_CURSOR_DESKTOP_AUTH)
+    if account_id is None:
+        return None
+    return Account(
+        kind="cursor",
+        account_id=account_id,
+        email=values.get(_CURSOR_DESKTOP_EMAIL),
+        plan=values.get(_CURSOR_DESKTOP_PLAN),
     )
 
 
@@ -336,7 +383,7 @@ def sign_in_records(
     if kind == "devin":
         return (_devin_data_root(home) / "credentials.toml",)
     if kind == "cursor":
-        return (_cursor_root(config_dir, home) / "cli-config.json",)
+        return (_cursor_root(config_dir, home) / "cli-config.json", _cursor_state_db(home))
     return ()
 
 
@@ -430,6 +477,23 @@ def _cursor_root(config_dir: Path | None, home: Path) -> Path:
         return named
     xdg = _named_dir("XDG_CONFIG_HOME")
     return xdg / "cursor" if xdg is not None else home / ".cursor"
+
+
+def _cursor_state_db(home: Path) -> Path:
+    """The desktop app's state database, under its user data directory as its
+    reader resolves it (`readers/cursor.py`): `VSCODE_PORTABLE/user-data`,
+    else `VSCODE_APPDATA/Cursor`, else the platform's application data."""
+    portable = _named_dir("VSCODE_PORTABLE")
+    appdata = _named_dir("VSCODE_APPDATA")
+    if portable is not None:
+        root = portable / "user-data"
+    elif appdata is not None:
+        root = appdata / "Cursor"
+    elif sys.platform == "darwin":
+        root = home / "Library" / "Application Support" / "Cursor"
+    else:
+        root = (_named_dir("XDG_CONFIG_HOME") or home / ".config") / "Cursor"
+    return root / "User" / "globalStorage" / "state.vscdb"
 
 
 def _codex_root(config_dir: Path | None, home: Path) -> Path:

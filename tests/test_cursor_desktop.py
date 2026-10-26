@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from openaidr.accounts import signed_in
 from openaidr.collector import default_readers
 from openaidr.model import Session, ToolCall
 from openaidr.readers.base import Window
@@ -394,3 +395,68 @@ def test_the_user_data_root_is_resolved_in_cursors_order(
     monkeypatch.setattr("sys.platform", "linux")
 
     assert default_user_data_root() == Path(expected)
+
+
+# --- who is signed in ------------------------------------------------------------
+
+
+def _sign_in(user_data: Path, auth_id: str | None = "auth0|user_1") -> None:
+    path = cs.write_state_db(user_data, {})
+    connection = sqlite3.connect(path)
+    rows = {
+        "cursorAuth/cachedEmail": "dev@example.com",
+        "cursorAuth/stripeMembershipType": "pro",
+        "cursorAuth/accessToken": "never-read",
+    }
+    if auth_id is not None:
+        rows["cursorAuth/stripeMembershipAuthId"] = auth_id
+    connection.executemany("INSERT INTO ItemTable VALUES (?, ?)", sorted(rows.items()))
+    connection.commit()
+    connection.close()
+
+
+def _cli_config(config: Path, auth_id: str) -> None:
+    config.mkdir(parents=True)
+    (config / "cli-config.json").write_text(
+        json.dumps({"authInfo": {"email": "dev@example.com", "userId": 1234, "authId": auth_id}}),
+        encoding="utf-8",
+    )
+
+
+def test_the_desktop_apps_sign_in_names_the_account_and_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VSCODE_APPDATA", str(tmp_path / "appdata"))
+    _sign_in(tmp_path / "appdata" / "Cursor")
+
+    account = signed_in("cursor", config_dir=tmp_path / "no-cli")
+
+    assert account is not None
+    assert (account.account_id, account.email, account.plan) == (
+        "auth0|user_1",
+        "dev@example.com",
+        "pro",
+    )
+
+
+@pytest.mark.parametrize(("desktop_auth", "plan"), [("auth0|user_1", "pro"), ("auth0|other", None)])
+def test_the_clis_account_takes_the_desktop_plan_only_for_the_same_auth_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, desktop_auth: str, plan: str | None
+) -> None:
+    monkeypatch.setenv("VSCODE_APPDATA", str(tmp_path / "appdata"))
+    _sign_in(tmp_path / "appdata" / "Cursor", desktop_auth)
+    _cli_config(tmp_path / "cli", "auth0|user_1")
+
+    account = signed_in("cursor", config_dir=tmp_path / "cli")
+
+    assert account is not None
+    assert (account.account_id, account.plan) == ("1234", plan)
+
+
+def test_a_signed_out_desktop_app_names_no_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VSCODE_APPDATA", str(tmp_path / "appdata"))
+    _sign_in(tmp_path / "appdata" / "Cursor", auth_id=None)
+
+    assert signed_in("cursor", config_dir=tmp_path / "no-cli") is None

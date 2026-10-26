@@ -946,7 +946,11 @@ def test_cursors_account_is_its_cli_configs_auth_info(home: Path) -> None:
         "Dev One",
         None,
     )
-    assert sign_in_records("cursor", config_dir=home) == (home / "cli-config.json",)
+    desktop = Path(os.environ["VSCODE_APPDATA"]) / "Cursor" / "User" / "globalStorage"
+    assert sign_in_records("cursor", config_dir=home) == (
+        home / "cli-config.json",
+        desktop / "state.vscdb",
+    )
 
 
 @pytest.mark.parametrize(
