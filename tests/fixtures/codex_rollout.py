@@ -56,16 +56,15 @@ class Rollout:
 
     # --- raw ------------------------------------------------------------
 
-    def add(self, kind: str, payload: dict[str, object], *, ordinal: bool = True) -> None:
+    def add(self, kind: str, payload: dict[str, object]) -> None:
         self._clock += timedelta(seconds=1)
         record: dict[str, object] = {
             "timestamp": _iso(self._clock),
             "type": kind,
             "payload": payload,
+            "ordinal": self._ordinal,
         }
-        if ordinal:
-            record["ordinal"] = self._ordinal
-            self._ordinal += 1
+        self._ordinal += 1
         self.records.append(record)
 
     def event(self, payload: dict[str, object]) -> None:
@@ -215,13 +214,11 @@ class Rollout:
             )
             self.output(call_id, header + output)
 
-    def patch(
-        self, call_id: str, patch: str, *, status: str = "completed", changes: dict | None = None
-    ) -> None:
+    def patch(self, call_id: str, patch: str, *, status: str = "completed") -> None:
         self.response(
             {"type": "custom_tool_call", "name": "apply_patch", "input": patch, "call_id": call_id}
         )
-        self.item({"type": "FileChange", "id": call_id, "changes": changes or {}, "status": status})
+        self.item({"type": "FileChange", "id": call_id, "changes": {}, "status": status})
         text = (
             "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess.\n"
             if status == "completed"
