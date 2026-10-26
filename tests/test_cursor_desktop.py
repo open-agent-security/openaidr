@@ -240,6 +240,27 @@ def test_a_malformed_conversation_is_reported_and_the_others_are_read(
     assert [("conversation bad" in f.message) for f in failures] == [True]
 
 
+def test_a_malformed_conversation_is_still_reported_when_its_row_does_not_change(
+    tmp_path: Path, user_data: Path
+) -> None:
+    """A row's digest caches the conversation it decoded to, so a later pass
+    over an unchanged row must still raise the warning a failed parse raised,
+    not silently drop the conversation it still omits (ADR-0039)."""
+    c = Conversation("good")
+    c.user("hello")
+    c.write_desktop(user_data)
+    cs.write_state_db(user_data, {"composerData:bad": "{not json"})
+    reader = _reader(tmp_path, user_data)
+
+    first_sessions, first_failures = reader.collect(Window(since=None))
+    second_sessions, second_failures = reader.collect(Window(since=None))
+
+    assert [s.session_id for s in first_sessions] == ["cursor:good"]
+    assert [s.session_id for s in second_sessions] == ["cursor:good"]
+    assert [("conversation bad" in f.message) for f in first_failures] == [True]
+    assert [("conversation bad" in f.message) for f in second_failures] == [True]
+
+
 # --- usage and errors from the structured log -----------------------------------
 
 

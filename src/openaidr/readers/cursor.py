@@ -373,11 +373,13 @@ class _Composer:
 
 
 def _read_desktop(
-    path: Path, cache: Mapping[str, tuple[str, _Composer | None]]
-) -> tuple[dict[str, tuple[str, _Composer | None]], list[str]]:
+    path: Path, cache: Mapping[str, tuple[str, _Composer | None, str | None]]
+) -> tuple[dict[str, tuple[str, _Composer | None, str | None]], list[str]]:
     """Every conversation in the desktop app's database, by id, with the
     SHA-256 of its `composerData` value. One whose value is unchanged since
-    `cache` reads no blobs. Raises `sqlite3.Error` or `OSError`."""
+    `cache` reads no blobs, and repeats the warning a failed parse raised, so
+    a later pass does not under-report a conversation it still omits. Raises
+    `sqlite3.Error` or `OSError`."""
     connection = sqlite3.connect(
         f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=_BUSY_SECONDS
     )
@@ -399,7 +401,7 @@ def _read_desktop(
             key = identifier.hex() if isinstance(identifier, bytes) else identifier
             return _blob_bytes(value(_BLOB + key))
 
-        composers: dict[str, tuple[str, _Composer | None]] = {}
+        composers: dict[str, tuple[str, _Composer | None, str | None]] = {}
         warnings: list[str] = []
         for key, raw in rows:
             composer_id = key[len(_COMPOSER) :]
@@ -410,13 +412,17 @@ def _read_desktop(
             cached = cache.get(composer_id)
             if cached is not None and cached[0] == digest:
                 composers[composer_id] = cached
+                if cached[2] is not None:
+                    warnings.append(cached[2])
                 continue
             composer: _Composer | None = None
+            warning: str | None = None
             try:
                 composer = _composer(composer_id, data, value, blob)
             except (ValueError, UnicodeError, RecursionError, TypeError) as error:
-                warnings.append(f"conversation {composer_id}: {error}")
-            composers[composer_id] = (digest, composer)
+                warning = f"conversation {composer_id}: {error}"
+                warnings.append(warning)
+            composers[composer_id] = (digest, composer, warning)
         return composers, warnings
     finally:
         connection.close()
@@ -953,7 +959,7 @@ class CursorReader:
             user_data_root if user_data_root is not None else default_user_data_root()
         ).absolute()
         self._ide_logs = CursorIdeLogs(self._user_data / IDE_LOGS)
-        self._composers: dict[str, tuple[str, _Composer | None]] = {}
+        self._composers: dict[str, tuple[str, _Composer | None, str | None]] = {}
         self._digests: dict[str, str] = {}
 
     def locations(self) -> tuple[Path, ...]:
@@ -1089,14 +1095,14 @@ class CursorReader:
         failures.extend(self._failure(f"{path}: {warning}") for warning in warnings)
         sessions: list[Session] = []
         servers: dict[str, dict[str, str]] = {}
-        for composer_id, (_, composer) in sorted(self._composers.items()):
+        for composer_id, (_, composer, _) in sorted(self._composers.items()):
             if composer is None:
                 continue
             failures.extend(
                 self._failure(f"{path}: conversation {composer_id}: {warning}")
                 for warning in composer.store.warnings
             )
-            parent = self._composers.get(composer.parent or "", ("", None))[1]
+            parent = self._composers.get(composer.parent or "", ("", None, None))[1]
             parent_cwd = (
                 _string(parent.meta_json.get("cwd")) or parent.store.workspace
                 if parent is not None
