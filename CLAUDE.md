@@ -12,8 +12,9 @@ Claude Code is read through `adr-sensor`; Devin CLI through an OpenAIDR-owned
 reader of its SQLite store and run logs (`docs/specs/devin-cli.md`); Codex
 through an OpenAIDR-owned reader of its rollouts and log database, on the Claude
 Code reader's design (`docs/specs/codex.md`); the Cursor CLI through an
-OpenAIDR-owned reader of its chat stores and debug log (`docs/specs/cursor.md`).
-The Cursor desktop app's own chats are not read yet. `adr-sensor` parses seven kinds;
+OpenAIDR-owned reader of its chat stores and debug log (`docs/specs/cursor.md`),
+and the Cursor desktop app's agent panel through the same reader, from its
+`state.vscdb` and structured log (ADR-0039). `adr-sensor` parses seven kinds;
 this package instantiates one of them. Do not describe the others as supported.
 
 Apache-2.0, and deliberately plumbing rather than judgement. Every new agent
