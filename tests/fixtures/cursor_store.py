@@ -178,18 +178,7 @@ class Conversation:
         """Write the store under `chats/<hash>/<agent_id>/`; returns its path."""
         directory = chats / hashlib.md5(self.cwd.encode()).hexdigest() / self.agent_id
         directory.mkdir(parents=True, exist_ok=True)
-        message_ids = [self.blob(json.dumps(m).encode("utf-8")) for m in self.messages]
-        turn_ids = []
-        for user_id, steps in self.turns:
-            agent_turn = bytes_field(1, user_id) + b"".join(bytes_field(2, s) for s in steps)
-            turn_ids.append(self.blob(bytes_field(1, agent_turn)))
-        root = (
-            b"".join(bytes_field(1, i) for i in message_ids)
-            + b"".join(bytes_field(8, i) for i in turn_ids)
-            + bytes_field(9, f"file://{self.cwd}")
-            + varint_field(26, ms(self.started))
-        )
-        root_id = self.blob(root)
+        root_id = self.blob(self.root())
         meta: dict[str, object] = {
             "agentId": self.agent_id,
             "latestRootBlobId": root_id.hex(),
