@@ -64,11 +64,8 @@ class Conversation:
 
     agent_id: str
     cwd: str = "/work/app"
-    started: datetime = T0
-    name: str = "New Agent"
     title: str | None = None
     subagent: dict[str, str] | None = None
-    last_used_model: str | None = None
     messages: list[dict[str, object]] = field(default_factory=list)
     turns: list[tuple[bytes, list[bytes]]] = field(default_factory=list)
     _blobs: dict[str, bytes] = field(default_factory=dict)
@@ -76,7 +73,6 @@ class Conversation:
     _counter: int = 0
 
     def __post_init__(self) -> None:
-        self._clock = self.started
         self.messages.append({"role": "system", "content": "You are an AI coding assistant."})
         self.messages.append(
             {
@@ -182,14 +178,12 @@ class Conversation:
         meta: dict[str, object] = {
             "agentId": self.agent_id,
             "latestRootBlobId": root_id.hex(),
-            "name": self.name,
+            "name": "New Agent",
             "mode": "default",
-            "createdAt": ms(self.started),
+            "createdAt": ms(T0),
         }
         if self.subagent is not None:
             meta["subagentInfo"] = self.subagent
-        if self.last_used_model is not None:
-            meta["lastUsedModel"] = self.last_used_model
         path = directory / "store.db"
         path.unlink(missing_ok=True)
         connection = sqlite3.connect(path)
@@ -209,7 +203,7 @@ class Conversation:
         if self.subagent is None:
             sidecar: dict[str, object] = {
                 "schemaVersion": 1,
-                "createdAtMs": ms(self.started),
+                "createdAtMs": ms(T0),
                 "hasConversation": True,
                 "updatedAtMs": ms(self._clock),
                 "cwd": self.cwd,
@@ -230,7 +224,7 @@ class Conversation:
             b"".join(bytes_field(1, i) for i in message_ids)
             + b"".join(bytes_field(8, i) for i in turn_ids)
             + bytes_field(9, f"file://{self.cwd}")
-            + varint_field(26, ms(self.started))
+            + varint_field(26, ms(T0))
         )
 
     def write_desktop(
@@ -252,11 +246,11 @@ class Conversation:
             "_v": 18,
             "composerId": self.agent_id,
             "status": "completed",
-            "createdAt": ms(self.started),
+            "createdAt": ms(T0),
             "lastUpdatedAt": ms(self._clock),
             "unifiedMode": "agent",
             "isNAL": True,
-            "modelConfig": {"modelName": self.last_used_model or "default", "maxMode": False},
+            "modelConfig": {"modelName": "default", "maxMode": False},
             "workspaceIdentifier": {
                 "id": "fd9b89d16d6d68320d138c123fa21259",
                 "uri": {"$mid": 1, "fsPath": self.cwd, "path": self.cwd, "scheme": "file"},
@@ -380,7 +374,6 @@ def turn_outcome(
     input_tokens: int,
     output_tokens: int,
     cache_read: int = 0,
-    cache_write: int = 0,
     model_intent: str | None = None,
 ) -> str:
     """A turn that ended, with the turn's token totals as print mode writes
@@ -395,7 +388,7 @@ def turn_outcome(
         "input_tokens": str(input_tokens),
         "output_tokens": str(output_tokens),
         "cache_read_tokens": str(cache_read),
-        "cache_write_tokens": str(cache_write),
+        "cache_write_tokens": "0",
     }
     if model_intent is not None:
         metadata["model_intent"] = model_intent
@@ -490,21 +483,19 @@ def ide_usage(
     input_tokens: int,
     output_tokens: int,
     cache_read: int = 0,
-    cache_write: int = 0,
-    model: str = "default",
 ) -> str:
     return _ide_line(
         at,
         "Setting token details for client token ring",
         {
             "action": "userMessageAction",
-            "modelName": model,
+            "modelName": "default",
             "usedTokens": str(input_tokens + output_tokens),
             "maxTokens": "0",
             "inputTokens": str(input_tokens),
             "outputTokens": str(output_tokens),
             "cacheReadTokens": str(cache_read),
-            "cacheWriteTokens": str(cache_write),
+            "cacheWriteTokens": "0",
         },
         key="agent_exec",
     )
@@ -528,14 +519,12 @@ def ide_settled(at: datetime, call: str) -> str:
     )
 
 
-def write_ide_log(
-    user_data: Path, lines: list[str], *, launch: str = "20261021T000000", window: int = 1
-) -> Path:
+def write_ide_log(user_data: Path, lines: list[str]) -> Path:
     directory = (
         user_data
         / "logs"
-        / launch
-        / f"window{window}"
+        / "20261021T000000"
+        / "window1"
         / "exthost"
         / "anysphere.cursor-always-local"
     )
