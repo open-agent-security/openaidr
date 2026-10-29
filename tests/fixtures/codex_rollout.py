@@ -97,7 +97,6 @@ class Rollout:
         self,
         turn_id: str,
         *,
-        model: str = "gpt-5.5",
         approval: str = "never",
         sandbox: str = "workspace-write",
         window: int | None = 258400,
@@ -113,7 +112,7 @@ class Rollout:
             {
                 "turn_id": turn_id,
                 "cwd": cwd,
-                "model": model,
+                "model": "gpt-5.5",
                 "approval_policy": approval,
                 "sandbox_policy": {"type": sandbox},
             },
@@ -136,13 +135,15 @@ class Rollout:
             }
         )
 
-    def injected(self, text: str, kind: str = "environments.environment_context") -> None:
+    def injected(self, text: str) -> None:
         self.response(
             {
                 "type": "message",
                 "role": "user",
                 "content": [{"type": "input_text", "text": text}],
-                "internal_chat_message_metadata_passthrough": {"content_item_kinds": [kind]},
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["environments.environment_context"]
+                },
             }
         )
 
@@ -338,11 +339,11 @@ CREATE TABLE logs (
 """
 
 
-def request_span(request_id: int, connection: int = 0) -> str:
+def request_span(request_id: int) -> str:
     return (
         f'app_server.request{{otel.kind="server" otel.name="thread/start" rpc.system="jsonrpc" '
         f'rpc.method="thread/start" rpc.transport="stdio" rpc.request_id={request_id} '
-        f'app_server.connection_id={connection} app_server.api_version="v2"}}'
+        f'app_server.connection_id=0 app_server.api_version="v2"}}'
     )
 
 
