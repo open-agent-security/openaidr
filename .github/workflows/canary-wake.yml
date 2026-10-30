@@ -1,0 +1,24 @@
+name: canary-wake
+
+# Throwaway canary: tests whether a comment posted with GITHUB_TOKEN wakes the
+# Auto-fix watcher. Delete with this PR.
+
+on:
+  pull_request:
+    types: [edited]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - run: |
+          sleep 90
+          gh api "repos/$REPO/issues/$PR/comments" -f body="Canary comment from the workflow token at $(date -u +%H:%M:%SZ). It tests whether this comment wakes the Auto-fix watcher. No action is needed."
