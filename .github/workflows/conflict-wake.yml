@@ -29,16 +29,24 @@ jobs:
       - name: Comment on PRs this push left conflicted
         run: |
           set -euo pipefail
+          # Only a same-repository PR from a trusted maintainer has a managed
+          # watcher to wake. Matches the routine's own eligibility checks in
+          # .github/managed-autofix.md, including its michealbenedict exclusion.
           for n in $(gh pr list --repo "$REPO" --base "$BASE" --state open --limit 100 \
-                       --json number,isDraft --jq '.[] | select(.isDraft | not) | .number'); do
+                       --json number,isDraft,isCrossRepository,author \
+                       --jq '.[] | select((.isDraft | not) and (.isCrossRepository | not) and (.author.login != "michealbenedict")) | .number'); do
             # `mergeable` is null while GitHub recomputes it in the background
             # after the base moved; ask again until it settles.
             mergeable=null
             for _ in $(seq 12); do
-              read -r mergeable head < <(gh api "repos/$REPO/pulls/$n" --jq '"\(.mergeable) \(.head.sha)"')
+              read -r mergeable head assoc < <(gh api "repos/$REPO/pulls/$n" --jq '"\(.mergeable) \(.head.sha) \(.author_association)"')
               [ "$mergeable" != null ] && break
               sleep 5
             done
+            case "$assoc" in
+              OWNER|MEMBER|COLLABORATOR) ;;
+              *) continue ;;
+            esac
             [ "$mergeable" = false ] || continue
 
             marker="<!-- base-conflict:$head -->"
