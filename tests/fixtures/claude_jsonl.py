@@ -209,14 +209,12 @@ def assistant_response(
     return record
 
 
-def cost_state(
-    session_id: str, total_usd: float, model_usage: dict, *, unknown_model: bool = False
-) -> dict:
+def cost_state(session_id: str, total_usd: float, model_usage: dict) -> dict:
     """The client's own running totals for a session. It carries no timestamp."""
     return {
         "type": "cost-state",
         "sessionId": session_id,
         "totalCostUSD": total_usd,
-        "hasUnknownModelCost": unknown_model,
+        "hasUnknownModelCost": False,
         "modelUsage": model_usage,
     }
