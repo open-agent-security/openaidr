@@ -12,7 +12,8 @@ per-head Codex review marker.
 | --- | --- |
 | Routine | [trig_01MRTLyMyQoHMp4Nvv83E6ie](https://claude.ai/code/routines/trig_01MRTLyMyQoHMp4Nvv83E6ie), Anthropic-hosted Default environment (`env_01F2vbHGYXjLs9PV3hzvbvCX`), claude-sonnet-5, sole source this repository, no connectors |
 | Triggers | GitHub `pull_request.opened` and `pull_request.ready_for_review` (ids `3dbbaabf-df96-44b8-8957-c8cba9512b7a` opened, `d1d5925b-bf5d-4c04-8489-8054c251cb75` ready_for_review, created 2026-09-23T06:40Z); a draft PR enrolls when marked ready. Automatic enrollment: not yet observed; verify on the first qualifying PR by reading its run log for the github-trigger-context block and a successful subscribe_pr_activity |
-| Prompt source | SHA-256 of the fenced block below: `220f4afd5489a76f03297df91dffaa225a6da9503172a2684a756ae54b914eda`; saved on the routine 2026-09-23 (marker renamed for this repository's no-proprietary-references rule), read back byte-identical; saved again 2026-10-06T00:56:55Z to skip PRs authored by michealbenedict, read back byte-identical |
+| Prompt source | SHA-256 of the fenced block below: `e864c925362fb2915ce4d7d4f7ccc355ebfed1fdfcc94c9a0377f7c2448729e7`; saved on the routine 2026-09-23 (marker renamed for this repository's no-proprietary-references rule), read back byte-identical; saved again 2026-10-06T00:56:55Z to skip PRs authored by michealbenedict, read back byte-identical; saved again 2026-10-18T19:52:29Z to let a conflict with the base branch authorize a rebase, recorded here 2026-10-30 from a routine readback |
+| Conflict wake | GitHub sends no event when a PR becomes conflicted, so a watcher does not wake when only the base branch moves. `.github/workflows/conflict-wake.yml` comments once per PR head on each open PR that a push leaves conflicted, and that comment wakes the watcher |
 | Codex review | Codex has reviewed PRs in this repository; confirm all-PRs/every-push in the Codex console. The prompt's explicit request is the fallback |
 | Legacy Actions loop | `claude.yml` and `autofix.yml` disabled 2026-09-22 and deleted; routine-based fixing replaces them |
 
@@ -45,11 +46,15 @@ persistent watcher. If another watcher is already attached, report it and
 leave that watcher responsible. If enrollment is unavailable, report the
 missing capability and stop.
 
-On enrollment and every wake, read the current head SHA. Edit only when one of
-these authorizes the current head:
+On enrollment and every wake, read the current head SHA and whether the PR
+conflicts with its base branch. Edit only when one of these authorizes the
+current head:
 
 - A completed review from chatgpt-codex-connector[bot] or a trusted maintainer.
 - A required CI check failed with an established, code-related cause.
+- The PR conflicts with its base branch. Rebase it as CLAUDE.md requires. The
+  PR author, a trusted maintainer, authorizes rewriting the PR branch history
+  with `git push --force-with-lease`.
 - A trusted maintainer explicitly approved a reported P3 finding for the
   current head, as CLAUDE.md requires.
 
