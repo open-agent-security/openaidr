@@ -82,8 +82,6 @@ class Node:
 class StoredSession:
     id: str
     working_directory: str = "/work/project"
-    model: str = "swe-2"
-    agent_mode: str = "normal"
     created_at: int = T0
     last_activity_at: int = T0 + 60
     title: str | None = None
@@ -103,8 +101,8 @@ def write_session(store: Path, session: StoredSession) -> None:
         (
             session.id,
             session.working_directory,
-            session.model,
-            session.agent_mode,
+            "swe-2",
+            "normal",
             session.created_at,
             session.last_activity_at,
             session.title,
@@ -269,20 +267,20 @@ def startup(second: int = 0, *, acp: bool = False) -> list[str]:
     ]
 
 
-def mcp_stdio(second: int, server: str, outcome: str = "ok", micros: int = 0) -> list[str]:
+def mcp_stdio(second: int, server: str, outcome: str = "ok") -> list[str]:
     target = "toolbox::tools::mcp"
     channel = f'output_channel="MCP: {server}" server="{server}"'
     lines = [
-        log_line(second, "INFO", target, f"{channel} Connecting to MCP server '{server}'", micros),
+        log_line(second, "INFO", target, f"{channel} Connecting to MCP server '{server}'"),
         log_line(
             second,
             "INFO",
             f"{target}::config",
             f'{channel} Starting stdio MCP server \'{server}\': "python3" ["-I", "s.py"]',
-            micros + 10,
+            10,
         ),
     ]
-    return lines + [_outcome(second, server, outcome, micros + 250_000)]
+    return lines + [_outcome(second, server, outcome, 250_000)]
 
 
 def mcp_http(second: int, server: str, url: str, outcome: str = "ok") -> list[str]:

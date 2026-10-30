@@ -21,8 +21,8 @@ def _record(message: str, session_id: str) -> dict:
     }
 
 
-def connected(session_id: str, transport: str = "stdio", ms: int = 451) -> dict:
-    return _record(f"Successfully connected (transport: {transport}) in {ms}ms", session_id)
+def connected(session_id: str, transport: str = "stdio") -> dict:
+    return _record(f"Successfully connected (transport: {transport}) in 451ms", session_id)
 
 
 def http_transport(session_id: str, url: str) -> dict:
@@ -51,8 +51,8 @@ def failed(session_id: str, tool: str, ms: int = 12) -> dict:
     return _record(f"Tool '{tool}' failed in {ms}ms", session_id)
 
 
-def still_running(session_id: str, tool: str, seconds: int = 30) -> dict:
-    return _record(f"Tool '{tool}' still running ({seconds}s elapsed)", session_id)
+def still_running(session_id: str, tool: str) -> dict:
+    return _record(f"Tool '{tool}' still running (30s elapsed)", session_id)
 
 
 def write_server_log(
