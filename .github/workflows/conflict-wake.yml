@@ -2,10 +2,10 @@ name: conflict-wake
 
 # GitHub sends no event when a pull request becomes conflicted because its
 # base branch moved, so the managed Auto-fix watcher on that PR never wakes
-# to rebase it. A comment on the PR does wake it. This workflow posts one,
+# to resolve it. A comment on the PR does wake it. This workflow posts one,
 # once per PR head, when a push leaves an open PR targeting the pushed branch
 # unable to merge. The comment is only a wake-up signal: the watcher reads the
-# PR's mergeable state itself before it rebases. See .github/managed-autofix.md.
+# PR's mergeable state itself before it acts. See .github/managed-autofix.md.
 
 on:
   push:
@@ -53,7 +53,7 @@ jobs:
             if gh api --paginate "repos/$REPO/issues/$n/comments" --jq '.[].body' | grep -qF "$marker"; then
               continue
             fi
-            gh api "repos/$REPO/issues/$n/comments" -f body="This PR conflicts with \`$BASE\` as of ${GITHUB_SHA:0:7} and needs a rebase.
+            gh api "repos/$REPO/issues/$n/comments" -f body="This PR conflicts with \`$BASE\` as of ${GITHUB_SHA:0:7}.
 
           $marker"
             echo "Commented on #$n (head ${head:0:7})"
