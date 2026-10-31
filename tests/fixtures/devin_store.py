@@ -150,11 +150,8 @@ def append_nodes(store: Path, session_id: str, nodes: list[Node], main_chain_id:
     db.close()
 
 
-def user(text: str, *, typed: bool | None = True) -> dict:
-    metadata: dict = {}
-    if typed is not None:
-        metadata["is_user_input"] = typed
-    return {"role": "user", "content": text, "metadata": metadata}
+def user(text: str, *, typed: bool = True) -> dict:
+    return {"role": "user", "content": text, "metadata": {"is_user_input": typed}}
 
 
 def skills_loaded(text: str, names: list[str]) -> dict:

@@ -99,14 +99,17 @@ class Rollout:
         *,
         approval: str = "never",
         sandbox: str = "workspace-write",
-        window: int | None = 258400,
+        window: int = 258400,
         cwd: str = "/work/project",
     ) -> None:
         self.turn_id = turn_id
-        started: dict[str, object] = {"type": "task_started", "turn_id": turn_id}
-        if window is not None:
-            started["model_context_window"] = window
-        self.event(started)
+        self.event(
+            {
+                "type": "task_started",
+                "turn_id": turn_id,
+                "model_context_window": window,
+            }
+        )
         self.add(
             "turn_context",
             {
@@ -186,14 +189,14 @@ class Rollout:
         call_id: str,
         cmd: str,
         *,
-        exit_code: int | None = 0,
+        exit_code: int = 0,
         output: str | None = "done\n",
         cwd: str = "/work/project",
         item: bool = True,
     ) -> None:
         """A command as Codex records one: the call, the execution item, then the output."""
         self.call(call_id, "exec_command", {"cmd": cmd, "yield_time_ms": 3000})
-        if item and exit_code is not None:
+        if item:
             self.item(
                 {
                     "type": "CommandExecution",
@@ -210,8 +213,6 @@ class Rollout:
             header = (
                 f"Chunk ID: abc123\nWall time: 0.1000 seconds\nProcess exited with code {exit_code}\n"
                 "Original token count: 3\nOutput:\n"
-                if exit_code is not None
-                else ""
             )
             self.output(call_id, header + output)
 
