@@ -50,7 +50,9 @@ jobs:
             [ "$mergeable" = false ] || continue
 
             marker="<!-- base-conflict:$head -->"
-            if gh api --paginate "repos/$REPO/issues/$n/comments" --jq '.[].body' | grep -qF "$marker"; then
+            # Plain grep reads every page; -q would exit early, and under pipefail
+            # the broken pipe in gh would post a duplicate comment.
+            if gh api --paginate "repos/$REPO/issues/$n/comments" --jq '.[].body' | grep -F "$marker" >/dev/null; then
               continue
             fi
             gh api "repos/$REPO/issues/$n/comments" -f body="This PR conflicts with \`$BASE\` as of ${GITHUB_SHA:0:7}.
