@@ -125,11 +125,11 @@ def _jwt(claims: dict[str, object]) -> str:
     return f"{part({'alg': 'RS256'})}.{part(claims)}.signature-not-checked"
 
 
-def _codex_auth(claims: dict[str, object] | None, *, mode: str = "chatgpt") -> dict[str, object]:
+def _codex_auth(claims: dict[str, object] | None) -> dict[str, object]:
     tokens = {"access_token": _SECRETS[0], "refresh_token": _SECRETS[1], "account_id": "ws-1"}
     if claims is not None:
         tokens["id_token"] = _jwt(claims)
-    return {"auth_mode": mode, "OPENAI_API_KEY": _SECRETS[2], "tokens": tokens}
+    return {"auth_mode": "chatgpt", "OPENAI_API_KEY": _SECRETS[2], "tokens": tokens}
 
 
 def test_codex_signed_in_with_chatgpt_names_the_person_from_its_identity_token(

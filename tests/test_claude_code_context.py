@@ -43,11 +43,11 @@ def _read(root: Path):
     return sessions
 
 
-def _base(session: str = "s1") -> list[dict]:
+def _base() -> list[dict]:
     return [
-        user_text(session, "u0", _T0, "fix the bug", gitBranch="feature/x"),
-        assistant_tool_use(session, "u1", _T0, "call-1", "Read", {"file_path": "a.py"}),
-        tool_result(session, "u2", _T1, "call-1", "contents"),
+        user_text("s1", "u0", _T0, "fix the bug", gitBranch="feature/x"),
+        assistant_tool_use("s1", "u1", _T0, "call-1", "Read", {"file_path": "a.py"}),
+        tool_result("s1", "u2", _T1, "call-1", "contents"),
     ]
 
 
