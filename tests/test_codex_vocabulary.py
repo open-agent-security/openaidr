@@ -440,7 +440,8 @@ def test_every_built_in_the_reader_emits_is_classed(name: str) -> None:
     assert tool_class("codex", name, None) in TOOL_CLASSES - {"mcp"}
 
 
-def _nested(depth: int = 100_000) -> str:
+def _nested() -> str:
+    depth = 100_000
     return "[" * depth + "]" * depth
 
 
