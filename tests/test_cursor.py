@@ -267,7 +267,7 @@ def test_an_mcp_identifier_the_client_recorded_is_named_by_its_configuration(
         case=15,
     )
     c.write(home / "chats")
-    cs.write_server_metadata(home, "/work/app", "user-probe", "probe")
+    cs.write_server_metadata(home, "user-probe", "probe")
 
     [call] = _calls(_read(home, logs)["cursor:a1"])
 
@@ -925,7 +925,7 @@ def test_a_changed_server_metadata_file_rebuilds_every_session(home: Path, logs:
     first, _ = reader.collect_file(store)
     assert [call.mcp_server for s in first for call in _calls(s)] == ["user-probe"]
 
-    metadata = cs.write_server_metadata(home, "/work/app", "user-probe", "probe")
+    metadata = cs.write_server_metadata(home, "user-probe", "probe")
     again, failures = reader.collect_file(metadata)
 
     assert failures == []
