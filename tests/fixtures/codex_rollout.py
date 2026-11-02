@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -308,12 +309,30 @@ class Rollout:
     def text(self) -> str:
         return "".join(json.dumps(record) + "\n" for record in self.records)
 
-    def write(self, home: Path, *, archived: bool = False) -> Path:
+    def write(self, home: Path, *, archived: bool = False, compressed: bool = False) -> Path:
+        """The rollout as Codex writes it, or as Codex's compression leaves it:
+        the same name with `.zst` added and the same records."""
         directory = home / ("archived_sessions" if archived else "sessions/2026/10/16")
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"rollout-2026-10-16T02-00-00-{self.thread_id}.jsonl"
-        path.write_text(self.text(), encoding="utf-8")
+        if compressed:
+            path = path.with_name(path.name + ".zst")
+            path.write_bytes(zstd(self.text().encode()))
+        else:
+            path.write_text(self.text(), encoding="utf-8")
         return path
+
+
+def zstd(data: bytes) -> bytes:
+    """One zstd frame at level 3 with its content size, as Codex writes one
+    (`rollout/src/compression.rs`), from whichever decoder this Python reads with."""
+    if sys.version_info >= (3, 14):
+        from compression import zstd as stdlib_zstd
+
+        return stdlib_zstd.compress(data, level=3)
+    import zstandard
+
+    return zstandard.ZstdCompressor(level=3, write_content_size=True).compress(data)
 
 
 def _iso(moment: datetime) -> str:

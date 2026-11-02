@@ -941,17 +941,17 @@ def test_a_compaction_says_how_much_it_replaced(tmp_path: Path) -> None:
 # --- files ---------------------------------------------------------------------------
 
 
-def test_archived_rollouts_are_read_and_compressed_ones_reported(tmp_path: Path) -> None:
+def test_archived_rollouts_are_read_and_other_files_are_not(tmp_path: Path) -> None:
+    """Compressed rollouts are read too: `test_codex_compressed.py`."""
     Rollout("live").write(tmp_path)
     Rollout("old").write(tmp_path, archived=True)
-    zst = tmp_path / "sessions" / "2026" / "10" / "16" / "rollout-2026-10-16T02-00-00-z.jsonl.zst"
-    zst.write_bytes(b"\x28\xb5\x2f\xfd")
     (tmp_path / "sessions" / "notes.txt").write_text("not a rollout", encoding="utf-8")
+    (tmp_path / "sessions" / "rollout-compress-1.tmp").write_bytes(b"Codex's own temporary")
 
     sessions, failures = _read(tmp_path)
 
     assert [s.session_id for s in sessions] == ["codex:live", "codex:old"]
-    assert failures == [f"{zst}: compressed rollout is not read"]
+    assert failures == []
 
 
 def test_a_malformed_record_withholds_the_session_and_never_echoes_it(tmp_path: Path) -> None:

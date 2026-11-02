@@ -20,6 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "adr-sensor==1.0.0",
+    "zstandard==0.25.0 ; python_full_version < '3.14'",
 ]
 
 [project.scripts]
