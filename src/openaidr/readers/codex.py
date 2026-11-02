@@ -631,6 +631,17 @@ class _Projection:
     def _output(self, kind: str, payload: Mapping[str, object], at: datetime | None) -> None:
         call_id = _string(payload.get("call_id"))
         if call_id is None:
+            if (
+                kind == "function_call_output"
+                and payload.get("namespace") == "codex_app"
+                and payload.get("name") == "send_message_to_thread"
+                and _string(payload.get("id")) is not None
+                and isinstance(payload.get("output"), str)
+            ):
+                # Desktop follow-ups are turn input, not the result of a
+                # call in this thread. Keep the context without inventing one.
+                self._context("injected", str(payload["output"]), at)
+                return
             if kind == "tool_search_output":
                 self._search_context(payload, at)
                 return
