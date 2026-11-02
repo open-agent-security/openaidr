@@ -504,11 +504,12 @@ changes the shape of the collection rather than being a detail.
 | Surface | Scale | Approach |
 |---|---|---|
 | The session model and span identity | The published contract | Consumers depend on these; they are this package's public API, not internal types |
-| One runtime dependency | Additive | `adr-sensor`, confined behind the adapter, so the rest of the codebase is unaware of it |
+| One parsing dependency | Additive | `adr-sensor`, confined behind the adapter, so the rest of the codebase is unaware of it. `zstandard`, below Python 3.14, only decompresses Codex rollouts ([Codex](codex.md#compressed-rollouts)) |
 | The source-vocabulary mapping | New, small | A mapping table plus per-kind naming rules, colocated with collection |
 | An in-memory append cursor | New | Cold first read then appended complete records for named changed files; no persistence, nothing on disk |
 
-**This package's only runtime dependency is `adr-sensor`.** It does not import
+**This package's runtime dependencies are `adr-sensor` and, below Python 3.14,
+`zstandard`.** It does not import
 `openaca`, and it must never import or mention anything proprietary. It produces
 a model; interpreting that model is a consumer's concern, and OpenAIDR takes no
 position on what a consumer concludes.

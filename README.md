@@ -82,10 +82,11 @@ boundary is your call to state.
 
 Session parsing itself comes from [Uber's ADR project](https://github.com/uber/ADR)
 (`adr-sensor`, Apache-2.0) — it owns the on-disk formats, and it is OpenAIDR's
-only runtime dependency. It is confined behind an adapter: upstream types
-convert at the reader boundary and never appear elsewhere. Any one agent kind
-can instead be backed by an OpenAIDR-owned reader on the same contract — per
-kind, not all-or-nothing.
+only parsing dependency. The other runtime dependency, `zstandard`, decompresses
+compressed Codex rollouts on Python before 3.14 (ADR-0041). `adr-sensor` is
+confined behind an adapter: upstream types convert at the reader boundary and
+never appear elsewhere. Any one agent kind can instead be backed by an
+OpenAIDR-owned reader on the same contract — per kind, not all-or-nothing.
 
 What the adapter adds is not a thin wrapper. Upstream's unified event model was
 measured against this one rather than assumed
