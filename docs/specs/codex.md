@@ -210,6 +210,13 @@ is the call succeeding.
 the client supplied as turn input, beside the `function_call_output` response
 item that is read.
 
+The desktop client supplies `codex_app.send_message_to_thread` follow-ups as
+`function_call_output` records with an item `id`, a string `output`, and no
+`call_id`. The reader keeps their output as local-only injected context.
+These records create no call and join no outcome. Outputs with a `call_id`
+still follow the normal outcome join. Other outputs without a `call_id`
+remain malformed, except for `tool_search_output` context records.
+
 ## Session fields
 
 | Field | Source |
