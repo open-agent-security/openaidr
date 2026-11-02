@@ -142,6 +142,7 @@ the decoder then rejects that data.
 |---|---|
 | `<path>: no zstd decoder is available; session withheld` | Neither `compression.zstd` nor `zstandard` imports |
 | `<path>: compressed rollout ends inside a zstd frame; session withheld` | The data stops before its frame ends. The file is truncated |
+| `<path>: compressed rollout ends inside a record; session withheld` | The data decodes, but its last line has no newline. Codex never appends to a compressed rollout, so that line is a cut record. A plain rollout's last line with no newline is still being written, and is read when its newline arrives |
 | `<path>: compressed rollout does not decode as zstd; session withheld` | The decoder rejects the data: not zstd, a damaged frame, or bytes after the last frame |
 | `<path>: line N: malformed rollout record; session withheld` | The data decodes, but a line is not a record. Codex writes no checksum, so damage can decode to wrong text, and a damaged record usually fails here |
 

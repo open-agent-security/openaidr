@@ -1279,18 +1279,24 @@ class _Cursor:
             _check_frames(file)
             file.seek(0)
             with open_frames(file) as stream:
-                self._project(stream)
+                cut = self._project(stream)
+            if cut and self.error is None:
+                # Codex never appends to a compressed rollout, so a line with
+                # no newline is a cut record, never one still being written.
+                self.error = "compressed rollout ends inside a record; session withheld"
         except (_Truncated, EOFError):
             self.error = "compressed rollout ends inside a zstd frame; session withheld"
         except decode_error:
             self.error = "compressed rollout does not decode as zstd; session withheld"
 
-    def _project(self, stream: BinaryIO) -> None:
+    def _project(self, stream: BinaryIO) -> bool:
+        """Project each complete record; true when the stream ends in a
+        nonblank line with no newline."""
         for raw in stream:
             # A record still being written waits for its newline, and is
             # read again from its first byte next time.
             if not raw.endswith(b"\n"):
-                break
+                return bool(raw.strip())
             self.offset += len(raw)
             self.line += 1
             if not raw.strip():
@@ -1310,7 +1316,8 @@ class _Cursor:
                 # record can also hide a second claim on a call id, so the
                 # session is withheld rather than half-read.
                 self.error = f"line {self.line}: malformed rollout record; session withheld"
-                return
+                return False
+        return False
 
 
 class _Truncated(Exception):
