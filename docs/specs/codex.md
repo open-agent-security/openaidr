@@ -16,7 +16,7 @@ branch (ADR-0027). Decisions: ADR-0030 to ADR-0035.*
 |---|---|
 | Covers | Codex CLI in the terminal (`codex`), `codex exec`, and the IDE extension and Codex app, which drive the same agent through `codex app-server`. Sub-agent threads of all of them. One harness, one `CODEX_HOME` |
 | Not covered | **Codex Cloud** tasks. They run in OpenAI's containers, so reading them needs a network client, which read-only sensing rules out |
-| Reads | Under the data root: `sessions/**/rollout-*.jsonl` for messages, calls, outcomes and per-response tokens; the newest `logs_<n>.sqlite` (read-only) for MCP connections; `session_index.jsonl` for a thread's name; `auth.json` for the account |
+| Reads | Under the data root: `sessions/**/rollout-*.jsonl`, plain or [compressed](#compressed-rollouts), for messages, calls, outcomes and per-response tokens; the newest `logs_<n>.sqlite` (read-only) for MCP connections; `session_index.jsonl` for a thread's name; `auth.json` for the account |
 | Data root | `$CODEX_HOME`, else `~/.codex`. `OPENAIDR_CODEX_ROOT` overrides it for the CLI; `default_readers(codex_root=…)` for callers. `archived_sessions/` is a second location |
 | Backed by `adr-sensor` | No. Its Codex parser drops `custom_tool_call` (where `apply_patch` lives), marks every returned call successful and truncates bodies at 1,000 characters (measured: 619 of 4,205 calls read, all `ok`) |
 | Platforms | Linux and macOS. Windows deferred (ADR-0013) |
@@ -41,6 +41,11 @@ branch (ADR-0027). Decisions: ADR-0030 to ADR-0035.*
   five measured for usage ([Token usage](token-usage.md#a-second-kind-codex)),
   and eight read by #35's reader with zero failures and every call accounted
   for. Marked **Measured**.
+- **Compression, at `rust-v0.166.0`** (`6ff1e1ca`, 2026-10-29). The source of
+  `rollout/src/compression.rs` and the files it uses, marked **Source**. A
+  sample rollout compressed with Codex's encoder settings and the `zstd` crate
+  version that Codex locks, marked **Verified**. A real machine with Codex CLI
+  0.166.0 held 621 compressed rollouts, marked **Measured**.
 - **Not checked: a session against OpenAI's own model.** Real `rate_limits`,
   real cache-write counts, and how the hosted model orders search items are
   unconfirmed.
@@ -52,7 +57,7 @@ branch (ADR-0027). Decisions: ADR-0030 to ADR-0035.*
 | Path | `<root>/sessions/YYYY/MM/DD/rollout-<YYYY-MM-DDTHH-MM-SS>-<uuidv7>.jsonl`, one file per thread, sub-agents included (Seen) |
 | Envelope | One JSON object per line: `timestamp`, `ordinal` (monotonic per file), `type`, `payload` (Seen) |
 | Writing | Append-only, newline-terminated (Source `rollout/src/recorder.rs`). Rollback starts a new file, `<thread>_<rollout>` (Source) |
-| Compression | `.jsonl.zst` for files older than 7 days, behind a feature that is off by default (Source `rollout/src/compression.rs`). Reported, not read (C8) |
+| Compression | `.jsonl.zst` for a rollout last written 7 or more days ago. Read as the plain form is ([Compressed rollouts](#compressed-rollouts)) |
 | History mode | `session_meta.history_mode`. **`paginated`** for every new thread in 0.163.0 (Seen). Older threads are legacy, with fewer outcome records (below) |
 
 **Record types** (Seen unless marked):
@@ -73,6 +78,63 @@ legacy mode `item_completed` is kept only for a few item types, while
 `PatchApplyEnd` and `McpToolCallEnd` are kept. So a **legacy** rollout has
 patch and MCP outcomes as records, and a command's exit code only in its output
 text.
+
+## Compressed rollouts
+
+Codex can compress a cold rollout (Source `rollout/src/compression.rs`). A
+background worker looks in `sessions/` and `archived_sessions/`. It compresses
+a plain rollout whose last write is 7 or more days old. The feature,
+`local_thread_store_compression`, is off by default in that source. A real
+machine had 621 compressed rollouts from 2026-04 to 2026-10 (Measured), so some
+installations turn it on.
+
+| | |
+|---|---|
+| Name | The plain name with `.zst` added: `rollout-<YYYY-MM-DDTHH-MM-SS>-<uuid>.jsonl.zst` (Source) |
+| Content | The plain rollout, byte for byte, in one zstd frame (RFC 8878). Level 3, with the content size in the frame header, no dictionary and no checksum (Source `encode_zstd_to_writer`; Verified with `zstd` 0.13.3 and libzstd 1.5.7, the versions in Codex's `Cargo.lock`) |
+| Modification time | The plain file's modification time. Codex copies it to the compressed file before it publishes that file (Source `compression/access_metadata.rs`) |
+| Change of form | Codex writes the new form and then removes the old form, in both directions. It decompresses a rollout to plain `.jsonl` before it appends to it, for example when a person resumes the thread (Source `materialize_rollout_for_append_blocking`). So both forms can exist for a short time |
+
+**The reader reads a compressed rollout as it reads a plain rollout.** It
+decodes the file in 64 KiB chunks and projects one line at a time through the
+same path. The session ID, the turn keys and the spans come from the records,
+never from the file name. So a thread keeps its identity when Codex compresses
+it. Frames that follow one another decode as one stream, as RFC 8878 permits.
+
+**The plain form wins.** When a directory holds `X.jsonl` and `X.jsonl.zst`,
+`collect` reads `X.jsonl` and not the other file. Codex also reads the plain
+form first (Source `compression/path_metadata.rs`). Only the plain form can
+hold records appended after a resume. `collect_file` on a compressed path
+returns nothing while its plain form exists. A file that changes form between
+discovery and the read is not found on that read. The next read finds the new
+form.
+
+**The window is the same for both forms.** `collect` skips a rollout whose
+modification time is before `since`, and it does not open that file. The rule
+holds for a compressed rollout because Codex keeps the modification time. The
+reader does not use the start time in the file name. Codex writes that time in
+local time with no offset (Source `recorder.rs`, `now_local`). Also, a session
+starts before its last write, so the start time cannot exclude a file that
+the modification time keeps. A compressed rollout last written inside the
+window is read, also when its session started before the window.
+
+**Memory.** The reader never holds a whole decompressed rollout. It holds one
+chunk of decoded output and one line, as it holds one line of a plain
+rollout. Neither form has a size limit. A compressed rollout is read whole on
+each read, because Codex never appends to it.
+
+**Decoder.** Python 3.14 and later use the standard library's
+`compression.zstd`. Python 3.11 to 3.13 use `zstandard`, pinned exactly and
+installed only below 3.14 (ADR-0041).
+
+| Failure | Cause |
+|---|---|
+| `<path>: compressed rollout ends inside a zstd frame; session withheld` | The data stops before its frame ends. The file is truncated |
+| `<path>: compressed rollout does not decode as zstd; session withheld` | The decoder rejects the data: not zstd, a damaged frame, or bytes after the last frame |
+| `<path>: line N: malformed rollout record; session withheld` | The data decodes, but a line is not a record. Codex writes no checksum, so damage can decode to wrong text, and a damaged record usually fails here |
+
+Each failure withholds one session. The reader continues with the other
+rollouts.
 
 ## Identity
 
@@ -346,7 +408,7 @@ The Claude Code reader's discipline (ADR-0011, ADR-0029, ADR-0030):
 | Committed unit | A newline-terminated record. A torn last line waits for its newline |
 | What is held | Per file: device, inode, offset, line count and the projection. In memory, never persisted, under the 128-file and 16 MiB LRU bound |
 | `locations()` | `sessions/` and `archived_sessions/` |
-| `collect_file(path)` | A rollout under those locations: read from the offset, and return the file's session on every read. The log database and `session_index.jsonl` are read again with it, as Claude Code's connection logs are. Anything else: nothing |
+| `collect_file(path)` | A rollout under those locations: read from the offset, and return the file's session on every read. A compressed rollout is read whole, and gives nothing while its plain form exists. The log database and `session_index.jsonl` are read again with it, as Claude Code's connection logs are. Anything else: nothing |
 | Replaced or shorter file | Rebuilt cold |
 | Malformed complete record | That file's session is withheld and the path and line reported, never the record's content. An unread record could hide a second claim on a `call_id`. A record nested more than 256 containers deep is malformed: it decodes, but anything that walks it again would fail outside the read. Codex writes with serde_json's limit of 128 (ADR-0033) |
 | Malformed values inside a record | JSON `arguments` that do not decode, or nest past 256, are kept as written under `raw`. A timestamp that does not parse, or does not fit UTC, is no instant. A `session_index.jsonl` line that does not decode is skipped. A log row with an out-of-range time is skipped |
@@ -440,7 +502,7 @@ Then re-measure the earlier corpus with the new reader.
 | C5 | Whether any log line names a stdio launch, and the connection's timing; whether `logs_2.sqlite` prunes rows, and how soon | `transport`, `duration_ms`, retention |
 | C6 | Whether anything says a compaction was automatic or manual | `Compaction.trigger` |
 | C7 | `spawn_agent`'s role argument in a real session | Canonical `agent` |
-| C8 | Whether compressed rollouts appear by default in a later release | Reading `.jsonl.zst`, which needs a zstd dependency |
+| C8 | Closed: compressed rollouts are read ([Compressed rollouts](#compressed-rollouts)). What turns compression on where the feature is off by default is not known | — |
 | C9 | The macOS layout, against the Linux one | Platform coverage |
 | C10 | Where an MCP call served by a plugin names the plugin | `attributed_plugin` |
 | C11 | `state_5.sqlite` `threads.creator_account_id` when signed in | A per-thread account, should one be needed |
@@ -458,6 +520,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0035](../adrs/0035-a-codex-record-belongs-to-the-turn-it-names.md) | A record belongs to the turn it names; a web search's results are kept whole | The turn in force for every record; joining text blocks in `results` |
 | [0036](../adrs/0036-a-code-mode-cell-is-a-script-and-its-tools-are-their-own-calls.md) | A Code Mode cell is classed `script` and its status is its own status line; the tools it runs stay their own calls | Dropping the cell; folding nested calls into it; `other`; joining by position |
 | [0040](../adrs/0040-preserve-native-client-metadata-without-changing-runtime-identity.md) | Append local-only `Session.originator` metadata; kind, entrypoint, spans and public descriptors stay unchanged | Create an agent kind for each client name; replace the entrypoint with the originator; interpret known clients inside collection; add arbitrary originators to the public descriptor |
+| [0041](../adrs/0041-decode-compressed-codex-rollouts-with-the-standard-library-or-zstandard.md) | Read compressed rollouts: `compression.zstd` from Python 3.14, `zstandard` before it, installed only there | Report and skip them; the `zstd` command; a pure-Python decoder; `zstandard` on every version |
 
 ## Non-goals
 
@@ -482,6 +545,10 @@ Then re-measure the earlier corpus with the new reader.
   `core/src/tools/approvals.rs`, `core/src/exec_policy.rs`,
   `state/src/log_db.rs`, `login/src/token_data.rs`, `core/src/agent/role.rs`,
   `utils/string/src/truncate.rs`
+- openai/codex `rust-v0.166.0`: `rollout/src/compression.rs`,
+  `rollout/src/compression/access_metadata.rs`,
+  `rollout/src/compression/path_metadata.rs`, `rollout/src/recorder.rs`,
+  `rollout/src/rollout_file_name.rs`, `features/src/lib.rs`
 - Prior work: open-agent-security/openaidr#35 (reader), the
   `codex-sign-in-reader` branch (account)
 
