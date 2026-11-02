@@ -97,7 +97,6 @@ def _parent_with_workflow_agent(root: Path) -> Path:
         root,
         "-p",
         "s1",
-        "wf_1",
         "x",
         [
             user_text("s1", "w1", "2026-08-01T10:00:02.000Z", "workflow step", isSidechain=True),
@@ -274,7 +273,7 @@ def test_a_workflow_agents_project_root_is_the_parent_of_its_session(tmp_path: P
     encoded = str(project).replace("/", "-")
     record = user_text("s1", "w1", "2026-08-01T10:00:00.000Z", "workflow step")
     del record["cwd"]
-    write_workflow_agent_session(tmp_path, encoded, "s1", "wf_1", "x", [record])
+    write_workflow_agent_session(tmp_path, encoded, "s1", "x", [record])
     session = _sessions(tmp_path)[0]
     assert session.working_directory == str(project)
 

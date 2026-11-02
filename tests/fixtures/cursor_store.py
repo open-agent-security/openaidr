@@ -544,10 +544,10 @@ def _project(data_root: Path, cwd: str) -> Path:
     return data_root / "projects" / slug.strip("-")
 
 
-def write_server_metadata(data_root: Path, cwd: str, identifier: str, name: str) -> Path:
-    """The desktop app's record of one MCP server it loaded for a workspace, as
+def write_server_metadata(data_root: Path, identifier: str, name: str) -> Path:
+    """The desktop app's record of one MCP server it loaded for `/work/app`, as
     3.27.12 wrote it: `projects/<slug>/mcps/<identifier>/SERVER_METADATA.json`."""
-    directory = _project(data_root, cwd) / "mcps" / identifier
+    directory = _project(data_root, "/work/app") / "mcps" / identifier
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "SERVER_METADATA.json"
     document = {"serverIdentifier": identifier, "serverName": name}

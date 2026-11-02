@@ -95,7 +95,7 @@ def test_an_mcp_call_names_the_server_its_configuration_names(
         )
     c.write_desktop(user_data)
     data_root = tmp_path / "home" / ".cursor"
-    cs.write_server_metadata(data_root, "/work/app", "user-filesystem", "filesystem")
+    cs.write_server_metadata(data_root, "user-filesystem", "filesystem")
 
     found, retired = _calls(_read(tmp_path, user_data)["cursor:c1"])
 
@@ -122,7 +122,7 @@ def test_an_unreadable_server_record_keeps_the_identifier_and_is_reported(
     )
     c.write_desktop(user_data)
     record = cs.write_server_metadata(
-        tmp_path / "home" / ".cursor", "/work/app", "user-filesystem", "filesystem"
+        tmp_path / "home" / ".cursor", "user-filesystem", "filesystem"
     )
     record.write_text("{not json", encoding="utf-8")
 
