@@ -25,9 +25,9 @@ it had one runtime dependency, `adr-sensor`.
 ## Decision
 
 Read compressed rollouts through the same projection as plain ones. Decode
-with `compression.zstd` on Python 3.14 and later. Decode with `zstandard` on
-Python 3.11 to 3.13, a dependency pinned exactly and installed only below
-3.14 by an environment marker. The spec has the file format, the window rule
+with `compression.zstd` where it imports, which is Python 3.14 and later
+unless the build omits it. Otherwise decode with `zstandard`, a dependency
+pinned exactly and installed only below 3.14 by an environment marker. The spec has the file format, the window rule
 and the failure reasons:
 [Compressed rollouts](../specs/codex.md#compressed-rollouts).
 

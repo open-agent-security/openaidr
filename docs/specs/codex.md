@@ -96,8 +96,8 @@ installations turn it on.
 | Change of form | Codex writes the new form and then removes the old form, in both directions. It decompresses a rollout to plain `.jsonl` before it appends to it, for example when a person resumes the thread (Source `materialize_rollout_for_append_blocking`). So both forms can exist for a short time |
 
 **The reader reads a compressed rollout as it reads a plain rollout.** It
-decodes the file in 64 KiB chunks and projects one line at a time through the
-same path. The session ID, the turn keys and the spans come from the records,
+decodes the file in pieces of a bounded size and projects one line at a time
+through the same path. The session ID, the turn keys and the spans come from the records,
 never from the file name. So a thread keeps its identity when Codex compresses
 it. Frames that follow one another decode as one stream, as RFC 8878 permits.
 
@@ -118,17 +118,29 @@ starts before its last write, so the start time cannot exclude a file that
 the modification time keeps. A compressed rollout last written inside the
 window is read, also when its session started before the window.
 
-**Memory.** The reader never holds a whole decompressed rollout. It holds one
-chunk of decoded output and one line, as it holds one line of a plain
-rollout. Neither form has a size limit. A compressed rollout is read whole on
+**Memory.** The reader never holds a whole decompressed rollout. Each read
+from the decoder returns at most the bytes that the reader asks for, so a
+frame that expands far is decoded one piece at a time. The reader holds one
+piece and one line, as it holds one line of a plain rollout. Neither form has a size limit. A compressed rollout is read whole on
 each read, because Codex never appends to it.
 
-**Decoder.** Python 3.14 and later use the standard library's
-`compression.zstd`. Python 3.11 to 3.13 use `zstandard`, pinned exactly and
-installed only below 3.14 (ADR-0041).
+**Decoder.** The reader uses the standard library's `compression.zstd` when it
+imports. Python has it from 3.14, but a Python build can omit it. Otherwise
+the reader uses `zstandard`, pinned exactly and installed only below 3.14
+(ADR-0041). The reader imports the decoder at the first compressed rollout,
+never with the module. So on a 3.14 build without `compression.zstd`, each
+compressed rollout is one failure, and plain rollouts and the other kinds are
+read as usual.
+
+**Truncation.** `zstandard` returns the output of a truncated frame with no
+error. So before it decodes a file, the reader walks the frame and block
+headers (RFC 8878 section 3.1) and skips the block content. A file that ends
+inside a frame is truncated. The walk stops at anything it does not know, and
+the decoder then rejects that data.
 
 | Failure | Cause |
 |---|---|
+| `<path>: no zstd decoder is available; session withheld` | Neither `compression.zstd` nor `zstandard` imports |
 | `<path>: compressed rollout ends inside a zstd frame; session withheld` | The data stops before its frame ends. The file is truncated |
 | `<path>: compressed rollout does not decode as zstd; session withheld` | The decoder rejects the data: not zstd, a damaged frame, or bytes after the last frame |
 | `<path>: line N: malformed rollout record; session withheld` | The data decodes, but a line is not a record. Codex writes no checksum, so damage can decode to wrong text, and a damaged record usually fails here |
@@ -520,7 +532,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0035](../adrs/0035-a-codex-record-belongs-to-the-turn-it-names.md) | A record belongs to the turn it names; a web search's results are kept whole | The turn in force for every record; joining text blocks in `results` |
 | [0036](../adrs/0036-a-code-mode-cell-is-a-script-and-its-tools-are-their-own-calls.md) | A Code Mode cell is classed `script` and its status is its own status line; the tools it runs stay their own calls | Dropping the cell; folding nested calls into it; `other`; joining by position |
 | [0040](../adrs/0040-preserve-native-client-metadata-without-changing-runtime-identity.md) | Append local-only `Session.originator` metadata; kind, entrypoint, spans and public descriptors stay unchanged | Create an agent kind for each client name; replace the entrypoint with the originator; interpret known clients inside collection; add arbitrary originators to the public descriptor |
-| [0041](../adrs/0041-decode-compressed-codex-rollouts-with-the-standard-library-or-zstandard.md) | Read compressed rollouts: `compression.zstd` from Python 3.14, `zstandard` before it, installed only there | Report and skip them; the `zstd` command; a pure-Python decoder; `zstandard` on every version |
+| [0041](../adrs/0041-decode-compressed-codex-rollouts-with-the-standard-library-or-zstandard.md) | Read compressed rollouts: `compression.zstd` where it imports, else `zstandard`, installed only below Python 3.14 | Report and skip them; the `zstd` command; a pure-Python decoder; `zstandard` on every version |
 
 ## Non-goals
 
