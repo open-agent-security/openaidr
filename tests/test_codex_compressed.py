@@ -123,6 +123,27 @@ def test_a_damaged_compressed_rollout_is_one_failure_and_the_rest_are_read(
     assert failures == [f"{bad}: compressed rollout {reason}; session withheld"]
 
 
+def test_a_compressed_rollout_whose_last_record_has_no_newline_is_withheld(
+    tmp_path: Path,
+) -> None:
+    """A plain rollout's unterminated last line is a record still being
+    written, read when its newline arrives. Codex never appends to a
+    compressed rollout, so there the same line is a cut record."""
+    rollout = _rollout("t")
+    tail = rollout.text() + '{"timestamp": "2026-10-16T02:00:09.000Z", "ordinal": 9, "type": "resp'
+    plain = rollout.write(tmp_path / "plain")
+    plain.write_text(tail, encoding="utf-8")
+    compressed = rollout.write(tmp_path / "compressed", compressed=True)
+    compressed.write_bytes(zstd(tail.encode()))
+
+    assert _read(tmp_path / "compressed") == (
+        [],
+        [f"{compressed}: compressed rollout ends inside a record; session withheld"],
+    )
+    plain_sessions, plain_failures = _read(tmp_path / "plain")
+    assert plain_failures == [] and [s.session_id for s in plain_sessions] == ["codex:t"]
+
+
 def test_a_compressed_rollout_last_written_before_the_window_is_not_opened(
     tmp_path: Path,
 ) -> None:
