@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import sys
 import tomllib
+import tracemalloc
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -58,12 +60,15 @@ def test_a_compressed_rollout_reads_as_the_same_session_as_its_plain_form(
     assert compressed[0].turns[1].tool_calls[0].span == "codex:t:o5:0"
 
 
-def test_a_rollout_in_several_zstd_frames_reads_as_one(tmp_path: Path) -> None:
+@pytest.mark.parametrize("between", [b"", b"\x50\x2a\x4d\x18\x03\x00\x00\x00abc"])
+def test_a_rollout_in_several_zstd_frames_reads_as_one(tmp_path: Path, between: bytes) -> None:
+    """Frames follow one another, and a skippable frame between them is
+    skipped (RFC 8878 section 3.1.2)."""
     rollout = _rollout("t")
     rollout.write(tmp_path / "plain")
     lines = rollout.text().encode().splitlines(keepends=True)
     path = rollout.write(tmp_path / "framed", compressed=True)
-    path.write_bytes(zstd(b"".join(lines[:3])) + zstd(b"".join(lines[3:])))
+    path.write_bytes(zstd(b"".join(lines[:3])) + between + zstd(b"".join(lines[3:])))
 
     assert _read(tmp_path / "framed") == _read(tmp_path / "plain")
 
@@ -164,14 +169,91 @@ def test_collect_file_leaves_a_compressed_rollout_to_its_plain_form(tmp_path: Pa
     assert CodexReader(tmp_path).collect_file(compressed) == ([], [])
 
 
-def test_the_decoder_is_the_standard_librarys_from_python_3_14() -> None:
-    """`compression.zstd` arrived in 3.14; before it, `zstandard` decodes, and
-    the dependency's marker installs it exactly there."""
-    module = type(codex._frame_decoder()).__module__
-    if sys.version_info >= (3, 14):
-        assert module.startswith("compression.zstd")
-    else:
-        assert module.startswith("zstandard")
+def _without(monkeypatch: pytest.MonkeyPatch, *modules: str) -> None:
+    """Make each module fail to import, as on a Python built without it."""
+    for module in modules:
+        monkeypatch.setitem(sys.modules, module, None)
+
+
+def test_the_standard_librarys_decoder_is_used_where_python_has_one() -> None:
+    zstd_module = pytest.importorskip("compression.zstd")
+
+    assert codex._zstd_decoder() == (zstd_module.ZstdFile, zstd_module.ZstdError)
+
+
+def test_zstandard_decodes_where_the_standard_library_has_no_zstd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    zstandard = pytest.importorskip("zstandard")
+    rollout = _rollout("t")
+    rollout.write(tmp_path / "plain")
+    rollout.write(tmp_path / "compressed", compressed=True)
+    _without(monkeypatch, "compression", "compression.zstd")
+
+    decoder = codex._zstd_decoder()
+
+    assert decoder is not None and decoder[1] is zstandard.ZstdError
+    assert _read(tmp_path / "compressed") == _read(tmp_path / "plain")
+
+
+def test_with_no_zstd_decoder_each_compressed_rollout_is_one_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Python 3.14 build can omit `compression.zstd`, and the dependency's
+    marker leaves `zstandard` out there."""
+    _rollout("plain").write(tmp_path)
+    compressed = _rollout("compressed").write(tmp_path, compressed=True)
+    _without(monkeypatch, "compression", "compression.zstd", "zstandard")
+
+    sessions, failures = _read(tmp_path)
+
+    assert [s.session_id for s in sessions] == ["codex:plain"]
+    assert failures == [f"{compressed}: no zstd decoder is available; session withheld"]
+
+
+def test_no_zstd_decoder_is_imported_with_the_reader() -> None:
+    """A missing decoder fails one compressed file, never the import of the
+    reader that every kind and command loads."""
+    tree = ast.parse(Path(codex.__file__).read_text(encoding="utf-8"))
+    imported = {
+        alias.name.split(".")[0]
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        node.module.split(".")[0]
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+
+    assert not imported & {"compression", "zstandard"}
+
+
+def test_the_dependency_marker_installs_zstandard_where_python_may_lack_zstd() -> None:
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     [requirement] = [d for d in project["project"]["dependencies"] if d.startswith("zstandard")]
     assert requirement.endswith("; python_full_version < '3.14'")
+
+
+def test_a_frame_that_expands_far_is_decoded_a_bounded_piece_at_a_time(tmp_path: Path) -> None:
+    """Whitespace lines between the records: 32 MiB that compress to a few
+    KiB. A decoder that expands a whole input chunk at once holds all of it."""
+    rollout = _rollout("t")
+    padding = " " * (64 * 1024 - 1) + "\n"
+    lines = rollout.text().splitlines(keepends=True)
+    text = lines[0] + padding * 512 + "".join(lines[1:])
+    plain = rollout.write(tmp_path / "plain")
+    plain.write_text(text, encoding="utf-8")
+    compressed = rollout.write(tmp_path / "compressed", compressed=True)
+    compressed.write_bytes(zstd(text.encode()))
+    assert compressed.stat().st_size < 64 * 1024
+
+    tracemalloc.start()
+    try:
+        sessions = _read(tmp_path / "compressed")
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert sessions == _read(tmp_path / "plain")
+    assert peak < 4 * 1024 * 1024

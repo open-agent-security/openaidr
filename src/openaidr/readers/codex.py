@@ -27,13 +27,12 @@ import os
 import re
 import socket
 import stat
-import sys
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import BinaryIO
 from urllib.parse import unquote, urlparse
 
 from openaidr.kinds import map_source
@@ -55,23 +54,6 @@ from openaidr.readers.codex_log import CodexLogs, Placement
 from openaidr.toolclass import canonical_arguments, tool_class
 from openaidr.toolnames import split_tool_name
 
-if TYPE_CHECKING:
-    from _typeshed import WriteableBuffer
-
-if sys.version_info >= (3, 14):
-    from compression.zstd import ZstdDecompressor, ZstdError
-
-    def _frame_decoder() -> ZstdDecompressor:
-        return ZstdDecompressor()
-
-else:
-    import zstandard
-    from zstandard import ZstdError
-
-    def _frame_decoder() -> zstandard.ZstdDecompressionObj:
-        return zstandard.ZstdDecompressor().decompressobj()
-
-
 SOURCE = "codex"
 SESSIONS = "sessions"
 ARCHIVED = "archived_sessions"
@@ -79,8 +61,9 @@ INDEX = "session_index.jsonl"
 
 #: What Codex adds to a rollout's name when it compresses one (docs/specs/codex.md).
 COMPRESSED = ".zst"
-#: How much compressed input is decoded at a time.
-_ZSTD_CHUNK = 64 * 1024
+#: The zstd frame magic and the skippable-frame magic range (RFC 8878 section 3.1).
+_ZSTD_MAGIC = 0xFD2FB528
+_SKIPPABLE_MAGIC = 0x184D2A50
 
 #: The same bounds as the Claude Code reader's incremental projections (ADR-0029).
 _MAX_INCREMENTAL_FILES = 128
@@ -1281,17 +1264,28 @@ class _Cursor:
             if self.error is not None:
                 return
             if compressed:
-                try:
-                    self._project(io.BufferedReader(_Zstd(file)))
-                except _Truncated:
-                    self.error = "compressed rollout ends inside a zstd frame; session withheld"
-                except ZstdError:
-                    self.error = "compressed rollout does not decode as zstd; session withheld"
+                self._project_compressed(file)
                 return
             file.seek(self.offset)
             self._project(file)
 
-    def _project(self, stream: io.BufferedIOBase) -> None:
+    def _project_compressed(self, file: BinaryIO) -> None:
+        decoder = _zstd_decoder()
+        if decoder is None:
+            self.error = "no zstd decoder is available; session withheld"
+            return
+        open_frames, decode_error = decoder
+        try:
+            _check_frames(file)
+            file.seek(0)
+            with open_frames(file) as stream:
+                self._project(stream)
+        except (_Truncated, EOFError):
+            self.error = "compressed rollout ends inside a zstd frame; session withheld"
+        except decode_error:
+            self.error = "compressed rollout does not decode as zstd; session withheld"
+
+    def _project(self, stream: BinaryIO) -> None:
         for raw in stream:
             # A record still being written waits for its newline, and is
             # read again from its first byte next time.
@@ -1323,38 +1317,65 @@ class _Truncated(Exception):
     """The compressed input ended inside a zstd frame."""
 
 
-class _Zstd(io.RawIOBase):
-    """The decompressed bytes of a zstd file, frame after frame (RFC 8878),
-    decoded a chunk at a time so that a rollout is never held whole."""
+def _zstd_decoder() -> tuple[Callable[[BinaryIO], BinaryIO], type[Exception]] | None:
+    """How to read a zstd file as a stream of its frames, and the error its data
+    raises: the standard library's `compression.zstd`, which a Python 3.14 build
+    can omit, else `zstandard`, else none. Each `read(n)` returns at most `n`
+    bytes, so one call never expands a whole frame into memory."""
+    try:
+        from compression import zstd  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        try:
+            import zstandard
+        except ImportError:
+            return None
+        return (
+            lambda file: io.BufferedReader(
+                zstandard.ZstdDecompressor().stream_reader(file, read_across_frames=True)
+            ),
+            zstandard.ZstdError,
+        )
+    return zstd.ZstdFile, zstd.ZstdError
 
-    def __init__(self, source: io.BufferedIOBase) -> None:
-        self._source = source
-        self._decoder = _frame_decoder()
-        self._input = b""
-        self._output = memoryview(b"")
-        self._in_frame = False
 
-    def readable(self) -> bool:
-        return True
+def _check_frames(file: BinaryIO) -> None:
+    """Raise `_Truncated` when the file ends inside a frame. `zstandard`
+    returns a truncated frame's output without an error, so the frame and
+    block headers are walked first (RFC 8878 section 3.1). The walk reads no
+    block content, and it stops at anything it does not know, which the
+    decoder then rejects."""
+    size = os.fstat(file.fileno()).st_size
 
-    def readinto(self, buffer: WriteableBuffer) -> int:
-        while not self._output:
-            if not self._input:
-                self._input = self._source.read(_ZSTD_CHUNK)
-                if not self._input:
-                    if self._in_frame:
-                        raise _Truncated
-                    return 0
-            if self._decoder.eof:
-                self._decoder = _frame_decoder()
-            self._output = memoryview(self._decoder.decompress(self._input))
-            self._in_frame = not self._decoder.eof
-            self._input = self._decoder.unused_data if self._decoder.eof else b""
-        with memoryview(buffer) as target:
-            size = min(len(target), len(self._output))
-            target[:size] = self._output[:size]
-        self._output = self._output[size:]
-        return size
+    def take(count: int) -> bytes:
+        data = file.read(count)
+        if len(data) < count:
+            raise _Truncated
+        return data
+
+    def skip(count: int) -> None:
+        if file.seek(count, os.SEEK_CUR) > size:
+            raise _Truncated
+
+    while magic := file.read(4):
+        magic = int.from_bytes(magic + take(4 - len(magic)), "little")
+        if magic & ~0xF == _SKIPPABLE_MAGIC:
+            skip(int.from_bytes(take(4), "little"))
+            continue
+        if magic != _ZSTD_MAGIC:
+            return
+        descriptor = take(1)[0]
+        single_segment = descriptor >> 5 & 1
+        content_size = (single_segment, 2, 4, 8)[descriptor >> 6]
+        skip(1 - single_segment + (0, 1, 2, 4)[descriptor & 3] + content_size)
+        last = False
+        while not last:
+            header = int.from_bytes(take(3), "little")
+            last, kind = bool(header & 1), header >> 1 & 3
+            if kind == 3:
+                return
+            skip(1 if kind == 1 else header >> 3)
+        if descriptor >> 2 & 1:
+            skip(4)
 
 
 class CodexReader:
