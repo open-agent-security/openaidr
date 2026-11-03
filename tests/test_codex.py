@@ -366,8 +366,8 @@ def test_a_pending_calls_namespace_is_corrected_from_the_logged_server(tmp_path:
 
 
 def test_each_call_ran_where_codex_says(tmp_path: Path) -> None:
-    rollout = Rollout("t", cwd="/work/project")
-    rollout.turn("t1", cwd="/work/project")
+    rollout = Rollout("t")
+    rollout.turn("t1")
     rollout.exec("item", "pwd", cwd="/work/project/sub")
     rollout.call("relative", "exec_command", {"cmd": "pwd", "workdir": "pkg"})
     rollout.call("inherit", "view_image", {"path": "a.png"})

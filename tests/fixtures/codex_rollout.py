@@ -26,7 +26,6 @@ class Rollout:
         parent: str | None = None,
         source: object = "exec",
         originator: str = "codex_exec",
-        cwd: str = "/work/project",
         branch: str | None = "main",
         meta: dict[str, object] | None = None,
     ) -> None:
@@ -39,7 +38,7 @@ class Rollout:
             "session_id": root or thread_id,
             "id": thread_id,
             "timestamp": _iso(self._clock),
-            "cwd": cwd,
+            "cwd": "/work/project",
             "originator": originator,
             "cli_version": "0.163.0",
             "source": source,
@@ -101,7 +100,6 @@ class Rollout:
         approval: str = "never",
         sandbox: str = "workspace-write",
         window: int = 258400,
-        cwd: str = "/work/project",
     ) -> None:
         self.turn_id = turn_id
         self.event(
@@ -115,7 +113,7 @@ class Rollout:
             "turn_context",
             {
                 "turn_id": turn_id,
-                "cwd": cwd,
+                "cwd": "/work/project",
                 "model": "gpt-5.5",
                 "approval_policy": approval,
                 "sandbox_policy": {"type": sandbox},
