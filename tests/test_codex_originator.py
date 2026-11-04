@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from openaidr.model import LOCAL_ONLY
 from openaidr.readers.base import Window
 from openaidr.readers.codex import CodexReader
 from tests.fixtures.codex_rollout import Rollout
@@ -58,3 +59,9 @@ def test_originator_is_native_metadata_without_changing_identity(
         call.span for turn in session.turns for call in turn.tool_calls
     ]
     assert asdict(session) == before
+
+
+def test_originator_is_named_local_only() -> None:
+    """ADR-0040 keeps the client name on the machine. `LOCAL_ONLY` is the
+    set a consumer withholds, so the field has to be in it."""
+    assert "originator" in LOCAL_ONLY

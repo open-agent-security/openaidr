@@ -63,6 +63,9 @@ LOCAL_ONLY = frozenset(
         # without naming them; these name them.
         "display_name",
         "email",
+        # The native client name. A client-controlled string can name a
+        # person or a host (ADR-0040).
+        "originator",
     }
 )
 
@@ -536,7 +539,8 @@ class Session:
     #: The same, for sub-agents: whether a sub-agent this session started
     #: would have been collected as a session of its own.
     subagents_recorded: bool = False
-    #: The native client name, as recorded; descriptive and local-only.
+    #: The native client name, as recorded. A client-controlled string can
+    #: name a person or a host, so it stays on the machine. `LOCAL_ONLY`.
     originator: str | None = None
 
     @property
