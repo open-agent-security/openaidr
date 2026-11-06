@@ -8,17 +8,20 @@ one machine — so it is open, and every new agent format is coverage somebody
 else can contribute. What a consumer does with the model is the consumer's
 concern; this document takes no position on it.
 
-**OpenAIDR does not parse agent formats itself.** `adr-sensor` does — a
-third-party Apache-2.0 package, not ours, which reads seven agent kinds today.
-This package is the normalisation layer over it: it owns the session model, the
-identity a consumer addresses rows by, and the fields upstream does not
-populate. Parsing a format ourselves is the exception, taken per kind and only
-when upstream cannot serve it (see [One contract, per agent
-kind](#one-contract-per-agent-kind)).
+**Four kinds are read today:** `claude-code`, `devin`, `codex` and `cursor`.
+`adr-sensor` parses seven agent kinds. This package instantiates one of
+those parsers, for Claude Code. Devin, Codex and Cursor are read by owned
+readers on the same contract ([One contract, per agent
+kind](#one-contract-per-agent-kind)). An owned reader is the choice when
+the dependency cannot serve the kind.
+
+This package owns the session model. It owns the identity a consumer uses
+to address a row. It owns each field a reader recovers when the parser
+does not supply it.
 
 | | `adr-sensor` supplies | OpenAIDR adds |
 |---|---|---|
-| **Agent formats** | Seven kinds parsed, of which this package instantiates **one** ([Agent kind coverage](#agent-kind-coverage)) | Nothing — this is why the dependency exists |
+| **Agent formats** | Seven kinds parsed. This package instantiates the Claude Code parser ([Agent kind coverage](#agent-kind-coverage)) | Owned readers for `devin`, `codex` and `cursor` |
 | **Discovery** | A whole-tree pass keyed on the `sessionId` field | Which files exist, and which session each one *is* — the per-file call that keeps a subagent distinct from its parent |
 | **Span identity** | No identifier on a tool call | Derived from session, turn key and the call's index within that turn |
 | **Status** | `success` / `unknown`, per parser | `pending` from a missing result, `rejected` from the record's `toolDenialKind` |
@@ -54,13 +57,12 @@ absence is total and silent, which is why it is declared here.
 
 ### Codex and Cursor are the intended next kinds
 
-Codex and Cursor are now read, by OpenAIDR-owned readers rather than the
-dependency ([Codex](codex.md), [Cursor](cursor.md)); the rows below are why. What
-follows is not a plan
-but the measurement that should inform one, taken from one active development machine so the cost is known before
-the work is scheduled rather than discovered during it. Both would arrive
-**dependency-only** — the recoveries the Claude Code reader performs are per-kind
-and none of them would carry over.
+Codex and Cursor are now read by owned readers
+([Codex](codex.md), [Cursor](cursor.md)).
+The rows below show why a dependency parser was not enough.
+The rows are a measurement from one development machine, taken before the work.
+They record that cost. They are not a plan.
+A dependency-only reader would miss the Claude Code recoveries, because they are per kind.
 
 | | Measured |
 |---|---|
@@ -118,9 +120,9 @@ discards is stated rather than implied.
 | Per-turn time | No — one session-level timestamp, the earliest | **Modelled**, from each record's own timestamp, recovered in this package's own pass. Absent where a record carried no timestamp, or no identity for the join to land on. See ADR-0010 |
 | `rejected` | No — `toolDenialKind` and `is_error` are both dropped | **Read** from the record's `toolDenialKind` |
 | `error` | Only where a parser sets it; the Claude one does not | **Read** from `is_error` on the result block. Upstream's status is not a success signal |
-| `interrupted` | No | **Not emitted.** The `Status` type carries it for kinds that can supply it |
+| `interrupted` | No | **Not emitted for Claude Code or Devin.** Neither Claude Code source records a stop, and Devin's result reasons do not include one. Codex emits it from a completion item's status, from output Codex marks aborted, and from a Code Mode cell marked terminated. Cursor emits it when a failed call sets `aborted` |
 | Span identity | No call id — but `sequence_id` carries the record's own key | **Derived** from session, turn key and index within the turn |
-| Sidechain marker | No | **Derived from the file's path**: a transcript under a `subagents` directory is a subagent's, and every turn in it is marked. *Proposed*: an `agent-<id>.jsonl` at any depth below it, which takes in a workflow's agents under `subagents/workflows/<run>/`; see [Token usage](token-usage.md#sub-agents-and-workflow-agents) |
+| Sidechain marker | No | **Derived from the file path.** A `.jsonl` transcript under a `subagents` directory, at any depth, is a sub-agent session, and every turn in it is marked. That includes a workflow agent at `subagents/workflows/<run>/agent-<id>.jsonl`. A `journal.jsonl` beside it is not a transcript. See [Token usage](token-usage.md#sub-agents-and-workflow-agents) |
 | Session end | No — only the earliest timestamp | **Not modelled.** Session start is carried, and beside it the newest record observed — which is the latest activity seen, not an end. A session still being written has a newest record either way |
 
 **Discovery is ours, because identity is.** Upstream's whole-tree parse keys each
@@ -137,15 +139,13 @@ asks became a list of recoveries, because contributing upstream is not an option
 available to this project and every field was in the file. The table below is
 kept as the record of what was missing and what closed it.
 
-The cost is stated plainly rather than buried: this reader knows nine keys of
-Claude Code's JSONL, and every recovery is per-kind. A second agent kind gets
-sessions from the dependency for free and none of this — measured, for the two
-kinds most likely to be added next, in
-[Agent kind coverage](#agent-kind-coverage). The division that
-actually holds is **the dependency owns event extraction across kinds; the reader
-owns per-kind recovery of what the shared schema drops** — which is a defensible
-architecture, and not the one "we depend on a parser" describes.
-
+The Claude Code reader knows nine keys of its JSONL.
+Every one of those recoveries is per kind.
+Devin, Codex and Cursor recover their own records in their own readers.
+The cost of a dependency-only reader is measured in
+[Agent kind coverage](#agent-kind-coverage).
+For Claude Code, the dependency owns event extraction.
+The Claude Code reader owns recovery of what that schema drops.
 
 `adr-sensor` is a third party we consume and do not modify: it is Uber's
 project, pinned to a released version from PyPI. **Contributing upstream is not
@@ -232,7 +232,7 @@ declaration — naming and representation are implementation choices.
 | Turn count | | |
 | Model | As the agent reports it, where it does | |
 | Client's own name | The label chosen to identify the session, set by the person or written by the agent, and what the client shows wherever it lists sessions. Absent where the client never named one, which is most sub-agents; a session renamed to nothing reads back as empty, not as unnamed | local-only |
-| Generated title | *Proposed.* The name the client generated for the session (`ai-title`), carried beside the one above rather than folded into it. Absent where none was generated, which includes every sub-agent. See [Token usage](token-usage.md) | local-only |
+| Generated title | The name the client generated for the session. Claude Code reads `ai-title`. It sits beside the name a person sets. Absent where none was generated, including every Claude Code sub-agent. See [Token usage](token-usage.md) | local-only |
 | Working directory | | local-only |
 | Machine and user | | local-only |
 | Turns | Ordered | |
@@ -246,7 +246,7 @@ declaration — naming and representation are implementation choices.
 | Role | Who produced it | |
 | Text | | local-only |
 | Sidechain marker | Belongs to a subagent, not the main thread | |
-| Response identity | The provider response this record belongs to; several turns share one when the client wrote it as several records. *Proposed*: see [Token usage](token-usage.md) | |
+| Response identity | The provider response this record belongs to. Several turns share one response when the client wrote it as several records. See [Token usage](token-usage.md) | |
 | Tool calls | Ordered | |
 
 **Tool call** — one invocation and its outcome.
@@ -256,9 +256,9 @@ declaration — naming and representation are implementation choices.
 | Span identity | Stable across re-reads — see below | |
 | Tool name | Normalized | |
 | MCP server | Absent for built-in tools | |
-| Tool class | *Proposed.* What the tool *is*, from a closed vocabulary filled from each kind's own table, so a consumer never has to learn every kind's tool names. Absent for a name the table does not know: unknown, never ordinary. It normalises vocabulary, like the server split, and says nothing about what the call did. See ADR-0021 | |
+| Tool class | What the tool is, from a closed vocabulary filled from each kind's own table, so a consumer does not have to learn every kind's tool names. Absent for a name the table does not know: unknown, never ordinary. It normalises vocabulary, like the server split, and says nothing about what the call did. See ADR-0021 and ADR-0036 | |
 | Arguments | | local-only |
-| Canonical arguments | *Proposed.* The arguments a consumer most often needs — command, path, content, new text, URL, agent, skill — under one key name across kinds. A key the kind did not record is absent, never guessed; the arguments above are unchanged beside them. See ADR-0021 | local-only |
+| Canonical arguments | The arguments a consumer most often needs, under one key name across kinds: command, path, content, new text, URL, agent, skill, and edits. A key the kind did not record is absent, never guessed. The recorded arguments are unchanged beside them. See ADR-0021 and ADR-0030 | local-only |
 | Status | Six values — see below | |
 | Exit code | A shell command's own exit status, where the kind records one | |
 | Duration | Wall clock from the record's own timestamps, not from the dependency's event model, which carries none. For an MCP call the connection log's tool-execution time fills a gap the transcript left, and never replaces a value it stated. **No absolute per-call time is carried beside it**: a call's start is its turn's occurrence time, and — only where the duration is the transcript's own round trip, not one the log filled in — a call's end follows from the two. Carrying either again would restate a value the model already holds, and recovering an end independently would require a join this package refuses (ADR-0010) | |
@@ -267,7 +267,11 @@ declaration — naming and representation are implementation choices.
 | Result size | The size of what the agent produced, not of the abridged copy held here | |
 | Truncation marker | Upstream elided part of the result. The marker it leaves carries the count removed, which is what makes the original size exact rather than estimated | |
 
-A session additionally carries its **model responses** (*proposed*) — one per request the agent made to its provider, with the token counts the transcript recorded and the attributes that set their price, never a price itself. See [Token usage](token-usage.md), ADR-0014 and ADR-0015.
+A session also carries its model responses.
+There is one response per request the agent made to its provider.
+Each response carries the token counts the agent recorded, and the attributes that set their price.
+This package never sets a price.
+See [Token usage](token-usage.md), ADR-0014 and ADR-0015.
 
 A session additionally carries its **MCP connections** — one record per server per session: transport, endpoint, the name and version the server advertised on the handshake, whether it came up, and a failure category if it did not. Connection-scoped, not call-scoped: these are properties of the connection, and repeating them on every call would say otherwise. The server's own words about a failure are **local-only**; the category is not. Beside them, `mcp_log_state` records whether the log was readable at all.
 
@@ -385,8 +389,8 @@ tool that keeps a laptop warm gets uninstalled regardless of what it finds.
 projector but no resumable public parse. OpenAIDR therefore owns the JSONL tail
 loop for Claude Code and uses that projector only for complete appended records.
 It retains the projected state and returns the current full session, while the
-ordinary collector remains the cold recovery path. ADR-0011 records the
-boundary and its compatibility cost.
+ordinary collector remains the cold recovery path. ADR-0029 records the
+128-file and 16 MiB cache bound. It supersedes ADR-0011.
 
 Claude Code retains the most recently used projections for at most 128 files
 and 16 MiB of source bytes in total, including incomplete trailing records.
@@ -460,16 +464,21 @@ for no other.
 |---|---|---|
 | `claude-code` | `oauthAccount` in `.claude.json` (`.claude-custom-oauth.json` with `CLAUDE_CODE_CUSTOM_OAUTH_URL` set): inside the configuration directory when `CLAUDE_CONFIG_DIR` (or the caller) names one, else in the home directory; a legacy `.config.json` in the directory wins. In a cloud session (`CLAUDE_CODE_REMOTE=true` with `CLAUDE_CODE_ACCOUNT_UUID` set), the session's `CLAUDE_CODE_ACCOUNT_UUID` and `CLAUDE_CODE_USER_EMAIL` win, and the file adds its name and plan only when it records the same account (ADR-0028) | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
 | `devin` | nothing on disk names the person | None. `sign_in_query("devin")` gives Devin's own `devin auth status` (binary under `$XDG_DATA_HOME/devin/cli`, else on `PATH`, else in Devin Desktop), which asks Devin's server. Its `read` returns `User ID`, `Name`, `Email` and `Plan`, or None when no `User ID` is printed. This package never runs it and never opens `credentials.toml` |
+| `codex` | `auth.json` under `$CODEX_HOME`, else `~/.codex`, when `cli_auth_credentials_store` is `file` or `auto`. A missing `config.toml` selects `file`. Any other store, or a `config.toml` that cannot be read, leaves no file. Only the `id_token` identity claims are read. The access token and the refresh token are not read. An API key field has only its presence checked, never its value read. The signature is not checked | `chatgpt_user_id`, else `user_id`; `name`; `email`, else the profile email; `chatgpt_plan_type`. None when the sign-in is not ChatGPT, or when those user claims are absent |
+| `cursor` | `authInfo` in `cli-config.json` under the config root (`$CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`). The tokens in `auth.json` are not read | `userId`, else `authId`; `displayName`; `email`. None when both ids are absent. No plan |
 | any other | — | None |
 
 `display_name` and `email` are `LOCAL_ONLY`. Reading a sign-in adds no session
 coverage.
 
-`openaidr.accounts.sign_in_records(kind)` names every file whose change can
-change the answer, existing or not: Claude Code's legacy `.config.json` and its
-`.claude.json`, and Devin's `credentials.toml` (ADR-0027 clause 5). A consumer
-asks again when any of them changes, so a consumer that asks Devin does so once
-per sign-in, not on every pass.
+`sign_in_records(kind)` names every file that can change the answer, even
+when the file is absent (ADR-0027).
+Claude Code names `.config.json` and `.claude.json`.
+Codex names `config.toml` and `auth.json`.
+Devin names `credentials.toml`.
+Cursor names `cli-config.json`.
+A consumer asks again when any of those files changes, so a Devin query
+runs once per sign-in.
 
 ## What this component does not know
 
