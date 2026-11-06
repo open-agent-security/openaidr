@@ -1096,7 +1096,7 @@ def test_connection_fields_come_from_one_attempt_not_a_newer_pending_one(
         9,
         [
             *startup(0),
-            *mcp_http(1, "gh", "https://old", outcome="ok"),
+            *mcp_http(1, "gh", "https://old"),
             # A later reconnect to a different endpoint has not resolved yet;
             # its endpoint must not be lent to the attempt that actually
             # connected.

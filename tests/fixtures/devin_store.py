@@ -280,7 +280,7 @@ def mcp_stdio(second: int, server: str, outcome: str = "ok") -> list[str]:
     return lines + [_outcome(second, server, outcome, 250_000)]
 
 
-def mcp_http(second: int, server: str, url: str, outcome: str = "ok") -> list[str]:
+def mcp_http(second: int, server: str, url: str) -> list[str]:
     target = "toolbox::tools::mcp"
     channel = f'output_channel="MCP: {server}" server="{server}"'
     return [
@@ -292,7 +292,7 @@ def mcp_http(second: int, server: str, url: str, outcome: str = "ok") -> list[st
             f"{channel} Connecting to streamable HTTP MCP server '{server}' at: {url}",
             10,
         ),
-        _outcome(second, server, outcome, 120_000),
+        _outcome(second, server, "ok", 120_000),
     ]
 
 
