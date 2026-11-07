@@ -57,7 +57,6 @@ class _File:
     open_turns: dict[str, str | None] = field(default_factory=dict)
     #: Sub-agent call to the request of the turn that started it.
     open_children: dict[str, str | None] = field(default_factory=dict)
-    conversations: list[str] = field(default_factory=list)
     requests: dict[str, list[str]] = field(default_factory=dict)
     usage: dict[str, list[Usage]] = field(default_factory=dict)
     subagent_usage: dict[str, list[Usage]] = field(default_factory=dict)
@@ -118,8 +117,6 @@ class _File:
             return
         request = _string(metadata.get("request_id"))
         self.open_turns[conversation] = request
-        if conversation not in self.conversations:
-            self.conversations.append(conversation)
         if request is not None:
             self.requests.setdefault(conversation, []).append(request)
 
@@ -130,8 +127,6 @@ class _File:
         self.open_turns.pop(conversation, None)
         if metadata.get("outcome") != "error":
             return
-        if conversation not in self.conversations:
-            self.conversations.append(conversation)
         self.errors.setdefault(conversation, []).append(
             Outcome(
                 request_id=_string(metadata.get("request_id")),
