@@ -119,7 +119,7 @@ That installs an `openaidr` command:
 
 ```console
 $ openaidr --version
-openaidr 0.10.5
+openaidr 0.10.6
 ```
 
 `openaidr sessions` prints what each agent on this machine actually did —
