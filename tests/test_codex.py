@@ -422,8 +422,8 @@ def test_calls_are_classed_and_their_arguments_named_once(tmp_path: Path) -> Non
     assert calls["patch"].tool_class == "file_edit"
     assert calls["patch"].canonical_arguments == {
         "edits": [
-            {"path": ".env", "kind": "add", "new_text": "TOKEN=abc"},
-            {"path": "src/app.py", "kind": "update", "new_text": "new"},
+            {"path": ".env", "kind": "add", "old_text": "", "new_text": "TOKEN=abc"},
+            {"path": "src/app.py", "kind": "update", "old_text": "old", "new_text": "new"},
         ]
     }
     assert (calls["spawn"].tool_class, calls["spawn"].canonical_arguments) == (

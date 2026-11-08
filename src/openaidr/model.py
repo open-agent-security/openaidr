@@ -136,7 +136,8 @@ class ToolCall:
     #: nothing about what the call did.
     tool_class: str | None = None
     #: The arguments a consumer most often needs, under one key name across
-    #: kinds: `command`, `path`, `content`, `new_text`, `url`, `agent`, `skill`.
+    #: kinds: `command`, `path`, `content`, `new_text`, `url`, `agent`, `skill`,
+    #: and `edits`, a file edit's `{path, kind, old_text, new_text}` entries.
     #: A key the kind did not record is absent, never guessed. `arguments` is
     #: unchanged beside it. `LOCAL_ONLY`, on the same terms as `arguments`.
     canonical_arguments: dict[str, object] = field(default_factory=dict)
