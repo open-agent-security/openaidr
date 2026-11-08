@@ -200,9 +200,16 @@ chosen before the reported number is uncomfortable would be the same arbitrary
 threshold at a different value; the number on screen is what says when to pick
 one.
 
-**One inherited limit, named rather than discovered.** Upstream abridges long
-*arguments* before this package sees them, so argument fidelity is bounded by
-what survives that. And it drops sessions it judges trivial — a single message of
+**Arguments are carried whole too.** Upstream abridges each string argument
+over 1,000 characters to its first and last 400. A file tool's content is an
+argument, so the cut removes what the call wrote. The reader reads each call's
+input from the `tool_use` block of its own record. The join is the same
+`(session, uuid, occurrence, position)` key that the provider call id uses.
+Where the recovery pass does not reach the record, upstream's abridged copy is
+the fallback, and upstream's marker stays in each value it cut.
+
+**One inherited limit, named rather than discovered.** Upstream drops sessions
+it judges trivial — a single message of
 five characters or fewer that calls no tool is never returned, so its absence is
 upstream's judgement rather than this package's account of the machine.
 
