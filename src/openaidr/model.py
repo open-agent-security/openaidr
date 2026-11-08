@@ -63,6 +63,9 @@ LOCAL_ONLY = frozenset(
         # without naming them; these name them.
         "display_name",
         "email",
+        # The native client name. A client-controlled string can name a
+        # person or a host (ADR-0040).
+        "originator",
     }
 )
 
@@ -133,7 +136,8 @@ class ToolCall:
     #: nothing about what the call did.
     tool_class: str | None = None
     #: The arguments a consumer most often needs, under one key name across
-    #: kinds: `command`, `path`, `content`, `new_text`, `url`, `agent`, `skill`.
+    #: kinds: `command`, `path`, `content`, `new_text`, `url`, `agent`, `skill`,
+    #: and `edits`, a file edit's `{path, kind, old_text, new_text}` entries.
     #: A key the kind did not record is absent, never guessed. `arguments` is
     #: unchanged beside it. `LOCAL_ONLY`, on the same terms as `arguments`.
     canonical_arguments: dict[str, object] = field(default_factory=dict)
@@ -536,6 +540,9 @@ class Session:
     #: The same, for sub-agents: whether a sub-agent this session started
     #: would have been collected as a session of its own.
     subagents_recorded: bool = False
+    #: The native client name, as recorded. A client-controlled string can
+    #: name a person or a host, so it stays on the machine. `LOCAL_ONLY`.
+    originator: str | None = None
 
     @property
     def turn_count(self) -> int:

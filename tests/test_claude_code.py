@@ -97,7 +97,6 @@ def _parent_with_workflow_agent(root: Path) -> Path:
         root,
         "-p",
         "s1",
-        "wf_1",
         "x",
         [
             user_text("s1", "w1", "2026-08-01T10:00:02.000Z", "workflow step", isSidechain=True),
@@ -274,7 +273,7 @@ def test_a_workflow_agents_project_root_is_the_parent_of_its_session(tmp_path: P
     encoded = str(project).replace("/", "-")
     record = user_text("s1", "w1", "2026-08-01T10:00:00.000Z", "workflow step")
     del record["cwd"]
-    write_workflow_agent_session(tmp_path, encoded, "s1", "wf_1", "x", [record])
+    write_workflow_agent_session(tmp_path, encoded, "s1", "x", [record])
     session = _sessions(tmp_path)[0]
     assert session.working_directory == str(project)
 
@@ -945,6 +944,89 @@ def test_a_call_with_no_recorded_body_falls_back_and_says_it_was_abridged() -> N
 
     assert call.truncated is True
     assert call.result_size == 4000
+
+
+def test_a_long_argument_is_carried_whole(tmp_path: Path) -> None:
+    """Upstream abridges every string argument over 1,000 characters to its first
+    and last 400, the same middle cut it makes to results. A file's content is
+    an argument, and what a call wrote is in exactly the middle it removes, so
+    the argument is read from the record's own `tool_use` block instead.
+    """
+    content = "head " + "B" * 3173 + " tail"
+    arguments = {"file_path": "/work/project/notes.md", "content": content}
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use("s1", "u1", "2026-08-01T10:00:00.000Z", "t1", "Write", arguments),
+            tool_result("s1", "u2", "2026-08-01T10:00:01.000Z", "t1", "written"),
+        ],
+    )
+    call = _calls(tmp_path)[0]
+    assert call.arguments == arguments
+    assert call.canonical_arguments["content"] == content
+
+
+def test_calls_that_differ_only_in_the_middle_each_keep_their_own_arguments(
+    tmp_path: Path,
+) -> None:
+    """Abridged, two writes that differ only in the middle look the same, so
+    upstream cannot tell them apart and this reader withholds their results
+    (ADR-0002). Their arguments are each read from the call's own record, by
+    the same `(uuid, position)` join span identity uses, and stay distinct.
+    """
+    first = "A" * 500 + "first" + "A" * 500
+    second = "A" * 500 + "other" + "A" * 500
+    write_session(
+        tmp_path,
+        "-p",
+        [
+            assistant_tool_use(
+                "s1", "u1", "2026-08-01T10:00:00.000Z", "t1", "Write", {"content": first}
+            ),
+            tool_result("s1", "u2", "2026-08-01T10:00:01.000Z", "t1", "written"),
+            assistant_tool_use(
+                "s1", "u3", "2026-08-01T10:00:02.000Z", "t2", "Write", {"content": second}
+            ),
+            tool_result("s1", "u4", "2026-08-01T10:00:03.000Z", "t2", "written"),
+        ],
+    )
+    assert [c.arguments["content"] for c in _calls(tmp_path)] == [first, second]
+
+
+def test_a_call_with_no_recorded_input_keeps_upstreams_abridged_arguments() -> None:
+    """Where the record's own input cannot be joined, all there is is upstream's
+    abridged copy. It is carried as it came, with upstream's marker still in the
+    value, so the abridgement stays visible rather than passing as whole.
+    """
+    from openaidr.readers.claude_code import _MCPEnrichment, _tool_calls, _Transcript
+
+    abridged = "A" * 400 + "... [truncated 3200 chars] ..." + "A" * 400
+
+    class _Usage:
+        tool_name = "Write"
+        tool_type = "tool"
+        server_name = None
+        arguments: ClassVar[dict[str, object]] = {"content": abridged}
+        result = None
+        status = None
+        error = None
+
+    empty = _Transcript({}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+    (call,) = _tool_calls(
+        [_Usage()],  # type: ignore[list-item]
+        "claude-code:s1",
+        "u1",
+        "s1",
+        "u1",
+        0,
+        set(),
+        set(),
+        empty,
+        _MCPEnrichment(state="not_attempted"),
+    )
+
+    assert call.arguments == {"content": abridged}
 
 
 def test_a_result_only_the_later_recovery_pass_saw_resolves_the_call() -> None:

@@ -254,6 +254,26 @@ def test_a_refused_shell_call_carries_its_working_directory(home: Path, logs: Pa
     assert call.working_directory == "/work/app"
 
 
+def test_an_mcp_identifier_the_client_recorded_is_named_by_its_configuration(
+    home: Path, logs: Path
+) -> None:
+    c = Conversation("a1", cwd="/work/app")
+    c.user("go")
+    c.call(
+        "CallMcpTool",
+        {"server": "user-probe", "toolName": "echo", "arguments": {}},
+        {"success": {"content": [{"text": {"text": "echo"}}]}},
+        result="echo",
+        case=15,
+    )
+    c.write(home / "chats")
+    cs.write_server_metadata(home, "user-probe", "probe")
+
+    [call] = _calls(_read(home, logs)["cursor:a1"])
+
+    assert call.mcp_server == "probe"
+
+
 def test_an_mcp_call_is_named_by_its_server_and_tool(home: Path, logs: Path) -> None:
     c = Conversation("a1")
     c.user("go")
@@ -342,6 +362,7 @@ def test_both_model_families_spellings_get_their_class_and_canonical_arguments(
                     {
                         "path": "/work/app/notes.txt",
                         "kind": "add",
+                        "old_text": "",
                         "new_text": "first line\ntoken=abc",
                     }
                 ],
@@ -350,7 +371,17 @@ def test_both_model_families_spellings_get_their_class_and_canonical_arguments(
             },
         ),
         ("Write", "file_write", {"path": "/work/app/config.env", "content": "API_TOKEN=x\n"}),
-        ("StrReplace", "file_edit", {"path": "/work/app/a.py", "new_text": "b"}),
+        (
+            "StrReplace",
+            "file_edit",
+            {
+                "path": "/work/app/a.py",
+                "new_text": "b",
+                "edits": [
+                    {"path": "/work/app/a.py", "kind": "update", "old_text": "a", "new_text": "b"}
+                ],
+            },
+        ),
         ("ReadFile", "file_read", {"path": "/work/app/a.py"}),
         ("Read", "file_read", {"path": "/work/app/a.py"}),
         ("rg", "file_search", {"path": "/work/app"}),
@@ -887,6 +918,32 @@ def test_a_deleted_log_still_rebuilds_the_session_it_had_enriched(home: Path, lo
     assert again[0].responses == ()
 
 
+def test_a_changed_server_metadata_file_rebuilds_every_session(home: Path, logs: Path) -> None:
+    """`SERVER_METADATA.json` names no project directory to narrow a rebuild
+    to, so a change to it rebuilds every session a watcher has read; only
+    the one its new name reaches comes back changed."""
+    reader = _reader(home, logs)
+    c = Conversation("a1", cwd="/work/app")
+    c.user("go")
+    c.call(
+        "CallMcpTool",
+        {"server": "user-probe", "toolName": "echo", "arguments": {}},
+        {"success": {"content": [{"text": {"text": "echo"}}]}},
+        result="echo",
+        case=15,
+    )
+    store = c.write(home / "chats")
+    first, _ = reader.collect_file(store)
+    assert [call.mcp_server for s in first for call in _calls(s)] == ["user-probe"]
+
+    metadata = cs.write_server_metadata(home, "user-probe", "probe")
+    again, failures = reader.collect_file(metadata)
+
+    assert failures == []
+    assert [s.session_id for s in again] == ["cursor:a1"]
+    assert [call.mcp_server for call in _calls(again[0])] == ["probe"]
+
+
 def test_the_window_keeps_sessions_active_since_it(home: Path, logs: Path) -> None:
     c = Conversation("a1")
     c.user("go")
@@ -897,7 +954,7 @@ def test_the_window_keeps_sessions_active_since_it(home: Path, logs: Path) -> No
     assert reader.collect(Window(since=T0 + timedelta(days=1)))[0] == []
 
 
-def test_the_default_readers_read_cursor_from_its_named_root(home: Path, logs: Path) -> None:
+def test_the_default_readers_read_cursor_from_its_named_root(home: Path) -> None:
     c = Conversation("a1")
     c.user("go")
     c.write(home / "chats")
@@ -946,7 +1003,12 @@ def test_cursors_account_is_its_cli_configs_auth_info(home: Path) -> None:
         "Dev One",
         None,
     )
-    assert sign_in_records("cursor", config_dir=home) == (home / "cli-config.json",)
+    desktop = Path(os.environ["VSCODE_APPDATA"]) / "Cursor" / "User" / "globalStorage"
+    assert sign_in_records("cursor", config_dir=home) == (
+        home / "cli-config.json",
+        desktop / "state.vscdb",
+        desktop / "state.vscdb-wal",
+    )
 
 
 @pytest.mark.parametrize(

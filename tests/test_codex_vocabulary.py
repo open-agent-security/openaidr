@@ -440,7 +440,8 @@ def test_every_built_in_the_reader_emits_is_classed(name: str) -> None:
     assert tool_class("codex", name, None) in TOOL_CLASSES - {"mcp"}
 
 
-def _nested(depth: int = 100_000) -> str:
+def _nested() -> str:
+    depth = 100_000
     return "[" * depth + "]" * depth
 
 
@@ -466,7 +467,7 @@ def test_an_arguments_string_nested_past_the_decoders_limit_is_raw_not_fatal(
 #: `(module, function, call)`. A new site fails `test_every_decode_site_is_known`
 #: until it is added here with an input it must survive below.
 _DECODE_SITES = {
-    ("src/openaidr/readers/codex.py", "read", "json.loads"),
+    ("src/openaidr/readers/codex.py", "_project", "json.loads"),
     ("src/openaidr/readers/codex.py", "_arguments", "json.loads"),
     ("src/openaidr/readers/codex.py", "_titles", "json.loads"),
     ("src/openaidr/readers/codex.py", "_instant", "datetime.fromisoformat"),

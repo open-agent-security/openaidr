@@ -282,7 +282,7 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 | Addition | Why |
 |---|---|
 | `ToolCall.tool_class` | What the tool *is*, from a closed set: `shell`, `shell_control`, `file_read`, `file_search`, `file_write`, `file_edit`, `web_fetch`, `web_search`, `delegate`, `skill`, `mcp`, `script`, `other` (ADR-0021, ADR-0036) |
-| `ToolCall.canonical_arguments` (`LOCAL_ONLY`) | One key name across kinds: `command`, `path`, `content`, `new_text`, `url`, `agent`, `skill`. A key the call did not record is absent |
+| `ToolCall.canonical_arguments` (`LOCAL_ONLY`) | One key name across kinds: `command`, `path`, `content`, `new_text`, `url`, `agent`, `skill`, `edits`. A key the call did not record is absent |
 | `ToolCall.exit_code` | A shell command's own exit status, where the kind records one |
 | `Session.compactions_recorded`, `subagents_recorded` | Whether an empty list means "none happened" or "the kind can't say" (ADR-0022) |
 | `MCPLogState` `placement_ambiguous` | ADR-0020 |
@@ -298,7 +298,7 @@ All additive, with defaults, so no constructor changes. Filled for both kinds.
 | `file_read` | `Read`, `NotebookRead` | `read`, `notebook_read` | `path` (`file_path`, `notebook_path`) |
 | `file_search` | `Grep`, `Glob`, `LS` | `grep`, `glob`, `find_file_by_name`, `code_search` | — for `devin` (schema keys unconfirmed) |
 | `file_write` | `Write` | `write` | `path`, `content` (`file_path`, `content`) |
-| `file_edit` | `Edit`, `MultiEdit`, `NotebookEdit` | `edit`, `apply_patch`, `notebook_edit` | `path`, `new_text` (`file_path`, `new_string`); none for `apply_patch` (M3) |
+| `file_edit` | `Edit`, `MultiEdit`, `NotebookEdit` | `edit`, `apply_patch`, `notebook_edit` | `path`, `new_text` (`file_path`, `new_string`), and for `edit` one `edits` entry `{path, kind: update, old_text, new_text}` (`old_string`, `new_string`); none for `apply_patch` (M3); `path` only for `notebook_edit` |
 | `web_fetch` | `WebFetch` | `webfetch` | `url` (`url`) |
 | `web_search` | `WebSearch` | `web_search` | — |
 | `delegate` | `Agent`, `Task` | `run_subagent` | `agent` (`profile`) |
@@ -396,6 +396,9 @@ asks for Codex. Fixtures are synthetic. **Real stores are never committed.**
 4. **`tool_class` and `canonical_arguments` are model fields**, filled per kind
    (ADR-0021). Rejected: renaming every kind's tools to Claude Code's.
 5. **`compactions_recorded` and `subagents_recorded`** (ADR-0022).
+6. **A file edit's removed and added text come from the call's own
+   arguments** (ADR-0042). Rejected: filling `old_text` from the result or
+   from the file on disk.
 
 ## Non-goals
 

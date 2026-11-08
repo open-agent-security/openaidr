@@ -112,17 +112,16 @@ def write_workflow_agent_session(
     root: Path,
     project: str,
     parent_session_id: str,
-    run: str,
     agent_id: str,
     records: list[dict],
 ) -> Path:
     """Write a workflow agent's transcript one level below a plain subagent's.
 
-    `<root>/<project>/<parentSessionId>/subagents/workflows/<run>/agent-<id>.jsonl`
+    `<root>/<project>/<parentSessionId>/subagents/workflows/wf_1/agent-<id>.jsonl`
     is where Claude Code writes the agents a workflow runs. Their records carry
     the parent's `sessionId`, as a plain subagent's do.
     """
-    directory = root / project / parent_session_id / "subagents" / "workflows" / run
+    directory = root / project / parent_session_id / "subagents" / "workflows" / "wf_1"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"agent-{agent_id}.jsonl"
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
@@ -209,14 +208,12 @@ def assistant_response(
     return record
 
 
-def cost_state(
-    session_id: str, total_usd: float, model_usage: dict, *, unknown_model: bool = False
-) -> dict:
+def cost_state(session_id: str, total_usd: float, model_usage: dict) -> dict:
     """The client's own running totals for a session. It carries no timestamp."""
     return {
         "type": "cost-state",
         "sessionId": session_id,
         "totalCostUSD": total_usd,
-        "hasUnknownModelCost": unknown_model,
+        "hasUnknownModelCost": False,
         "modelUsage": model_usage,
     }

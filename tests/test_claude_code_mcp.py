@@ -1310,7 +1310,6 @@ def test_a_workflow_agent_does_not_withhold_its_parents_log(tmp_path: Path) -> N
         root,
         "-project-one",
         SESSION,
-        "wf_1",
         "a1",
         [
             user_text(SESSION, "wu0", "2026-01-01T00:00:00Z", "step", isSidechain=True),

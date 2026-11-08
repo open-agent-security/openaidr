@@ -402,7 +402,7 @@ def test_an_unchanged_mcp_cache_reuses_the_previous_index(tmp_path: Path, monkey
     assert len(folded) == parsed_first
 
 
-def test_an_mcp_cache_change_rebuilds_the_index(tmp_path: Path, monkeypatch) -> None:
+def test_an_mcp_cache_change_rebuilds_the_index(tmp_path: Path) -> None:
     from openaidr.readers.claude_code_mcp import _IncrementalMCPLogReader
 
     cache = tmp_path / "cache"
@@ -603,6 +603,7 @@ def test_each_kinds_root_reaches_its_reader(
 ) -> None:
     monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
     monkeypatch.setenv("CURSOR_DATA_DIR", str(tmp_path / "cursor-data"))
+    monkeypatch.setenv("VSCODE_APPDATA", str(tmp_path / "appdata"))
     collector = IncrementalCollector(
         tmp_path / "claude",
         devin_root=tmp_path / "devin",
@@ -617,6 +618,8 @@ def test_each_kinds_root_reaches_its_reader(
             tmp_path / "cursor" / "chats",
             tmp_path / "cursor-data" / "projects",
             tmp_path / "tmp" / f"cursor-agent-logs-{os.getuid()}",
+            tmp_path / "appdata" / "Cursor" / "User" / "globalStorage",
+            tmp_path / "appdata" / "Cursor" / "logs",
         ),
     }
 

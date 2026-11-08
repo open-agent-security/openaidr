@@ -200,9 +200,16 @@ chosen before the reported number is uncomfortable would be the same arbitrary
 threshold at a different value; the number on screen is what says when to pick
 one.
 
-**One inherited limit, named rather than discovered.** Upstream abridges long
-*arguments* before this package sees them, so argument fidelity is bounded by
-what survives that. And it drops sessions it judges trivial — a single message of
+**Arguments are carried whole too.** Upstream abridges each string argument
+over 1,000 characters to its first and last 400. A file tool's content is an
+argument, so the cut removes what the call wrote. The reader reads each call's
+input from the `tool_use` block of its own record. The join is the same
+`(session, uuid, occurrence, position)` key that the provider call id uses.
+Where the recovery pass does not reach the record, upstream's abridged copy is
+the fallback, and upstream's marker stays in each value it cut.
+
+**One inherited limit, named rather than discovered.** Upstream drops sessions
+it judges trivial — a single message of
 five characters or fewer that calls no tool is never returned, so its absence is
 upstream's judgement rather than this package's account of the machine.
 
@@ -266,6 +273,30 @@ declaration — naming and representation are implementation choices.
 | Outcome | The abridged result and error text | local-only |
 | Result size | The size of what the agent produced, not of the abridged copy held here | |
 | Truncation marker | Upstream elided part of the result. The marker it leaves carries the count removed, which is what makes the original size exact rather than estimated | |
+
+**Canonical `edits`.** A `file_edit` call carries `edits`, a list of
+`{path, kind, old_text, new_text}`. There is one entry for each hunk or each
+file, as the tool records them. `kind` is `add`, `update` or `delete`, and it
+describes the file. `old_text` is the text that the edit removed. `new_text` is
+the text that the edit added. A consumer reads these keys and does not parse
+the format of an agent's arguments.
+
+The keys come only from the arguments of the call (ADR-0042). Where the
+arguments do not hold the removed text, `old_text` is absent. It is never
+reconstructed from the result or from the file on disk. The single-file keys
+`path` and `new_text` stay beside `edits`. The file edit tools of each kind:
+
+| Kind | Tool | Entries | `old_text` |
+|---|---|---|---|
+| `claude-code` | `Edit` | One. `kind` is `add` when `old_string` is empty, which Claude Code itself counts as a new file | `old_string` |
+| `claude-code` | `MultiEdit` | One for each hunk, on the same rule. `new_text` at the top is the added text of the hunks, joined with newlines | `old_string` of the hunk |
+| `claude-code` | `NotebookEdit` | One, `update`: the notebook must exist. A cell deletion has an empty `new_text`, because Claude Code ignores `new_source` for it | Absent. The input holds no old source |
+| `codex` | `apply_patch` | One for each file ([Codex](codex.md#tool-class-and-canonical-arguments)) | The `-` lines; empty for an added file |
+| `cursor` | `StrReplace` | One, `update`, also for an empty `old_string`: only Claude Code's handling of one is confirmed | `old_string` |
+| `cursor` | `ApplyPatch` | As Codex's `apply_patch` | As Codex's `apply_patch` |
+| `cursor` | `EditNotebook` | None | Not confirmed ([Cursor](cursor.md#tool-names)) |
+| `devin` | `edit` | One, `update`, on the same terms as `StrReplace` | `old_string` |
+| `devin` | `apply_patch`, `notebook_edit` | None | Argument keys not confirmed ([Devin CLI](devin-cli.md#open-facts), M3) |
 
 A session also carries its model responses.
 There is one response per request the agent made to its provider.
@@ -513,11 +544,12 @@ changes the shape of the collection rather than being a detail.
 | Surface | Scale | Approach |
 |---|---|---|
 | The session model and span identity | The published contract | Consumers depend on these; they are this package's public API, not internal types |
-| One runtime dependency | Additive | `adr-sensor`, confined behind the adapter, so the rest of the codebase is unaware of it |
+| One parsing dependency | Additive | `adr-sensor`, confined behind the adapter, so the rest of the codebase is unaware of it. `zstandard`, below Python 3.14, only decompresses Codex rollouts ([Codex](codex.md#compressed-rollouts)) |
 | The source-vocabulary mapping | New, small | A mapping table plus per-kind naming rules, colocated with collection |
 | An in-memory append cursor | New | Cold first read then appended complete records for named changed files; no persistence, nothing on disk |
 
-**This package's only runtime dependency is `adr-sensor`.** It does not import
+**This package's runtime dependencies are `adr-sensor` and, below Python 3.14,
+`zstandard`.** It does not import
 `openaca`, and it must never import or mention anything proprietary. It produces
 a model; interpreting that model is a consumer's concern, and OpenAIDR takes no
 position on what a consumer concludes.

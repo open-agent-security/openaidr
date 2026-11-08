@@ -10,8 +10,8 @@ Session collection for AI coding agents.
 OpenAIDR reads the session state AI coding agents already write to disk and
 normalises it into one session model with stable span identity.
 
-> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Three
-> agent kinds read today (`claude-code`, `devin`, `codex`). Start with
+> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Four
+> agent kinds read today (`claude-code`, `devin`, `codex`, `cursor`). Start with
 > [Install and run](#install-and-run), then
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
@@ -22,9 +22,9 @@ one agent, one session store; `codex`, which covers Codex CLI, `codex exec`, and
 the IDE extension and Codex app through `codex app-server`, from
 [`docs/specs/codex.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/codex.md);
 `cursor`, which covers the Cursor CLI in the terminal, in print mode and over
-ACP, from
+ACP, and the desktop app's agent panel, from
 [`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md)).
-The Cursor desktop app's own chats are not read yet. The parsing dependency supports more formats
+The parsing dependency supports more formats
 than this package instantiates, which is a distinction worth holding onto; what
 each additional kind would cost is measured in
 [Agent kind coverage](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/session-collection.md#agent-kind-coverage).
@@ -82,10 +82,11 @@ boundary is your call to state.
 
 Session parsing itself comes from [Uber's ADR project](https://github.com/uber/ADR)
 (`adr-sensor`, Apache-2.0) — it owns the on-disk formats, and it is OpenAIDR's
-only runtime dependency. It is confined behind an adapter: upstream types
-convert at the reader boundary and never appear elsewhere. Any one agent kind
-can instead be backed by an OpenAIDR-owned reader on the same contract — per
-kind, not all-or-nothing.
+only parsing dependency. The other runtime dependency, `zstandard`, decompresses
+compressed Codex rollouts on Python before 3.14 (ADR-0041). `adr-sensor` is
+confined behind an adapter: upstream types convert at the reader boundary and
+never appear elsewhere. Any one agent kind can instead be backed by an
+OpenAIDR-owned reader on the same contract — per kind, not all-or-nothing.
 
 What the adapter adds is not a thin wrapper. Upstream's unified event model was
 measured against this one rather than assumed
@@ -118,7 +119,7 @@ That installs an `openaidr` command:
 
 ```console
 $ openaidr --version
-openaidr 0.8.0
+openaidr 0.10.5
 ```
 
 `openaidr sessions` prints what each agent on this machine actually did —
@@ -155,7 +156,7 @@ and a doc index in
 
 ## Status
 
-**Beta.** Session collection works for `claude-code`, `devin` and `codex`:
+**Beta.** Session collection works for `claude-code`, `devin`, `codex` and `cursor`:
 sessions, turns, tool calls and span identity. Claude Code is read through
 `adr-sensor`, one file at a time. Devin is read from its SQLite store and run
 logs, and Codex from its rollouts and log database; both of those readers are
@@ -170,7 +171,9 @@ Cursor is read from the CLI's chat stores, with per-response tokens, the
 entrypoint and MCP connection failures from its debug log
 ([`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md)).
 Its statuses come from Cursor's typed outcome, `interrupted` included. The
-desktop app's chats are not read yet.
+desktop app's conversations are read from its `state.vscdb` with the same
+decoder, with usage from its structured log where its agent loop runs on the
+machine.
 
 For long-lived consumers, `IncrementalCollector` takes an agent kind and one
 changed path. Claude Code and Codex cold-read that file once, then project

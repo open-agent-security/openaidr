@@ -12,6 +12,7 @@ import pytest
 
 from openaidr import __version__
 from openaidr.__main__ import main
+from openaidr.kinds import AGENT_KIND_BY_SOURCE
 
 _README = Path(__file__).parents[1] / "README.md"
 
@@ -28,6 +29,22 @@ def test_readme_version_example_matches_the_package() -> None:
     there drifts, and nothing else in the gate set reads the README."""
     example = f"$ openaidr --version\nopenaidr {__version__}\n"
     assert example in _README.read_text(encoding="utf-8")
+
+
+def test_readme_status_names_every_kind_this_package_reads() -> None:
+    """The status blockquote and the Status section name every kind read."""
+    text = _README.read_text(encoding="utf-8")
+    block = text[text.index("> **Status:**") :].split("\n\n", 1)[0]
+    section = text.split("## Status\n", 1)[1].split("\n## ", 1)[0]
+    for kind in AGENT_KIND_BY_SOURCE.values():
+        assert f"`{kind}`" in block
+        assert f"`{kind}`" in section
+
+
+def test_docs_index_links_the_cursor_spec() -> None:
+    """The doc index lists each owned kind's spec. `cursor` has one."""
+    index = _README.parents[0].joinpath("docs/README.md").read_text(encoding="utf-8")
+    assert "(specs/cursor.md)" in index
 
 
 def test_installed_console_script_runs() -> None:

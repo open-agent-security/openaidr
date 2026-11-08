@@ -1,6 +1,6 @@
 [project]
 name = "openaidr"
-version = "0.8.0"
+version = "0.10.5"
 description = "Session collection for AI coding agents — reads what agents write to disk and normalises it into one session model."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,6 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "adr-sensor==1.0.0",
+    "zstandard==0.25.0 ; python_full_version < '3.14'",
 ]
 
 [project.scripts]

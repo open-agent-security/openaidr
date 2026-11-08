@@ -21,16 +21,18 @@ read as a success, a failure or a refusal.
 from __future__ import annotations
 
 import getpass
+import io
 import json
 import os
 import re
 import socket
 import stat
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import BinaryIO
 from urllib.parse import unquote, urlparse
 
 from openaidr.kinds import map_source
@@ -56,6 +58,12 @@ SOURCE = "codex"
 SESSIONS = "sessions"
 ARCHIVED = "archived_sessions"
 INDEX = "session_index.jsonl"
+
+#: What Codex adds to a rollout's name when it compresses one (docs/specs/codex.md).
+COMPRESSED = ".zst"
+#: The zstd frame magic and the skippable-frame magic range (RFC 8878 section 3.1).
+_ZSTD_MAGIC = 0xFD2FB528
+_SKIPPABLE_MAGIC = 0x184D2A50
 
 #: The same bounds as the Claude Code reader's incremental projections (ADR-0029).
 _MAX_INCREMENTAL_FILES = 128
@@ -623,6 +631,17 @@ class _Projection:
     def _output(self, kind: str, payload: Mapping[str, object], at: datetime | None) -> None:
         call_id = _string(payload.get("call_id"))
         if call_id is None:
+            if (
+                kind == "function_call_output"
+                and payload.get("namespace") == "codex_app"
+                and payload.get("name") == "send_message_to_thread"
+                and _string(payload.get("id")) is not None
+                and isinstance(payload.get("output"), str)
+            ):
+                # Desktop follow-ups are turn input, not the result of a
+                # call in this thread. Keep the context without inventing one.
+                self._context("injected", str(payload["output"]), at)
+                return
             if kind == "tool_search_output":
                 self._search_context(payload, at)
                 return
@@ -781,6 +800,7 @@ class _Projection:
             turns=tuple(turns),
             agent_version=_string(self.meta.get("cli_version")),
             entrypoint=_entrypoint(self.meta),
+            originator=_string(self.meta.get("originator")),
             git_branch=_string(git.get("branch")),
             initial_prompt=self.initial_prompt,
             context_items=tuple(self.context),
@@ -1241,42 +1261,139 @@ class _Cursor:
     error: str | None = None
 
     def read(self, path: Path) -> None:
-        with path.open("rb") as stream:
-            info = os.fstat(stream.fileno())
+        with path.open("rb") as file:
+            info = os.fstat(file.fileno())
             identity = (info.st_dev, info.st_ino)
-            if self.identity != identity or info.st_size < self.offset:
+            compressed = path.name.endswith(COMPRESSED)
+            # A compressed rollout is never appended to, and its offsets are in
+            # decompressed bytes, so it is read whole on every read.
+            if compressed or self.identity != identity or info.st_size < self.offset:
                 self.identity = identity
                 self.offset = self.line = 0
                 self.projection = _Projection()
                 self.error = None
             if self.error is not None:
                 return
-            stream.seek(self.offset)
-            for raw in stream:
-                # A record still being written waits for its newline, and is
-                # read again from its first byte next time.
-                if not raw.endswith(b"\n"):
-                    break
-                self.offset += len(raw)
-                self.line += 1
-                if not raw.strip():
-                    continue
-                try:
-                    record = json.loads(raw)
-                    if not isinstance(record, dict):
-                        raise TypeError("record is not an object")
-                    if _deeper_than(record, _MAX_DEPTH):
-                        # Decodable, yet too deep for anything that walks it
-                        # again (`json.dumps`, a consumer's own recursion), so
-                        # it would fail outside this catch (ADR-0033).
-                        raise ValueError("record is nested past the bound")
-                    self.projection.project(record, self.line)
-                except (ValueError, TypeError, UnicodeError, RecursionError):
-                    # Never the record's content in a failure: a malformed
-                    # record can also hide a second claim on a call id, so the
-                    # session is withheld rather than half-read.
-                    self.error = f"line {self.line}: malformed rollout record; session withheld"
-                    return
+            if compressed:
+                self._project_compressed(file)
+                return
+            file.seek(self.offset)
+            self._project(file)
+
+    def _project_compressed(self, file: BinaryIO) -> None:
+        decoder = _zstd_decoder()
+        if decoder is None:
+            self.error = "no zstd decoder is available; session withheld"
+            return
+        open_frames, decode_error = decoder
+        try:
+            _check_frames(file)
+            file.seek(0)
+            with open_frames(file) as stream:
+                cut = self._project(stream)
+            if cut and self.error is None:
+                # Codex never appends to a compressed rollout, so a line with
+                # no newline is a cut record, never one still being written.
+                self.error = "compressed rollout ends inside a record; session withheld"
+        except (_Truncated, EOFError):
+            self.error = "compressed rollout ends inside a zstd frame; session withheld"
+        except decode_error:
+            self.error = "compressed rollout does not decode as zstd; session withheld"
+
+    def _project(self, stream: BinaryIO) -> bool:
+        """Project each complete record; true when the stream ends in a
+        nonblank line with no newline."""
+        for raw in stream:
+            # A record still being written waits for its newline, and is
+            # read again from its first byte next time.
+            if not raw.endswith(b"\n"):
+                return bool(raw.strip())
+            self.offset += len(raw)
+            self.line += 1
+            if not raw.strip():
+                continue
+            try:
+                record = json.loads(raw)
+                if not isinstance(record, dict):
+                    raise TypeError("record is not an object")
+                if _deeper_than(record, _MAX_DEPTH):
+                    # Decodable, yet too deep for anything that walks it
+                    # again (`json.dumps`, a consumer's own recursion), so
+                    # it would fail outside this catch (ADR-0033).
+                    raise ValueError("record is nested past the bound")
+                self.projection.project(record, self.line)
+            except (ValueError, TypeError, UnicodeError, RecursionError):
+                # Never the record's content in a failure: a malformed
+                # record can also hide a second claim on a call id, so the
+                # session is withheld rather than half-read.
+                self.error = f"line {self.line}: malformed rollout record; session withheld"
+                return False
+        return False
+
+
+class _Truncated(Exception):
+    """The compressed input ended inside a zstd frame."""
+
+
+def _zstd_decoder() -> tuple[Callable[[BinaryIO], BinaryIO], type[Exception]] | None:
+    """How to read a zstd file as a stream of its frames, and the error its data
+    raises: the standard library's `compression.zstd`, which a Python 3.14 build
+    can omit, else `zstandard`, else none. Each `read(n)` returns at most `n`
+    bytes, so one call never expands a whole frame into memory."""
+    try:
+        from compression import zstd  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        try:
+            import zstandard
+        except ImportError:
+            return None
+        return (
+            lambda file: io.BufferedReader(
+                zstandard.ZstdDecompressor().stream_reader(file, read_across_frames=True)
+            ),
+            zstandard.ZstdError,
+        )
+    return zstd.ZstdFile, zstd.ZstdError
+
+
+def _check_frames(file: BinaryIO) -> None:
+    """Raise `_Truncated` when the file ends inside a frame. `zstandard`
+    returns a truncated frame's output without an error, so the frame and
+    block headers are walked first (RFC 8878 section 3.1). The walk reads no
+    block content, and it stops at anything it does not know, which the
+    decoder then rejects."""
+    size = os.fstat(file.fileno()).st_size
+
+    def take(count: int) -> bytes:
+        data = file.read(count)
+        if len(data) < count:
+            raise _Truncated
+        return data
+
+    def skip(count: int) -> None:
+        if file.seek(count, os.SEEK_CUR) > size:
+            raise _Truncated
+
+    while magic := file.read(4):
+        magic = int.from_bytes(magic + take(4 - len(magic)), "little")
+        if magic & ~0xF == _SKIPPABLE_MAGIC:
+            skip(int.from_bytes(take(4), "little"))
+            continue
+        if magic != _ZSTD_MAGIC:
+            return
+        descriptor = take(1)[0]
+        single_segment = descriptor >> 5 & 1
+        content_size = (single_segment, 2, 4, 8)[descriptor >> 6]
+        skip(1 - single_segment + (0, 1, 2, 4)[descriptor & 3] + content_size)
+        last = False
+        while not last:
+            header = int.from_bytes(take(3), "little")
+            last, kind = bool(header & 1), header >> 1 & 3
+            if kind == 3:
+                return
+            skip(1 if kind == 1 else header >> 3)
+        if descriptor >> 2 & 1:
+            skip(4)
 
 
 class CodexReader:
@@ -1357,6 +1474,18 @@ class CodexReader:
             path.is_relative_to(location) for location in self.locations()
         ):
             return [], []
+        if path.name.endswith(COMPRESSED):
+            plain = path.with_name(path.stem)
+            try:
+                plain.stat()
+            except FileNotFoundError:
+                plain = None
+            except OSError as error:
+                return [], [self._failure(f"{plain}: {error}; {path} is not read")]
+            if plain is not None:
+                # The plain form is the one read, as in `collect`; it may hold
+                # records appended after the thread was resumed.
+                return [], []
         cursor = self._cursors.setdefault(path, _Cursor())
         self._cursors.move_to_end(path)
         failures: list[ReaderFailure] = []
@@ -1413,15 +1542,15 @@ class CodexReader:
         for location in self.locations():
             errors: list[OSError] = []
             for dirpath, _dirnames, filenames in os.walk(location, onerror=errors.append):
+                listed = set(filenames)
                 for name in filenames:
-                    if not name.startswith("rollout-"):
+                    # A rollout in both forms is mid-way between them, and
+                    # Codex reads the plain one first; so does this reader.
+                    if not _is_rollout_name(name) or (
+                        name.endswith(COMPRESSED) and name.removesuffix(COMPRESSED) in listed
+                    ):
                         continue
-                    if name.endswith(".jsonl.zst"):
-                        failures.append(
-                            self._failure(f"{Path(dirpath) / name}: compressed rollout is not read")
-                        )
-                    elif name.endswith(".jsonl"):
-                        paths.append(Path(dirpath) / name)
+                    paths.append(Path(dirpath) / name)
             for error in errors:
                 if isinstance(error, FileNotFoundError) and Path(str(error.filename)) == location:
                     continue
@@ -1464,4 +1593,9 @@ class CodexReader:
 
 
 def _is_rollout(path: Path) -> bool:
-    return path.name.startswith("rollout-") and path.name.endswith(".jsonl")
+    return _is_rollout_name(path.name)
+
+
+def _is_rollout_name(name: str) -> bool:
+    """`rollout-*.jsonl`, or the same name compressed."""
+    return name.startswith("rollout-") and name.removesuffix(COMPRESSED).endswith(".jsonl")

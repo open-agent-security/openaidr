@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -25,7 +26,6 @@ class Rollout:
         parent: str | None = None,
         source: object = "exec",
         originator: str = "codex_exec",
-        cwd: str = "/work/project",
         branch: str | None = "main",
         meta: dict[str, object] | None = None,
     ) -> None:
@@ -38,7 +38,7 @@ class Rollout:
             "session_id": root or thread_id,
             "id": thread_id,
             "timestamp": _iso(self._clock),
-            "cwd": cwd,
+            "cwd": "/work/project",
             "originator": originator,
             "cli_version": "0.163.0",
             "source": source,
@@ -56,16 +56,15 @@ class Rollout:
 
     # --- raw ------------------------------------------------------------
 
-    def add(self, kind: str, payload: dict[str, object], *, ordinal: bool = True) -> None:
+    def add(self, kind: str, payload: dict[str, object]) -> None:
         self._clock += timedelta(seconds=1)
         record: dict[str, object] = {
             "timestamp": _iso(self._clock),
             "type": kind,
             "payload": payload,
+            "ordinal": self._ordinal,
         }
-        if ordinal:
-            record["ordinal"] = self._ordinal
-            self._ordinal += 1
+        self._ordinal += 1
         self.records.append(record)
 
     def event(self, payload: dict[str, object]) -> None:
@@ -98,23 +97,24 @@ class Rollout:
         self,
         turn_id: str,
         *,
-        model: str = "gpt-5.5",
         approval: str = "never",
         sandbox: str = "workspace-write",
-        window: int | None = 258400,
-        cwd: str = "/work/project",
+        window: int = 258400,
     ) -> None:
         self.turn_id = turn_id
-        started: dict[str, object] = {"type": "task_started", "turn_id": turn_id}
-        if window is not None:
-            started["model_context_window"] = window
-        self.event(started)
+        self.event(
+            {
+                "type": "task_started",
+                "turn_id": turn_id,
+                "model_context_window": window,
+            }
+        )
         self.add(
             "turn_context",
             {
                 "turn_id": turn_id,
-                "cwd": cwd,
-                "model": model,
+                "cwd": "/work/project",
+                "model": "gpt-5.5",
                 "approval_policy": approval,
                 "sandbox_policy": {"type": sandbox},
             },
@@ -137,13 +137,15 @@ class Rollout:
             }
         )
 
-    def injected(self, text: str, kind: str = "environments.environment_context") -> None:
+    def injected(self, text: str) -> None:
         self.response(
             {
                 "type": "message",
                 "role": "user",
                 "content": [{"type": "input_text", "text": text}],
-                "internal_chat_message_metadata_passthrough": {"content_item_kinds": [kind]},
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["environments.environment_context"]
+                },
             }
         )
 
@@ -186,14 +188,14 @@ class Rollout:
         call_id: str,
         cmd: str,
         *,
-        exit_code: int | None = 0,
+        exit_code: int = 0,
         output: str | None = "done\n",
         cwd: str = "/work/project",
         item: bool = True,
     ) -> None:
         """A command as Codex records one: the call, the execution item, then the output."""
         self.call(call_id, "exec_command", {"cmd": cmd, "yield_time_ms": 3000})
-        if item and exit_code is not None:
+        if item:
             self.item(
                 {
                     "type": "CommandExecution",
@@ -210,18 +212,14 @@ class Rollout:
             header = (
                 f"Chunk ID: abc123\nWall time: 0.1000 seconds\nProcess exited with code {exit_code}\n"
                 "Original token count: 3\nOutput:\n"
-                if exit_code is not None
-                else ""
             )
             self.output(call_id, header + output)
 
-    def patch(
-        self, call_id: str, patch: str, *, status: str = "completed", changes: dict | None = None
-    ) -> None:
+    def patch(self, call_id: str, patch: str, *, status: str = "completed") -> None:
         self.response(
             {"type": "custom_tool_call", "name": "apply_patch", "input": patch, "call_id": call_id}
         )
-        self.item({"type": "FileChange", "id": call_id, "changes": changes or {}, "status": status})
+        self.item({"type": "FileChange", "id": call_id, "changes": {}, "status": status})
         text = (
             "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess.\n"
             if status == "completed"
@@ -309,12 +307,30 @@ class Rollout:
     def text(self) -> str:
         return "".join(json.dumps(record) + "\n" for record in self.records)
 
-    def write(self, home: Path, *, archived: bool = False) -> Path:
+    def write(self, home: Path, *, archived: bool = False, compressed: bool = False) -> Path:
+        """The rollout as Codex writes it, or as Codex's compression leaves it:
+        the same name with `.zst` added and the same records."""
         directory = home / ("archived_sessions" if archived else "sessions/2026/10/16")
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"rollout-2026-10-16T02-00-00-{self.thread_id}.jsonl"
-        path.write_text(self.text(), encoding="utf-8")
+        if compressed:
+            path = path.with_name(path.name + ".zst")
+            path.write_bytes(zstd(self.text().encode()))
+        else:
+            path.write_text(self.text(), encoding="utf-8")
         return path
+
+
+def zstd(data: bytes) -> bytes:
+    """One zstd frame at level 3 with its content size, as Codex writes one
+    (`rollout/src/compression.rs`), from whichever decoder this Python reads with."""
+    if sys.version_info >= (3, 14):
+        from compression import zstd as stdlib_zstd
+
+        return stdlib_zstd.compress(data, level=3)
+    import zstandard
+
+    return zstandard.ZstdCompressor(level=3, write_content_size=True).compress(data)
 
 
 def _iso(moment: datetime) -> str:
@@ -341,11 +357,11 @@ CREATE TABLE logs (
 """
 
 
-def request_span(request_id: int, connection: int = 0) -> str:
+def request_span(request_id: int) -> str:
     return (
         f'app_server.request{{otel.kind="server" otel.name="thread/start" rpc.system="jsonrpc" '
         f'rpc.method="thread/start" rpc.transport="stdio" rpc.request_id={request_id} '
-        f'app_server.connection_id={connection} app_server.api_version="v2"}}'
+        f'app_server.connection_id=0 app_server.api_version="v2"}}'
     )
 
 

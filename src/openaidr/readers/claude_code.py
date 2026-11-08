@@ -1372,7 +1372,12 @@ def _tool_calls(
         skill, plugin = transcript.attribution.get(
             (raw_session_id, record_uuid, occurrence), (None, None)
         )
-        arguments = dict(tool.arguments or {})
+        # The record's own input, whole, where the recovery pass reached it.
+        # Upstream's copy is a fallback, already abridged, and it keeps the
+        # marker upstream left in each value it cut. Not withheld with the
+        # result: the join is positional, so no provider id can blur it.
+        recorded_input = transcript.inputs.get((raw_session_id, record_uuid, occurrence, index))
+        arguments = dict(recorded_input if recorded_input is not None else tool.arguments or {})
         calls.append(
             ToolCall(
                 span=span_id(session_id, turn_key, index),
@@ -1718,6 +1723,15 @@ class _Transcript:
     #: carries no `is_error` but whose `toolUseResult` states what it did
     #: (`_STATED_SUCCESS`). Keyed as `errored` is, for the same reasons.
     completed: set[tuple[str, str]] = field(default_factory=set)
+    #: (session id, record uuid, occurrence, position within the message) ->
+    #: the call's input **as the agent recorded it**.
+    #:
+    #: Upstream abridges every string argument over 1,000 characters to its
+    #: first and last 400, the cut it makes to results. A file tool's content
+    #: is an argument, and what the call wrote sits in exactly the middle that
+    #: cut removes. Keyed as `call_ids` is, and for the same reasons: it is the
+    #: join span identity is built from, so no provider id is involved.
+    inputs: dict[tuple[str, str, int, int], dict[str, object]] = field(default_factory=dict)
 
 
 def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str | None]:
@@ -1761,6 +1775,7 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
     response_ids: dict[tuple[str, str, int], str] = {}
     permission_modes: dict[tuple[str, str, int], str] = {}
     call_ids: dict[tuple[str, str, int, int], str] = {}
+    inputs: dict[tuple[str, str, int, int], dict[str, object]] = {}
     started: dict[tuple[str, str], datetime] = {}
     ended: dict[tuple[str, str], datetime] = {}
     errored: dict[tuple[str, str], bool] = {}
@@ -1932,6 +1947,9 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
                     if kind == "tool_use":
                         if key_uuid is not None:
                             call_ids[(sid, key_uuid, occurrence, position)] = identifier
+                            given = block.get("input")
+                            if isinstance(given, dict):
+                                inputs[(sid, key_uuid, occurrence, position)] = given
                         position += 1
                         if timestamp is not None:
                             started[(sid, identifier)] = timestamp
@@ -2005,6 +2023,7 @@ def _recorded(path: Path, *, limit: int | None = None) -> tuple[_Transcript, str
         response_ids=response_ids,
         generated_titles=generated_titles,
         completed=completed,
+        inputs=inputs,
     ), failure
 
 

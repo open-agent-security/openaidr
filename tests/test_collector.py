@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from openaidr.collector import collect, default_readers
+from openaidr.collector import collect, default_incremental_readers, default_readers
 from openaidr.kinds import parse_kind_filter
 from openaidr.model import Session
 from openaidr.readers.base import ReaderFailure, Window
@@ -27,6 +27,19 @@ class _StubReader:
                 turns=(),
             )
         ], []
+
+
+def test_the_incremental_readers_are_the_default_readers(tmp_path: Path) -> None:
+    """One list of shipped readers. A second copy would omit a kind from
+    either the cold pass or the incremental one."""
+    cold = default_readers(
+        root=tmp_path, devin_root=tmp_path, codex_root=tmp_path, cursor_root=tmp_path
+    )
+    warm = default_incremental_readers(
+        root=tmp_path, devin_root=tmp_path, codex_root=tmp_path, cursor_root=tmp_path
+    )
+    assert [type(reader) for reader in warm] == [type(reader) for reader in cold]
+    assert [reader.agent_kind for reader in cold] == ["claude-code", "devin", "codex", "cursor"]
 
 
 def test_collects_claude_code_sessions_by_default(tmp_path: Path) -> None:

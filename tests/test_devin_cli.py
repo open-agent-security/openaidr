@@ -838,7 +838,11 @@ def test_an_unresolved_generic_mcp_call_stays_unclassified(tmp_path: Path) -> No
             "edit",
             {"file_path": "/a", "old_string": "o", "new_string": "n"},
             "file_edit",
-            {"path": "/a", "new_text": "n"},
+            {
+                "path": "/a",
+                "new_text": "n",
+                "edits": [{"path": "/a", "kind": "update", "old_text": "o", "new_text": "n"}],
+            },
         ),
         ("webfetch", {"url": "https://x.test"}, "web_fetch", {"url": "https://x.test"}),
         (
@@ -1096,7 +1100,7 @@ def test_connection_fields_come_from_one_attempt_not_a_newer_pending_one(
         9,
         [
             *startup(0),
-            *mcp_http(1, "gh", "https://old", outcome="ok"),
+            *mcp_http(1, "gh", "https://old"),
             # A later reconnect to a different endpoint has not resolved yet;
             # its endpoint must not be lent to the attempt that actually
             # connected.
