@@ -290,9 +290,10 @@ def _argv_command(arguments: Mapping[str, object]) -> dict[str, object]:
 
 
 def _patch_edits(arguments: Mapping[str, object]) -> dict[str, object]:
-    """`edits`, one `{path, kind, new_text}` per file a patch touches, with
-    `new_text` its added lines. A patch to one file also gets `path` and
-    `new_text`, the keys a single-file edit has everywhere else.
+    """`edits`, one `{path, kind, old_text, new_text}` per file a patch touches,
+    with `old_text` its removed lines and `new_text` its added lines. A patch to
+    one file also gets `path` and `new_text`, the keys a single-file edit has
+    everywhere else.
 
     From the patch's own grammar when the call recorded it (`input`), else from
     the per-file changes Codex recorded when it applied one (`changes`).
@@ -315,12 +316,12 @@ def _patch_edits(arguments: Mapping[str, object]) -> dict[str, object]:
 
 
 def _parse_patch(text: str) -> list[dict[str, str]]:
-    files: list[tuple[list[str], list[str]]] = []
-    current: tuple[list[str], list[str]] | None = None
+    files: list[tuple[list[str], list[str], list[str]]] = []
+    current: tuple[list[str], list[str], list[str]] | None = None
     for line in text.splitlines():
         section = _PATCH_FILE.match(line)
         if section is not None:
-            current = ([section.group(2), section.group(1).lower()], [])
+            current = ([section.group(2), section.group(1).lower()], [], [])
             files.append(current)
             continue
         moved = _PATCH_MOVE.match(line)
@@ -330,9 +331,19 @@ def _parse_patch(text: str) -> list[dict[str, str]]:
             continue
         if current is not None and line.startswith("+"):
             current[1].append(line[1:])
-    return [
-        {"path": head[0], "kind": head[1], "new_text": "\n".join(lines)} for head, lines in files
-    ]
+        elif current is not None and line.startswith("-") and current[0][1] == "update":
+            current[2].append(line[1:])
+    edits: list[dict[str, str]] = []
+    for head, added, removed in files:
+        edit = {"path": head[0], "kind": head[1], "new_text": "\n".join(added)}
+        # An added file removed nothing. A deleted file's section holds no
+        # lines in the grammar, so what it removed is not in the call.
+        if head[1] == "add":
+            edit["old_text"] = ""
+        elif head[1] == "update":
+            edit["old_text"] = "\n".join(removed)
+        edits.append(edit)
+    return edits
 
 
 def _changed_files(changes: Mapping[object, object]) -> list[dict[str, str]]:
@@ -343,30 +354,106 @@ def _changed_files(changes: Mapping[object, object]) -> list[dict[str, str]]:
         kind = change.get("type")
         if kind not in ("add", "update", "delete"):
             continue
+        old_text: str | None = None
         if kind == "add":
             content = change.get("content")
             new_text = content if isinstance(content, str) else ""
+            old_text = ""
         else:
             diff = change.get("unified_diff")
             if isinstance(diff, str):
                 body = diff.splitlines()
                 # Only the diff's own "--- a" / "+++ b" header is excluded, by
                 # position: an added line that itself starts with "++" (e.g.
-                # "++counter;") is content, not a second header.
+                # "++counter;") is content, not a second header, and a removed
+                # line that starts with "--" is content in the same way.
                 if len(body) >= 2 and body[0].startswith("--- ") and body[1].startswith("+++ "):
                     body = body[2:]
                 new_text = "\n".join(line[1:] for line in body if line.startswith("+"))
+                old_text = "\n".join(line[1:] for line in body if line.startswith("-"))
             else:
                 new_text = ""
+            # Codex records a deleted file's content (`FileChange::Delete`).
+            content = change.get("content")
+            if kind == "delete" and isinstance(content, str):
+                old_text = content
         moved = change.get("move_path")
-        edits.append(
-            {
-                "path": moved if isinstance(moved, str) and moved else path,
-                "kind": kind,
-                "new_text": new_text,
-            }
-        )
+        edit = {
+            "path": moved if isinstance(moved, str) and moved else path,
+            "kind": kind,
+            "new_text": new_text,
+        }
+        if old_text is not None:
+            edit["old_text"] = old_text
+        edits.append(edit)
     return edits
+
+
+def _edit(path: str, old: object, new: object, *, empty_old_adds: bool) -> dict[str, str]:
+    """One string replacement as an `edits` entry. A text the call did not
+    record is absent. `empty_old_adds` is for a tool whose own code treats an
+    empty `old_string` as creating the file."""
+    kind = "add" if empty_old_adds and old == "" else "update"
+    edit = {"path": path, "kind": kind}
+    if isinstance(old, str):
+        edit["old_text"] = old
+    if isinstance(new, str):
+        edit["new_text"] = new
+    return edit
+
+
+def _replacement(
+    path_key: str, *, empty_old_adds: bool = False
+) -> Callable[[Mapping[str, object]], dict[str, object]]:
+    """`edits` for a tool that records one `old_string` and `new_string`."""
+
+    def derive(arguments: Mapping[str, object]) -> dict[str, object]:
+        path = arguments.get(path_key)
+        if not isinstance(path, str):
+            return {}
+        old, new = arguments.get("old_string"), arguments.get("new_string")
+        if not isinstance(old, str) and not isinstance(new, str):
+            return {}
+        return {"edits": [_edit(path, old, new, empty_old_adds=empty_old_adds)]}
+
+    return derive
+
+
+def _multi_edit(arguments: Mapping[str, object]) -> dict[str, object]:
+    """`edits`, one per hunk of Claude Code's `MultiEdit`, and `new_text`, the
+    hunks' added text joined, the key a single edit has everywhere else."""
+    path, hunks = arguments.get("file_path"), arguments.get("edits")
+    if not isinstance(path, str) or not isinstance(hunks, list):
+        return {}
+    recorded = [hunk for hunk in hunks if isinstance(hunk, Mapping)]
+    if not recorded:
+        return {}
+    found: dict[str, object] = {
+        "edits": [
+            _edit(path, hunk.get("old_string"), hunk.get("new_string"), empty_old_adds=True)
+            for hunk in recorded
+        ]
+    }
+    added = [hunk.get("new_string") for hunk in recorded]
+    if all(isinstance(text, str) for text in added):
+        found["new_text"] = "\n".join(text for text in added if isinstance(text, str))
+    return found
+
+
+def _notebook_edit(arguments: Mapping[str, object]) -> dict[str, object]:
+    """`edits` for Claude Code's `NotebookEdit`. Its input holds no old source,
+    so no `old_text`. The notebook must already exist, so the file is updated.
+    A cell deletion adds nothing: Claude Code ignores `new_source` for it."""
+    path = arguments.get("notebook_path")
+    if not isinstance(path, str):
+        return {}
+    edit = {"path": path, "kind": "update"}
+    source = arguments.get("new_source")
+    if arguments.get("edit_mode") == "delete":
+        edit["new_text"] = ""
+    elif isinstance(source, str):
+        edit["new_text"] = source
+    return {"edits": [edit]}
 
 
 def _default_role(arguments: Mapping[str, object]) -> dict[str, object]:
@@ -379,6 +466,14 @@ def _default_role(arguments: Mapping[str, object]) -> dict[str, object]:
 #: Canonical arguments a table of keys cannot express, per kind and tool. Each
 #: reads only the call's recorded arguments.
 _DERIVED: dict[str, dict[str, Callable[[Mapping[str, object]], dict[str, object]]]] = {
+    "claude-code": {
+        "Edit": _replacement("file_path", empty_old_adds=True),
+        "MultiEdit": _multi_edit,
+        "NotebookEdit": _notebook_edit,
+    },
+    "devin": {
+        "edit": _replacement("file_path"),
+    },
     "codex": {
         "shell": _argv_command,
         "local_shell": _argv_command,
@@ -388,6 +483,7 @@ _DERIVED: dict[str, dict[str, Callable[[Mapping[str, object]], dict[str, object]
     # Cursor's `ApplyPatch` takes Codex's patch grammar under `patch`.
     "cursor": {
         "ApplyPatch": lambda arguments: _patch_edits({"input": arguments.get("patch")}),
+        "StrReplace": _replacement("path"),
     },
 }
 

@@ -142,7 +142,7 @@ def test_codex_names_a_shell_by_the_script_never_its_wrapper() -> None:
 def test_codex_patch_edits_land_where_the_patch_puts_them() -> None:
     patch = "*** Begin Patch\n*** Update File: a.py\n*** Move to: b.py\n@@\n-x\n+y\n*** End Patch\n"
     assert canonical_arguments("codex", "apply_patch", None, {"input": patch}) == {
-        "edits": [{"path": "b.py", "kind": "update", "new_text": "y"}],
+        "edits": [{"path": "b.py", "kind": "update", "old_text": "x", "new_text": "y"}],
         "path": "b.py",
         "new_text": "y",
     }
@@ -154,8 +154,8 @@ def test_codex_patch_edits_read_the_changes_codex_recorded() -> None:
         "/w/app.py": {"type": "update", "unified_diff": "--- a\n+++ b\n@@\n-x\n+y\n"},
     }
     assert canonical_arguments("codex", "apply_patch", None, {"changes": changes})["edits"] == [
-        {"path": "/w/.env", "kind": "add", "new_text": "KEY=1\n"},
-        {"path": "/w/app.py", "kind": "update", "new_text": "y"},
+        {"path": "/w/.env", "kind": "add", "old_text": "", "new_text": "KEY=1\n"},
+        {"path": "/w/app.py", "kind": "update", "old_text": "x", "new_text": "y"},
     ]
 
 
@@ -171,5 +171,169 @@ def test_an_added_line_starting_with_plus_plus_is_not_mistaken_for_the_header() 
         }
     }
     assert canonical_arguments("codex", "apply_patch", None, {"changes": changes})["edits"] == [
-        {"path": "/w/app.py", "kind": "update", "new_text": "++counter;"},
+        {"path": "/w/app.py", "kind": "update", "old_text": "counter;", "new_text": "++counter;"},
+    ]
+
+
+# --- canonical edits: what each file edit removed and added ------------------------
+
+#: One recorded argument shape per `file_edit` tool, from the source each table
+#: row cites. A tool absent here must be in `_NO_EDITS`, with its reason.
+_EDIT_SAMPLES: dict[tuple[str, str], dict[str, object]] = {
+    ("claude-code", "Edit"): {"file_path": "/a", "old_string": "o", "new_string": "n"},
+    (
+        "claude-code",
+        "MultiEdit",
+    ): {"file_path": "/a", "edits": [{"old_string": "o", "new_string": "n"}]},
+    ("claude-code", "NotebookEdit"): {"notebook_path": "/n.ipynb", "new_source": "x = 1"},
+    ("codex", "apply_patch"): {"input": "*** Begin Patch\n*** Delete File: a\n*** End Patch\n"},
+    ("cursor", "StrReplace"): {"path": "/a", "old_string": "o", "new_string": "n"},
+    ("cursor", "ApplyPatch"): {"patch": "*** Begin Patch\n*** Delete File: a\n*** End Patch\n"},
+    ("devin", "edit"): {"file_path": "/a", "old_string": "o", "new_string": "n"},
+}
+
+#: File edit tools whose recorded arguments are not known well enough to fill
+#: `edits` without guessing. Each is stated in its kind's spec.
+_NO_EDITS = {
+    # Its path and new text keys are in the table; its removed-text key and
+    # whether it can create a notebook are not confirmed.
+    ("cursor", "EditNotebook"),
+    # Its argument keys are unconfirmed (devin-cli.md, M3).
+    ("devin", "apply_patch"),
+    # Only its path key is known.
+    ("devin", "notebook_edit"),
+}
+
+
+def test_every_file_edit_tool_gives_edits_or_is_a_stated_gap() -> None:
+    """Asked of every `file_edit` row, not the tools that prompted it, so a file
+    edit tool added later cannot silently arrive without `edits`."""
+    edit_tools = {
+        (kind, name)
+        for kind, table in _CLASS_BY_NAME.items()
+        for name, cls in table.items()
+        if cls == "file_edit"
+    }
+    assert edit_tools == set(_EDIT_SAMPLES) | _NO_EDITS
+    for (kind, name), arguments in _EDIT_SAMPLES.items():
+        edits = canonical_arguments(kind, name, None, arguments).get("edits")
+        assert isinstance(edits, list) and edits, (kind, name)
+        for edit in edits:
+            assert {"path", "kind"} <= set(edit) <= {"path", "kind", "old_text", "new_text"}
+            assert edit["kind"] in ("add", "update", "delete")
+
+
+def test_a_claude_code_edit_carries_the_text_it_removed_and_added() -> None:
+    found = canonical_arguments(
+        "claude-code",
+        "Edit",
+        None,
+        {"file_path": "/a", "old_string": "o", "new_string": "n", "replace_all": False},
+    )
+    assert found == {
+        "path": "/a",
+        "new_text": "n",
+        "edits": [{"path": "/a", "kind": "update", "old_text": "o", "new_text": "n"}],
+    }
+
+
+def test_an_empty_old_string_is_the_edit_that_creates_the_file() -> None:
+    """Claude Code itself counts an `Edit` with an empty `old_string` as a new
+    file (`isNewFile`), and its `MultiEdit` names one "Create"."""
+    found = canonical_arguments(
+        "claude-code", "Edit", None, {"file_path": "/a", "old_string": "", "new_string": "n"}
+    )
+    assert found["edits"] == [{"path": "/a", "kind": "add", "old_text": "", "new_text": "n"}]
+
+
+def test_a_multi_edit_gives_one_entry_per_hunk_and_its_added_text_joined() -> None:
+    found = canonical_arguments(
+        "claude-code",
+        "MultiEdit",
+        None,
+        {
+            "file_path": "/a",
+            "edits": [
+                {"old_string": "a", "new_string": "b"},
+                {"old_string": "c", "new_string": "d", "replace_all": True},
+            ],
+        },
+    )
+    assert found == {
+        "path": "/a",
+        "new_text": "b\nd",
+        "edits": [
+            {"path": "/a", "kind": "update", "old_text": "a", "new_text": "b"},
+            {"path": "/a", "kind": "update", "old_text": "c", "new_text": "d"},
+        ],
+    }
+
+
+def test_a_notebook_edit_records_no_removed_text() -> None:
+    """`NotebookEdit`'s input has no old source; only its result does, and
+    canonical arguments read the call's arguments alone. A cell deletion adds
+    nothing: Claude Code ignores `new_source` for it."""
+    replace = canonical_arguments(
+        "claude-code", "NotebookEdit", None, {"notebook_path": "/n.ipynb", "new_source": "x = 1"}
+    )
+    assert replace["edits"] == [{"path": "/n.ipynb", "kind": "update", "new_text": "x = 1"}]
+    delete = canonical_arguments(
+        "claude-code",
+        "NotebookEdit",
+        None,
+        {"notebook_path": "/n.ipynb", "new_source": "x = 1", "edit_mode": "delete"},
+    )
+    assert delete["edits"] == [{"path": "/n.ipynb", "kind": "update", "new_text": ""}]
+
+
+def test_string_replacements_read_alike_across_kinds() -> None:
+    arguments = {"old_string": "o", "new_string": "n"}
+    claude = canonical_arguments("claude-code", "Edit", None, {"file_path": "/a", **arguments})
+    cursor = canonical_arguments("cursor", "StrReplace", None, {"path": "/a", **arguments})
+    devin = canonical_arguments("devin", "edit", None, {"file_path": "/a", **arguments})
+    assert claude["edits"] == cursor["edits"] == devin["edits"]
+
+
+def test_a_removed_text_the_call_did_not_record_is_absent() -> None:
+    found = canonical_arguments("cursor", "StrReplace", None, {"path": "/a", "new_string": "n"})
+    assert found["edits"] == [{"path": "/a", "kind": "update", "new_text": "n"}]
+
+
+def test_a_patch_gives_removed_lines_and_says_nothing_it_does_not_hold() -> None:
+    """An added file removed nothing. A deleted file's section holds no lines
+    in the patch grammar, so what it removed is not in the call and is absent.
+    Context lines are neither removed nor added."""
+    patch = (
+        "*** Begin Patch\n"
+        "*** Add File: new.py\n+a\n"
+        "*** Update File: app.py\n@@ def f():\n keep\n-old one\n-old two\n+new\n"
+        "*** Delete File: gone.py\n"
+        "*** End Patch\n"
+    )
+    assert canonical_arguments("codex", "apply_patch", None, {"input": patch})["edits"] == [
+        {"path": "new.py", "kind": "add", "old_text": "", "new_text": "a"},
+        {"path": "app.py", "kind": "update", "old_text": "old one\nold two", "new_text": "new"},
+        {"path": "gone.py", "kind": "delete", "new_text": ""},
+    ]
+    assert (
+        canonical_arguments("cursor", "ApplyPatch", None, {"patch": patch})["edits"]
+        == (canonical_arguments("codex", "apply_patch", None, {"input": patch})["edits"])
+    )
+
+
+def test_a_deletion_codex_recorded_carries_the_file_it_removed() -> None:
+    """Codex's applied change for a deleted file holds its content
+    (`FileChange::Delete { content }`), so there the removed text is known."""
+    changes = {"/w/gone.py": {"type": "delete", "content": "print(1)\n"}}
+    assert canonical_arguments("codex", "apply_patch", None, {"changes": changes})["edits"] == [
+        {"path": "/w/gone.py", "kind": "delete", "old_text": "print(1)\n", "new_text": ""},
+    ]
+
+
+def test_a_removed_line_starting_with_minus_minus_is_not_mistaken_for_the_header() -> None:
+    changes = {
+        "/w/app.py": {"type": "update", "unified_diff": "--- a\n+++ b\n@@\n---x;\n+x;\n"},
+    }
+    assert canonical_arguments("codex", "apply_patch", None, {"changes": changes})["edits"] == [
+        {"path": "/w/app.py", "kind": "update", "old_text": "--x;", "new_text": "x;"},
     ]

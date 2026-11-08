@@ -161,8 +161,9 @@ identifier stays. `MCPConnection.server` stays the identifier.
 | `ReadFile`, `Read` | `file_read` | `path` |
 | `Glob`, `rg`, `Grep`, `LS` | `file_search` | `path` |
 | `Write` | `file_write` | `path`, `content` |
-| `StrReplace`, `EditNotebook` | `file_edit` | `path`, `new_text` |
-| `ApplyPatch` | `file_edit` | `edits`, one `{path, kind, new_text}` per file, in Codex's patch grammar |
+| `StrReplace` | `file_edit` | `path`, `new_text`, and `edits`: one `{path, kind: update, old_text, new_text}` from `old_string` and `new_string` |
+| `EditNotebook` | `file_edit` | `path`, `new_text`. No `edits`: its removed-text key and whether it can create a notebook are not confirmed |
+| `ApplyPatch` | `file_edit` | `edits`, one `{path, kind, old_text, new_text}` per file, in Codex's patch grammar ([Codex](codex.md#tool-class-and-canonical-arguments)) |
 | `Delete` | `file_write` | `path` |
 | `WebSearch` | `web_search` | |
 | `WebFetch`, `Fetch` | `web_fetch` | `url` |
@@ -402,6 +403,7 @@ committed.
 | [0037](../adrs/0037-read-cursor-from-its-chat-store-prompt-messages.md) | An OpenAIDR-owned reader of the CLI's chat store. A prompt message is a turn; Cursor's typed outcome is the status; one kind for the CLI and the desktop app | `adr-sensor`'s parser; the transcript JSONL; the protobuf steps as the only source; two kinds |
 | [0038](../adrs/0038-cursor-usage-from-its-debug-log.md) | Usage, the entrypoint, client error times and MCP failures come from Cursor's debug log, placed by the conversation each turn names | Context fill as input tokens; the `stop` hook; print mode's stdout; estimating from text |
 | [0039](../adrs/0039-read-the-cursor-desktop-app-from-its-state-database.md) | The desktop app is a second container for the CLI's decoder: `composerData` and `agentKv:blob` rows in `state.vscdb`. Its usage comes from its structured log, placed only when one turn is open. Its entrypoint is `ide` | The bubbles; `adr-sensor`'s parser; a second kind; context fill as usage; placing a line by the turn last started |
+| [0042](../adrs/0042-canonical-edit-text-comes-from-the-calls-own-arguments.md) | A file edit's `old_text` and `new_text` come from the call's own arguments; a text they do not hold is absent | Leaving consumers to parse each format; filling `old_text` from the result or from the file on disk |
 
 ## Non-goals
 

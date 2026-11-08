@@ -362,6 +362,7 @@ def test_both_model_families_spellings_get_their_class_and_canonical_arguments(
                     {
                         "path": "/work/app/notes.txt",
                         "kind": "add",
+                        "old_text": "",
                         "new_text": "first line\ntoken=abc",
                     }
                 ],
@@ -370,7 +371,17 @@ def test_both_model_families_spellings_get_their_class_and_canonical_arguments(
             },
         ),
         ("Write", "file_write", {"path": "/work/app/config.env", "content": "API_TOKEN=x\n"}),
-        ("StrReplace", "file_edit", {"path": "/work/app/a.py", "new_text": "b"}),
+        (
+            "StrReplace",
+            "file_edit",
+            {
+                "path": "/work/app/a.py",
+                "new_text": "b",
+                "edits": [
+                    {"path": "/work/app/a.py", "kind": "update", "old_text": "a", "new_text": "b"}
+                ],
+            },
+        ),
         ("ReadFile", "file_read", {"path": "/work/app/a.py"}),
         ("Read", "file_read", {"path": "/work/app/a.py"}),
         ("rg", "file_search", {"path": "/work/app"}),
