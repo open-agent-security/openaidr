@@ -258,7 +258,7 @@ declaration — naming and representation are implementation choices.
 | MCP server | Absent for built-in tools | |
 | Tool class | *Proposed.* What the tool *is*, from a closed vocabulary filled from each kind's own table, so a consumer never has to learn every kind's tool names. Absent for a name the table does not know: unknown, never ordinary. It normalises vocabulary, like the server split, and says nothing about what the call did. See ADR-0021 | |
 | Arguments | | local-only |
-| Canonical arguments | *Proposed.* The arguments a consumer most often needs — command, path, content, new text, URL, agent, skill — under one key name across kinds. A key the kind did not record is absent, never guessed; the arguments above are unchanged beside them. See ADR-0021 | local-only |
+| Canonical arguments | *Proposed.* The arguments a consumer most often needs — command, path, content, new text, URL, agent, skill, edits — under one key name across kinds. A key the kind did not record is absent, never guessed; the arguments above are unchanged beside them. See ADR-0021 | local-only |
 | Status | Six values — see below | |
 | Exit code | A shell command's own exit status, where the kind records one | |
 | Duration | Wall clock from the record's own timestamps, not from the dependency's event model, which carries none. For an MCP call the connection log's tool-execution time fills a gap the transcript left, and never replaces a value it stated. **No absolute per-call time is carried beside it**: a call's start is its turn's occurrence time, and — only where the duration is the transcript's own round trip, not one the log filled in — a call's end follows from the two. Carrying either again would restate a value the model already holds, and recovering an end independently would require a join this package refuses (ADR-0010) | |
@@ -266,6 +266,30 @@ declaration — naming and representation are implementation choices.
 | Outcome | The abridged result and error text | local-only |
 | Result size | The size of what the agent produced, not of the abridged copy held here | |
 | Truncation marker | Upstream elided part of the result. The marker it leaves carries the count removed, which is what makes the original size exact rather than estimated | |
+
+**Canonical `edits`.** A `file_edit` call carries `edits`, a list of
+`{path, kind, old_text, new_text}`. There is one entry for each hunk or each
+file, as the tool records them. `kind` is `add`, `update` or `delete`, and it
+describes the file. `old_text` is the text that the edit removed. `new_text` is
+the text that the edit added. A consumer reads these keys and does not parse
+the format of an agent's arguments.
+
+The keys come only from the arguments of the call (ADR-0042). Where the
+arguments do not hold the removed text, `old_text` is absent. It is never
+reconstructed from the result or from the file on disk. The single-file keys
+`path` and `new_text` stay beside `edits`. The file edit tools of each kind:
+
+| Kind | Tool | Entries | `old_text` |
+|---|---|---|---|
+| `claude-code` | `Edit` | One. `kind` is `add` when `old_string` is empty, which Claude Code itself counts as a new file | `old_string` |
+| `claude-code` | `MultiEdit` | One for each hunk, on the same rule. `new_text` at the top is the added text of the hunks, joined with newlines | `old_string` of the hunk |
+| `claude-code` | `NotebookEdit` | One, `update`: the notebook must exist. A cell deletion has an empty `new_text`, because Claude Code ignores `new_source` for it | Absent. The input holds no old source |
+| `codex` | `apply_patch` | One for each file ([Codex](codex.md#tool-class-and-canonical-arguments)) | The `-` lines; empty for an added file |
+| `cursor` | `StrReplace` | One, `update`, also for an empty `old_string`: only Claude Code's handling of one is confirmed | `old_string` |
+| `cursor` | `ApplyPatch` | As Codex's `apply_patch` | As Codex's `apply_patch` |
+| `cursor` | `EditNotebook` | None | Not confirmed ([Cursor](cursor.md#tool-names)) |
+| `devin` | `edit` | One, `update`, on the same terms as `StrReplace` | `old_string` |
+| `devin` | `apply_patch`, `notebook_edit` | None | Argument keys not confirmed ([Devin CLI](devin-cli.md#open-facts), M3) |
 
 A session additionally carries its **model responses** (*proposed*) — one per request the agent made to its provider, with the token counts the transcript recorded and the attributes that set their price, never a price itself. See [Token usage](token-usage.md), ADR-0014 and ADR-0015.
 

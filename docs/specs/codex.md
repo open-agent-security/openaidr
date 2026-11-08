@@ -442,7 +442,7 @@ The Claude Code reader's discipline (ADR-0011, ADR-0029, ADR-0030):
 | `shell_control` | `write_stdin` | — |
 | `script` | `exec`, Code Mode's cell. Each tool its script runs is its own call from its own completion item (ADR-0036) | — |
 | `file_read` | `view_image` | `path` (`path`) |
-| `file_edit` | `apply_patch` | `edits` (**new**, below). A patch that touches one file also gets `path` and `new_text` |
+| `file_edit` | `apply_patch` | `edits` (**new**, below), with `old_text` and `new_text` for each file. A patch that touches one file also gets `path` and `new_text` |
 | `web_search` | `web_search` | — |
 | `delegate` | `spawn_agent` | `agent`: `agent_type`, else `default`, the role Codex itself applies (Source `core/src/agent/role.rs`; C7) |
 | `mcp` | Any call with an `mcp_server` | — |
@@ -452,12 +452,21 @@ Codex has no file-read, file-search, file-write or web-fetch tool. It reads,
 searches and fetches through the shell, so those calls are `shell`.
 
 **`edits` is a new canonical key** for a patch tool. It is a list of `{path,
-kind, new_text}`, one per file. `kind` is `add`, `update` or `delete`. `new_text`
+kind, old_text, new_text}`, one per file. `kind` is `add`, `update` or `delete`. `new_text`
 holds the added lines, taken from the patch's own grammar (`*** Add File:`,
 `*** Update File:`, `*** Move to:`, `+` lines), else from a `changes` argument.
-One canonical `path` cannot describe a patch that touches three files. Devin's
-`apply_patch` has the same shape and could fill the same key; that is not done
-here.
+One canonical `path` cannot describe a patch that touches three files.
+[Session collection](session-collection.md) defines the key for every kind.
+
+`old_text` holds the removed lines, by the same two routes:
+
+| Route | `add` | `update` | `delete` |
+|---|---|---|---|
+| The patch grammar (`input`) | Empty | The `-` lines. Context lines are neither removed nor added | Absent. A `*** Delete File:` section holds no lines (Source `apply-patch/src/parser.rs`) |
+| Codex's applied change (`changes`) | Empty | The `-` lines of `unified_diff`, after its `---`/`+++` header | `content`, which Codex records for a deleted file (`FileChange::Delete`, Source `protocol/src/protocol.rs`) |
+
+Devin's `apply_patch` does not fill `edits`: its argument keys are not
+confirmed (Devin CLI M3).
 
 ## Model additions
 
@@ -541,6 +550,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0036](../adrs/0036-a-code-mode-cell-is-a-script-and-its-tools-are-their-own-calls.md) | A Code Mode cell is classed `script` and its status is its own status line; the tools it runs stay their own calls | Dropping the cell; folding nested calls into it; `other`; joining by position |
 | [0040](../adrs/0040-preserve-native-client-metadata-without-changing-runtime-identity.md) | Append local-only `Session.originator` metadata; kind, entrypoint, spans and public descriptors stay unchanged | Create an agent kind for each client name; replace the entrypoint with the originator; interpret known clients inside collection; add arbitrary originators to the public descriptor |
 | [0041](../adrs/0041-decode-compressed-codex-rollouts-with-the-standard-library-or-zstandard.md) | Read compressed rollouts: `compression.zstd` where it imports, else `zstandard`, installed only below Python 3.14 | Report and skip them; the `zstd` command; a pure-Python decoder; `zstandard` on every version |
+| [0042](../adrs/0042-canonical-edit-text-comes-from-the-calls-own-arguments.md) | A file edit's `old_text` and `new_text` come from the call's own arguments; a text they do not hold is absent | Leaving consumers to parse each format; filling `old_text` from the result or from the file on disk |
 
 ## Non-goals
 
