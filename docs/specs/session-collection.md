@@ -496,7 +496,7 @@ for no other.
 | `claude-code` | `oauthAccount` in `.claude.json` (`.claude-custom-oauth.json` with `CLAUDE_CODE_CUSTOM_OAUTH_URL` set): inside the configuration directory when `CLAUDE_CONFIG_DIR` (or the caller) names one, else in the home directory; a legacy `.config.json` in the directory wins. In a cloud session (`CLAUDE_CODE_REMOTE=true` with `CLAUDE_CODE_ACCOUNT_UUID` set), the session's `CLAUDE_CODE_ACCOUNT_UUID` and `CLAUDE_CODE_USER_EMAIL` win, and the file adds its name and plan only when it records the same account (ADR-0028) | `accountUuid`, `displayName`, `emailAddress`, `billingType` |
 | `devin` | nothing on disk names the person | None. `sign_in_query("devin")` gives Devin's own `devin auth status` (binary under `$XDG_DATA_HOME/devin/cli`, else on `PATH`, else in Devin Desktop), which asks Devin's server. Its `read` returns `User ID`, `Name`, `Email` and `Plan`, or None when no `User ID` is printed. This package never runs it and never opens `credentials.toml` |
 | `codex` | `auth.json` under `$CODEX_HOME`, else `~/.codex`, when `cli_auth_credentials_store` is `file` or `auto`. A missing `config.toml` selects `file`. Any other store, or a `config.toml` that cannot be read, leaves no file. Only the `id_token` identity claims are read. The access token and the refresh token are not read. An API key field has only its presence checked, never its value read. The signature is not checked | `chatgpt_user_id`, else `user_id`; `name`; `email`, else the profile email; `chatgpt_plan_type`. None when the sign-in is not ChatGPT, or when those user claims are absent |
-| `cursor` | `authInfo` in `cli-config.json` under the config root (`$CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`). The tokens in `auth.json` are not read | `userId`, else `authId`; `displayName`; `email`. None when both ids are absent. No plan |
+| `cursor` | `authInfo` in `cli-config.json` under the config root (`$CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`). The tokens in `auth.json` are not read. When the CLI names no one, the desktop app's sign-in answers instead, from `ItemTable` in its `state.vscdb`: `stripeMembershipAuthId`, `cachedEmail`, `stripeMembershipType`. The desktop app's tokens are not read either. When the CLI does name someone, it keeps the desktop app's plan only when the two name the same `authId`, which the CLI never records itself | `userId`, else `authId`; `displayName`; `email`. The plan comes from the desktop app only when its `authId` matches. None when the CLI names no one and the desktop app is signed out too; the desktop app then answers alone, with its `authId`, email and plan, and no display name |
 | any other | — | None |
 
 `display_name` and `email` are `LOCAL_ONLY`. Reading a sign-in adds no session
@@ -507,7 +507,7 @@ when the file is absent (ADR-0027).
 Claude Code names `.config.json` and `.claude.json`.
 Codex names `config.toml` and `auth.json`.
 Devin names `credentials.toml`.
-Cursor names `cli-config.json`.
+Cursor names `cli-config.json`, `state.vscdb` and `state.vscdb-wal`.
 A consumer asks again when any of those files changes, so a Devin query
 runs once per sign-in.
 
