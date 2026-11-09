@@ -125,8 +125,8 @@ _MCP_LOG_STATE_EXPLANATIONS: dict[MCPLogState, Callable[[int], str]] = {
         "each line describes cannot be established. Build and entrypoint kept."
     ),
     "not_attempted": lambda n: (
-        f"{n} not attempted: no connection log was read, so transport, server "
-        "identity and MCP call outcomes are unavailable, not absent."
+        f"{n} not attempted: no connection log was read, so transport and "
+        "server identity are unavailable, not absent."
     ),
 }
 
