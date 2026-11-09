@@ -125,9 +125,8 @@ _MCP_LOG_STATE_EXPLANATIONS: dict[MCPLogState, Callable[[int], str]] = {
         "each line describes cannot be established. Build and entrypoint kept."
     ),
     "not_attempted": lambda n: (
-        f"{n} not attempted: a subagent transcript is keyed by its parent's session "
-        "id, so the log filed under that id cannot be shown to be this subagent's "
-        "share rather than the parent's or a sibling's."
+        f"{n} not attempted: no connection log was read, so transport, server "
+        "identity and MCP call outcomes are unavailable, not absent."
     ),
 }
 
