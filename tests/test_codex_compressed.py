@@ -182,6 +182,22 @@ def test_collect_file_reads_a_compressed_rollout(tmp_path: Path) -> None:
     assert first == again == CodexReader(tmp_path / "plain").collect(_ALL)
 
 
+def test_a_compressed_rollout_does_not_keep_its_projection(tmp_path: Path) -> None:
+    """A compressed rollout is read from the start on every call, so the
+    projection cannot resume a later read. Keeping it would spend the
+    incremental cache on a file the next read discards."""
+    plain = Rollout("plain").write(tmp_path)
+    compressed = _rollout("old").write(tmp_path, compressed=True)
+    reader = CodexReader(tmp_path)
+    reader.collect_file(plain)
+
+    sessions, failures = reader.collect_file(compressed)
+
+    assert failures == []
+    assert [session.session_id for session in sessions] == ["codex:old"]
+    assert list(reader._cursors) == [plain.absolute()]
+
+
 def test_collect_file_leaves_a_compressed_rollout_to_its_plain_form(tmp_path: Path) -> None:
     rollout = _rollout("t")
     compressed = rollout.write(tmp_path, compressed=True)

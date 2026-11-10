@@ -1486,8 +1486,15 @@ class CodexReader:
                 # The plain form is the one read, as in `collect`; it may hold
                 # records appended after the thread was resumed.
                 return [], []
-        cursor = self._cursors.setdefault(path, _Cursor())
-        self._cursors.move_to_end(path)
+        # A compressed rollout is read from the start on every call: Codex
+        # never appends to it, and `_Cursor.read` drops any projection it
+        # already holds. Keeping that projection would only spend the
+        # incremental cache (ADR-0029) on a file the next read discards.
+        if path.name.endswith(COMPRESSED):
+            cursor = _Cursor()
+        else:
+            cursor = self._cursors.setdefault(path, _Cursor())
+            self._cursors.move_to_end(path)
         failures: list[ReaderFailure] = []
         titles = self._titles(failures)
         logs = CodexLogs.open(self._root)
