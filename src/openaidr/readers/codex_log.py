@@ -87,7 +87,6 @@ class Placement:
 
 @dataclass(frozen=True)
 class _Line:
-    at: datetime
     server: str
     started: bool
     advertised: tuple[str, str] | None
@@ -214,10 +213,11 @@ class CodexLogs:
 
 def _line(seconds: int, nanos: int, target: str, body: str) -> _Line | None:
     try:
-        at = datetime.fromtimestamp(seconds, UTC).replace(microsecond=nanos // 1000)
-    except (OSError, OverflowError, ValueError):
         # An out-of-range ts or ts_nanos; this row's instant is unrepresentable,
-        # so the row is skipped like any other it cannot make sense of.
+        # so the row is skipped like any other it cannot make sense of. The
+        # instant is not kept: a line is placed by its request, never by time.
+        datetime.fromtimestamp(seconds, UTC).replace(microsecond=nanos // 1000)
+    except (OSError, OverflowError, ValueError):
         return None
     request = _request(body)
     if target == _STARTED and _INITIALIZED.search(body):
@@ -226,7 +226,6 @@ def _line(seconds: int, nanos: int, target: str, body: str) -> _Line | None:
             return None
         advertised = _ADVERTISED.search(body)
         return _Line(
-            at=at,
             server=span[-1],
             started=True,
             advertised=(advertised.group("name"), advertised.group("version"))
@@ -240,7 +239,6 @@ def _line(seconds: int, nanos: int, target: str, body: str) -> _Line | None:
         if failed is None:
             return None
         return _Line(
-            at=at,
             server=failed.group("server"),
             started=False,
             advertised=None,
