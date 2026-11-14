@@ -40,7 +40,8 @@ from openaidr.model import MCPConnection
 LOG_PREFIX = "session-"
 LOG_SUFFIX = ".log"
 
-_LINE = re.compile(r"^\[(?P<at>[^\]]+)\] (?P<channel>\S+) (?P<body>\{.*\})\s*$")
+# The channel is part of the line shape. Nothing reads its value.
+_LINE = re.compile(r"^\[(?P<at>[^\]]+)\] \S+ (?P<body>\{.*\})\s*$")
 _USAGE = "Setting token details for client token ring"
 _TURN_START = "agent_cli.turn.start"
 _TURN_OUTCOME = "agent_cli.turn.outcome"
