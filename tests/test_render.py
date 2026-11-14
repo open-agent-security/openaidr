@@ -247,11 +247,12 @@ def test_mcp_coverage_names_a_session_id_collision_rather_than_a_pruned_cache() 
 
 
 def test_mcp_coverage_names_not_attempted_rather_than_leaving_it_unexplained() -> None:
-    """A subagent's MCP calls are counted in the denominator but never
-    enriched, since the log is keyed by the parent's session id and cannot be
-    shown to be this subagent's share. Every other non-`applied` state gets a
-    line; leaving this one out would read as an unexplained gap rather than
-    evidence withheld on purpose."""
+    """A session whose connection log was not read is still counted, and the
+    line has to say so. Claude Code uses this state for a sub-agent, because
+    the log is keyed by the parent's session id. The desktop reader uses it
+    for every conversation, because it does not read MCP logs. The line must
+    not name a cause that only one of those has. Leaving the state out would
+    read as an unexplained gap."""
     call = ToolCall(
         span="claude-code:s1:toolu_1",
         tool_name="search",
@@ -280,7 +281,8 @@ def test_mcp_coverage_names_not_attempted_rather_than_leaving_it_unexplained() -
     )
     output = render_text(Collection(sessions=[session], failures=[]))
     assert "0 of 1 sessions with MCP calls enriched" in output
-    assert "1 not attempted: a subagent transcript" in output
+    assert "1 not attempted: no connection log was read" in output
+    assert "subagent transcript" not in output
 
 
 def test_a_connection_that_failed_before_any_call_is_still_reported() -> None:
