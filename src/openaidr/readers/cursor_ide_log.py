@@ -35,8 +35,9 @@ from openaidr.readers.cursor_log import Outcome, Placement, Usage
 
 LOG_NAME = "Cursor Structured Logs.log"
 
+# The level is part of the line shape. Nothing reads its value.
 _LINE = re.compile(
-    r"^(?P<at>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[(?P<level>[a-z]+)\] (?P<body>\{.*\})\s*$"
+    r"^(?P<at>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[[a-z]+\] (?P<body>\{.*\})\s*$"
 )
 _TURN_START = "agent.turn.start"
 _TURN_OUTCOME = "agent.turn.outcome"
