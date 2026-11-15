@@ -115,7 +115,7 @@ def test_a_repeated_message_key_takes_an_occurrence_suffix(home: Path, logs: Pat
     keys = [t.key for t in _read(home, logs)["cursor:a1"].turns]
 
     assert len(set(keys)) == 2
-    assert keys[1] == f"{keys[0]}#2"
+    assert keys[1] == f"{keys[0]}.2"
 
 
 def test_appending_messages_moves_no_span(home: Path, logs: Path) -> None:
