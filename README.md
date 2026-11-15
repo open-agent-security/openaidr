@@ -35,9 +35,8 @@ job; OpenAIDR takes no position on what a consumer concludes.
 
 ## What OpenAIDR reads, and what it emits
 
-OpenAIDR reads files the agent already wrote — Claude Code's JSONL transcripts
-and its per-server MCP connection logs — opened **read-only**. No process hooks,
-no proxy, no injected agent, no listener, and nothing is written back.
+OpenAIDR reads each agent's own session files and logs, and it opens them **read-only**.
+No process hooks, no proxy, no injected agent, no listener, and nothing is written back.
 
 **There is no upload path at all.** OpenAIDR reads, normalises and returns a
 model. It opens no network connection and ships nothing anywhere. What a
