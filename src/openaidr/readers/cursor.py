@@ -599,7 +599,7 @@ def _session(
         raw_key = _string(message.get("id")) if role == "assistant" else None
         base = raw_key or f"b{blob_id[:16]}"
         seen[base] = seen.get(base, 0) + 1
-        key = base if seen[base] == 1 else f"{base}#{seen[base]}"
+        key = base if seen[base] == 1 else f"{base}.{seen[base]}"
         if role == "user":
             text = content if isinstance(content, str) else _joined(content)
             query = _USER_QUERY.search(text)

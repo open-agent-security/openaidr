@@ -100,7 +100,7 @@ table lists both spellings.
 |---|---|
 | Main session | `cursor:<agentId>` |
 | Sub-agent session | `cursor:<rootParentAgentId>:<agentId>`, from `meta.subagentInfo` (ADR-0001). Every turn and response is `is_sidechain` |
-| Turn | `key` is the message's own `id` (`msg-…`), else its blob id. A key seen before in the same list takes `#<n>`. `position` is the index among turns |
+| Turn | `key` is the message's own `id` (`msg-…`), else its blob id. A key seen before in the same list takes `.<n>`. `position` is the index among turns |
 | Span | `span_id(session_id, turn key, index of the tool-call part in the message)` |
 
 - **The prompt list only grows**, except at compaction, when Cursor replaces

@@ -1140,7 +1140,7 @@ def _turns(
         base = message.sequence_id or f"turn-{len(turns)}"
         occurrence = seen.get(base, 0)
         seen[base] = occurrence + 1
-        key = base if occurrence == 0 else f"{base}#{occurrence}"
+        key = base if occurrence == 0 else f"{base}.{occurrence}"
         turns.append(
             Turn(
                 position=len(turns),

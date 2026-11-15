@@ -290,6 +290,8 @@ def test_a_repeated_sequence_id_does_not_collide(tmp_path: Path) -> None:
     assert keys[0] == "dup"
     spans = [c.span for t in session.turns for c in t.tool_calls]
     assert len(set(spans)) == len(spans)
+    assert keys[1] == "dup.1"
+    assert all("#" not in span for span in spans)
 
 
 def test_a_repeated_sequence_id_keeps_each_occurrences_own_call_id(tmp_path: Path) -> None:

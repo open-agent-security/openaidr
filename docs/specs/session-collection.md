@@ -354,6 +354,11 @@ which session, which turn, which call within that turn. Anything derived from
 position in a mutable list, or from content that may later be appended to, is
 disqualified.
 
+A reader that repeats a turn key adds `.<n>` to the later occurrence. A span
+carries no `#`, because `#` starts a URL fragment. A consumer that puts a span in
+a URL, or checks it against a strict identifier pattern, then reads a different
+value or refuses it.
+
 ### Status: four failures, not one
 
 | Status | Means |
