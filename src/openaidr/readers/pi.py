@@ -373,10 +373,13 @@ class PiReader:
                     self._failure(f"{path}: line {number}: malformed entry; session withheld")
                 )
                 return None
-            if number == 1 and (entry.get("type") != "session" or not _string(entry.get("id"))):
+            # The header is the first record, not line 1: a blank line before it
+            # must not let an unchecked one through.
+            first = projection.header is None
+            if first and (entry.get("type") != "session" or not _string(entry.get("id"))):
                 failures.append(self._failure(f"{path}: no session header; not read"))
                 return None
-            if number == 1 and entry.get("version") not in _VERSIONS:
+            if first and entry.get("version") not in _VERSIONS:
                 failures.append(
                     self._failure(
                         f"{path}: session version {entry.get('version')!r} is not one this"

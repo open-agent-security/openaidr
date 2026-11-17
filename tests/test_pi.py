@@ -348,3 +348,29 @@ def test_a_block_entry_names_only_the_call_of_its_own_branch(tmp_path: Path) -> 
     )
     calls = [c for t in _one(tmp_path).turns for c in t.tool_calls]
     assert [c.status for c in calls] == ["rejected", "error"]
+
+
+def test_the_header_is_the_first_nonblank_record(tmp_path: Path) -> None:
+    """A blank first line does not let an unknown header through."""
+    path = _write(tmp_path, [{**_header(), "version": 4}])
+    path.write_text("\n" + path.read_text(encoding="utf-8"), encoding="utf-8")
+    sessions, failures = PiReader(root=tmp_path).collect(Window(since=None))
+    assert sessions == []
+    assert "version 4" in failures[0].message
+
+    path.write_text("\n\n" + json.dumps(_header()) + "\n", encoding="utf-8")
+    assert _one(tmp_path).session_id == f"pi:{_SID}"
+
+
+def test_a_file_whose_first_record_is_no_header_is_not_read(tmp_path: Path) -> None:
+    path = _write(tmp_path, [_header()])
+    path.write_text(
+        "\n"
+        + json.dumps(_msg("aaaa0001", None, {"role": "user", "content": "x"}))
+        + "\n"
+        + path.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    sessions, failures = PiReader(root=tmp_path).collect(Window(since=None))
+    assert sessions == []
+    assert "no session header" in failures[0].message
