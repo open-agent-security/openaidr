@@ -16,14 +16,16 @@ normalises it into one session model with stable span identity.
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
 
-**Today it reads four kinds: Claude Code, Devin, Codex and Cursor** (`devin`, which
+**Today it reads five kinds: Claude Code, Devin, Codex, Cursor and Pi** (`devin`, which
 covers Devin CLI, Devin Desktop's local agent and editors driving it over ACP:
 one agent, one session store; `codex`, which covers Codex CLI, `codex exec`, and
 the IDE extension and Codex app through `codex app-server`, from
 [`docs/specs/codex.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/codex.md);
 `cursor`, which covers the Cursor CLI in the terminal, in print mode and over
 ACP, and the desktop app's agent panel, from
-[`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md)).
+[`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md);
+`pi`, which covers Pi in the terminal, from
+[`docs/specs/pi.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/pi.md)).
 The parsing dependency supports more formats
 than this package instantiates, which is a distinction worth holding onto; what
 each additional kind would cost is measured in
@@ -155,7 +157,7 @@ and a doc index in
 
 ## Status
 
-**Beta.** Session collection works for `claude-code`, `devin`, `codex` and `cursor`:
+**Beta.** Session collection works for `claude-code`, `devin`, `codex`, `cursor` and `pi`:
 sessions, turns, tool calls and span identity. Claude Code is read through
 `adr-sensor`, one file at a time. Devin is read from its SQLite store and run
 logs, and Codex from its rollouts and log database; both of those readers are

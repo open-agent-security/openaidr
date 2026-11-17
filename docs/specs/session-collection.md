@@ -31,11 +31,11 @@ and results before OpenAIDR sees them.
 
 ## Agent kind coverage
 
-**Four kinds today: `claude-code`, `devin`, `codex` and `cursor`.**
+**Five kinds today: `claude-code`, `devin`, `codex`, `cursor` and `pi`.**
 `default_readers()` returns one reader per kind, and `AGENT_KIND_BY_SOURCE`
-holds one row per kind. Devin CLI, Codex and Cursor are read by OpenAIDR-owned
+holds one row per kind. Devin CLI, Codex, Cursor and Pi are read by OpenAIDR-owned
 readers, not through the dependency; their designs are [Devin CLI](devin-cli.md),
-[Codex](codex.md) and [Cursor](cursor.md). Every other agent kind is **not read
+[Codex](codex.md), [Cursor](cursor.md) and [Pi](pi.md). Every other agent kind is **not read
 at all** — not read shallowly, not read and marked. A session of another agent
 on the same machine is absent from this package's output entirely.
 
