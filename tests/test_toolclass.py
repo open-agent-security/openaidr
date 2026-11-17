@@ -190,6 +190,7 @@ _EDIT_SAMPLES: dict[tuple[str, str], dict[str, object]] = {
     ("cursor", "StrReplace"): {"path": "/a", "old_string": "o", "new_string": "n"},
     ("cursor", "ApplyPatch"): {"patch": "*** Begin Patch\n*** Delete File: a\n*** End Patch\n"},
     ("devin", "edit"): {"file_path": "/a", "old_string": "o", "new_string": "n"},
+    ("pi", "edit"): {"path": "/a", "edits": [{"oldText": "o", "newText": "n"}]},
 }
 
 #: File edit tools whose recorded arguments are not known well enough to fill

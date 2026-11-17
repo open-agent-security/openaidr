@@ -609,8 +609,10 @@ def test_each_kinds_root_reaches_its_reader(
         devin_root=tmp_path / "devin",
         codex_root=tmp_path / "codex",
         cursor_root=tmp_path / "cursor",
+        pi_root=tmp_path / "pi",
     )
     assert collector.locations() == {
+        "pi": (tmp_path / "pi" / "sessions",),
         "claude-code": (tmp_path / "claude",),
         "devin": ((tmp_path / "devin").resolve(),),
         "codex": (tmp_path / "codex" / "sessions", tmp_path / "codex" / "archived_sessions"),

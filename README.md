@@ -10,8 +10,8 @@ Session collection for AI coding agents.
 OpenAIDR reads the session state AI coding agents already write to disk and
 normalises it into one session model with stable span identity.
 
-> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Four
-> agent kinds read today (`claude-code`, `devin`, `codex`, `cursor`). Start with
+> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Five
+> agent kinds read today (`claude-code`, `devin`, `codex`, `cursor`, `pi`). Start with
 > [Install and run](#install-and-run), then
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
@@ -173,6 +173,11 @@ Its statuses come from Cursor's typed outcome, `interrupted` included. The
 desktop app's conversations are read from its `state.vscdb` with the same
 decoder, with usage from its structured log where its agent loop runs on the
 machine.
+
+Pi (`pi`) is read from its session files
+([`docs/specs/pi.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/pi.md)).
+It emits `ok`, `error`, `pending` and `unknown`. Pi writes a call that an
+extension blocked as an error result, so a blocked call reads as `error`.
 
 For long-lived consumers, `IncrementalCollector` takes an agent kind and one
 changed path. Claude Code and Codex cold-read that file once, then project

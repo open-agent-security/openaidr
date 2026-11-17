@@ -41,6 +41,8 @@
 - [Cursor](specs/cursor.md) — a fourth agent kind, `cursor`. The CLI is read
   from its chat stores and its debug log. The desktop app's agent panel is read
   from its `state.vscdb` and its structured log, with the same decoder.
+- [Pi](specs/pi.md) — a fifth agent kind, `pi`. It is read from the JSONL
+  session files that Pi writes under its agent directory.
 
 ## Decisions
 
