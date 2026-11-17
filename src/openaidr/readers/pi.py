@@ -115,6 +115,9 @@ class _Projection:
     )
     #: A `codemode` script's nested calls, by the key of the turn they make.
     nested: dict[str, list[Mapping[str, object]]] = field(default_factory=dict)
+    #: Keys of a `toolResult` whose `nestedCalls` Pi itself reports as not
+    #: complete: some calls the script made are missing from `nested`.
+    incomplete_nested: set[str] = field(default_factory=set)
     #: Results by (the assistant entry that issued the call, provider call id).
     #: A provider call id is unique within one response, not within a session,
     #: and Pi's tree can hold two branches that reuse one (ADR-0004).
@@ -266,15 +269,32 @@ class _Projection:
                         truncated=bool(details.get("truncation")) or "fullOutputPath" in details,
                     )
                 )
+            usage = message.get("usage")
+            if isinstance(usage, Mapping):
+                # Nested model work the tool itself did, not the main call's.
+                self.responses[key] = ModelResponse(
+                    response_id=key,
+                    request_id=None,
+                    model=None,
+                    occurred_at=at,
+                    final=True,
+                    is_sidechain=False,
+                    usage=_usage(usage),
+                )
+            nested_calls = _mapping(message.get("nestedCalls"))
             nested = [
                 call
-                for call in _list(_mapping(message.get("nestedCalls")).get("calls"))
+                for call in _list(nested_calls.get("calls"))
                 if _string(call.get("name")) is not None
             ]
             if nested:
                 # The tools a `codemode` script called, one call each (ADR-0036).
                 self.nested[key] = nested
                 self.turns.append((key, "assistant", "", at, None, []))
+            if nested_calls.get("complete") is False:
+                # Pi caps a script's recorded nested calls at 256 and drops the
+                # rest, so the list above is known short.
+                self.incomplete_nested.add(key)
 
     def _side_usage(self, key: str, entry: Mapping[str, object], at: datetime | None) -> None:
         usage = entry.get("usage")
@@ -537,7 +557,12 @@ class PiReader:
                 return None
             projection.project(entry, number)
         cwd = _string(projection.header.get("cwd")) if projection.header is not None else None
-        return projection.session(self._servers(cwd, failures))
+        session = projection.session(self._servers(cwd, failures))
+        for key in sorted(projection.incomplete_nested):
+            failures.append(
+                self._failure(f"{path}: entry {key}: Pi reports its nested calls as incomplete")
+            )
+        return session
 
     def _servers(self, cwd: str | None, failures: list[ReaderFailure]) -> dict[str, str]:
         """Each configured MCP server's written name, mapped to its configured
