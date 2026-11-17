@@ -478,6 +478,9 @@ class OpenCodeReader:
         self._digests: dict[str, str] = {}
 
     def locations(self) -> tuple[Path, ...]:
+        extra = self._named_database()
+        if extra is not None and extra.parent != self._root:
+            return (self._root, extra.parent)
         return (self._root,)
 
     def collect(self, window: Window) -> tuple[list[Session], list[ReaderFailure]]:
@@ -500,7 +503,9 @@ class OpenCodeReader:
         what was last returned for them."""
         path = path.absolute()
         database = path.with_name(path.name.removesuffix("-wal").removesuffix("-shm"))
-        if database.parent != self._root or not _is_database(database.name):
+        if database != self._named_database() and (
+            database.parent != self._root or not _is_database(database.name)
+        ):
             return [], []
         failures: list[ReaderFailure] = []
         newest = self._newest.get(database)
@@ -551,9 +556,8 @@ class OpenCodeReader:
             failures.append(self._failure(f"{self._root}: {error.strerror or error}"))
             names = []
         found.extend(self._root / name for name in names if _is_database(name))
-        named = os.environ.get("OPENCODE_DB")
-        if named and named != ":memory:":
-            extra = Path(named) if Path(named).is_absolute() else self._root / named
+        extra = self._named_database()
+        if extra is not None:
             try:
                 extra.stat()
             except FileNotFoundError:
@@ -564,6 +568,14 @@ class OpenCodeReader:
             if extra not in found:
                 found.append(extra)
         return sorted(found)
+
+    def _named_database(self) -> Path | None:
+        """The file `$OPENCODE_DB` names, absolute or relative to the data
+        directory, unless it is `:memory:`."""
+        named = os.environ.get("OPENCODE_DB")
+        if not named or named == ":memory:":
+            return None
+        return Path(named) if Path(named).is_absolute() else self._root / named
 
     def _config_files(self, directory: str | None) -> Iterable[Path]:
         """Every file OpenCode reads its configuration from, for a session in
