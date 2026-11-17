@@ -506,7 +506,9 @@ def test_a_codemode_scripts_calls_are_their_own_turn(tmp_path: Path) -> None:
             ),
         ],
     )
-    session = _one(tmp_path)
+    sessions, failures = PiReader(root=tmp_path).collect(Window(since=None))
+    assert len(failures) == 1 and "entry aaaa1002" in failures[0].message
+    session = sessions[0]
     script = session.turns[0].tool_calls[0]
     assert (script.tool_class, script.status) == ("script", "ok")
     turn = session.turns[1]
@@ -521,6 +523,50 @@ def test_a_codemode_scripts_calls_are_their_own_turn(tmp_path: Path) -> None:
     assert calls[0].duration_ms == 40
     assert (calls[1].error_text, calls[1].truncated, calls[1].arguments) == ("boom", True, {})
     assert calls[2].canonical_arguments == {"path": "a"}
+
+
+def test_a_complete_nested_calls_list_is_not_reported(tmp_path: Path) -> None:
+    """`complete` missing, or `True`, is not a reason to report anything: only
+    Pi's own `False` says the list is short."""
+    nested = {"calls": [{"id": "n1", "name": "read", "status": "ok"}]}
+    _write(
+        tmp_path,
+        [
+            _header(),
+            _msg("aaaa1001", None, _assistant(("c1", "codemode", {}))),
+            _msg(
+                "aaaa1002",
+                "aaaa1001",
+                {**_result("c1", "codemode", "done"), "nestedCalls": nested},
+            ),
+            _msg("aaaa1003", None, _assistant(("c2", "codemode", {}))),
+            _msg(
+                "aaaa1004",
+                "aaaa1003",
+                {**_result("c2", "codemode", "done"), "nestedCalls": {**nested, "complete": True}},
+            ),
+        ],
+    )
+    assert _one(tmp_path)
+
+
+def test_a_tool_results_own_usage_is_recorded(tmp_path: Path) -> None:
+    """A tool's nested model work carries its own `usage`, separate from any
+    assistant response's, and is kept rather than dropped."""
+    usage = {"input": 5, "output": 2, "cacheRead": 0, "cacheWrite": 0}
+    _write(
+        tmp_path,
+        [
+            _header(),
+            _msg("aaaa1001", None, _assistant(("c1", "search", {}))),
+            _msg("aaaa1002", "aaaa1001", {**_result("c1", "search", "done"), "usage": usage}),
+        ],
+    )
+    session = _one(tmp_path)
+    assert [r.response_id for r in session.responses] == ["r1000", "aaaa1002"]
+    found = session.responses[1]
+    assert found.model is None
+    assert (found.usage.input_tokens, found.usage.output_tokens) == (5, 2)
 
 
 def test_a_failed_response_is_an_error_turn(tmp_path: Path) -> None:
