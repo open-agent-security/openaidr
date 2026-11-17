@@ -14,6 +14,8 @@ AGENT_KIND_BY_SOURCE = {
     "devin": "devin",
     "codex": "codex",
     "cursor": "cursor",
+    "pi": "pi",
+    "opencode": "opencode",
 }
 
 

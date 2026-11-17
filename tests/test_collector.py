@@ -39,7 +39,14 @@ def test_the_incremental_readers_are_the_default_readers(tmp_path: Path) -> None
         root=tmp_path, devin_root=tmp_path, codex_root=tmp_path, cursor_root=tmp_path
     )
     assert [type(reader) for reader in warm] == [type(reader) for reader in cold]
-    assert [reader.agent_kind for reader in cold] == ["claude-code", "devin", "codex", "cursor"]
+    assert [reader.agent_kind for reader in cold] == [
+        "claude-code",
+        "devin",
+        "codex",
+        "cursor",
+        "pi",
+        "opencode",
+    ]
 
 
 def test_collects_claude_code_sessions_by_default(tmp_path: Path) -> None:

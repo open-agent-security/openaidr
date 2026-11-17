@@ -25,6 +25,8 @@ from openaidr.readers.claude_code import ClaudeCodeReader
 from openaidr.readers.codex import CodexReader
 from openaidr.readers.cursor import CursorReader, default_data_root
 from openaidr.readers.devin_cli import DevinCliReader
+from openaidr.readers.opencode import OpenCodeReader
+from openaidr.readers.pi import PiReader
 
 
 @dataclass(frozen=True)
@@ -41,7 +43,9 @@ def _shipped_readers(
     codex_root: Path | None,
     cursor_root: Path | None,
     cursor_user_data_root: Path | None,
-) -> tuple[ClaudeCodeReader, DevinCliReader, CodexReader, CursorReader]:
+    pi_root: Path | None = None,
+    opencode_root: Path | None = None,
+) -> tuple[ClaudeCodeReader, DevinCliReader, CodexReader, CursorReader, PiReader, OpenCodeReader]:
     """One new reader per kind this package ships.
 
     Both public lists are this tuple. A second copy would let a new kind
@@ -56,6 +60,8 @@ def _shipped_readers(
             data_root=_cursor_data_root(cursor_root),
             user_data_root=cursor_user_data_root,
         ),
+        PiReader(root=pi_root),
+        OpenCodeReader(root=opencode_root),
     )
 
 
@@ -66,16 +72,20 @@ def default_readers(
     codex_root: Path | None = None,
     cursor_root: Path | None = None,
     cursor_user_data_root: Path | None = None,
+    pi_root: Path | None = None,
+    opencode_root: Path | None = None,
 ) -> list[Reader]:
     """The readers this package ships: one per kind.
 
     `root` is Claude Code's, kept positional for existing callers; each other
     kind's root has its own keyword. Codex's is its home, `CODEX_HOME`.
     Cursor's is its configuration root, where `chats/` lives;
-    `cursor_user_data_root` is its desktop app's user data directory.
+    `cursor_user_data_root` is its desktop app's user data directory. Pi's is
+    its session directory, and OpenCode's its data directory, where
+    `opencode.db` lives.
     """
     shipped: tuple[Reader, ...] = _shipped_readers(
-        root, devin_root, codex_root, cursor_root, cursor_user_data_root
+        root, devin_root, codex_root, cursor_root, cursor_user_data_root, pi_root, opencode_root
     )
     return list(shipped)
 
@@ -93,6 +103,8 @@ def default_incremental_readers(
     codex_root: Path | None = None,
     cursor_root: Path | None = None,
     cursor_user_data_root: Path | None = None,
+    pi_root: Path | None = None,
+    opencode_root: Path | None = None,
 ) -> list[IncrementalReader]:
     """The stateful readers this package ships: one per kind.
 
@@ -100,7 +112,7 @@ def default_incremental_readers(
     an incremental read needs.
     """
     shipped: tuple[IncrementalReader, ...] = _shipped_readers(
-        root, devin_root, codex_root, cursor_root, cursor_user_data_root
+        root, devin_root, codex_root, cursor_root, cursor_user_data_root, pi_root, opencode_root
     )
     return list(shipped)
 
@@ -116,12 +128,19 @@ class IncrementalCollector:
         devin_root: Path | None = None,
         codex_root: Path | None = None,
         cursor_root: Path | None = None,
+        pi_root: Path | None = None,
+        opencode_root: Path | None = None,
     ) -> None:
         available = (
             readers
             if readers is not None
             else default_incremental_readers(
-                root, devin_root, codex_root=codex_root, cursor_root=cursor_root
+                root,
+                devin_root,
+                codex_root=codex_root,
+                cursor_root=cursor_root,
+                pi_root=pi_root,
+                opencode_root=opencode_root,
             )
         )
         self._readers = {reader.agent_kind: reader for reader in available}

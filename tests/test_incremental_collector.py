@@ -609,6 +609,8 @@ def test_each_kinds_root_reaches_its_reader(
         devin_root=tmp_path / "devin",
         codex_root=tmp_path / "codex",
         cursor_root=tmp_path / "cursor",
+        pi_root=tmp_path / "pi",
+        opencode_root=tmp_path / "opencode",
     )
     assert collector.locations() == {
         "claude-code": (tmp_path / "claude",),
@@ -621,6 +623,8 @@ def test_each_kinds_root_reaches_its_reader(
             tmp_path / "appdata" / "Cursor" / "User" / "globalStorage",
             tmp_path / "appdata" / "Cursor" / "logs",
         ),
+        "pi": (tmp_path / "pi",),
+        "opencode": (tmp_path / "opencode",),
     }
 
 

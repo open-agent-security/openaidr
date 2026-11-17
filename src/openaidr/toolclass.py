@@ -14,6 +14,7 @@ record is absent from the canonical arguments, never filled from a neighbour.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from collections.abc import Callable, Mapping
@@ -195,6 +196,53 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "ListMcpResources": "other",
         "GenerateImage": "other",
     },
+    # Pi 1.5.2's built-in tools (`dist/core/tools/`) and the two its built-in
+    # extensions add. `codemode` runs JavaScript whose tool calls Pi records on
+    # the script's own result, one by one (ADR-0036, ADR-0043). The resource
+    # tools reach MCP servers but name none in their own name.
+    "pi": {
+        "bash": "shell",
+        "powershell": "shell",
+        "read": "file_read",
+        "grep": "file_search",
+        "find": "file_search",
+        "ls": "file_search",
+        "write": "file_write",
+        "edit": "file_edit",
+        "codemode": "script",
+        "tool_search": "other",
+        "list_mcp_resources": "other",
+        "list_mcp_resource_templates": "other",
+        "read_mcp_resource": "other",
+    },
+    # OpenCode 1.19.5's built-in tools (`packages/opencode/src/tool/`). The
+    # shell is `bash` on every platform, kept for its plugins. `list` and
+    # `todoread` are older builds' names. `execute` is its experimental code
+    # mode. `invalid` answers a call to a tool that does not exist.
+    "opencode": {
+        "bash": "shell",
+        "read": "file_read",
+        "glob": "file_search",
+        "grep": "file_search",
+        "list": "file_search",
+        "write": "file_write",
+        "edit": "file_edit",
+        "apply_patch": "file_edit",
+        "webfetch": "web_fetch",
+        "websearch": "web_search",
+        "task": "delegate",
+        "skill": "skill",
+        "execute": "script",
+        "todowrite": "other",
+        "todoread": "other",
+        "question": "other",
+        "lsp": "other",
+        "plan_exit": "other",
+        "invalid": "other",
+        "list_mcp_resources": "other",
+        "list_mcp_resource_templates": "other",
+        "read_mcp_resource": "other",
+    },
 }
 
 #: `(canonical key, recorded key)` pairs per tool, in preference order. Only
@@ -259,6 +307,30 @@ _ARGUMENT_KEYS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "Fetch": (("url", "url"),),
         "Subagent": (("agent", "subagent_type"),),
         "Task": (("agent", "subagent_type"),),
+    },
+    # The keys Pi 1.5.2's tool schemas declare.
+    "pi": {
+        "bash": (("command", "command"),),
+        "powershell": (("command", "command"),),
+        "read": (("path", "path"),),
+        "grep": (("path", "path"),),
+        "find": (("path", "path"),),
+        "ls": (("path", "path"),),
+        "write": (("path", "path"), ("content", "content")),
+        "edit": (("path", "path"),),
+    },
+    # The keys OpenCode 1.19.5's tool schemas declare.
+    "opencode": {
+        "bash": (("command", "command"),),
+        "read": (("path", "filePath"),),
+        "glob": (("path", "path"),),
+        "grep": (("path", "path"),),
+        "list": (("path", "path"),),
+        "write": (("path", "filePath"), ("content", "content")),
+        "edit": (("path", "filePath"), ("new_text", "newString")),
+        "webfetch": (("url", "url"),),
+        "task": (("agent", "subagent_type"),),
+        "skill": (("skill", "name"),),
     },
 }
 
@@ -403,15 +475,19 @@ def _edit(path: str, old: object, new: object, *, empty_old_adds: bool) -> dict[
 
 
 def _replacement(
-    path_key: str, *, empty_old_adds: bool = False
+    path_key: str,
+    *,
+    empty_old_adds: bool = False,
+    old_key: str = "old_string",
+    new_key: str = "new_string",
 ) -> Callable[[Mapping[str, object]], dict[str, object]]:
-    """`edits` for a tool that records one `old_string` and `new_string`."""
+    """`edits` for a tool that records one old text and one new text."""
 
     def derive(arguments: Mapping[str, object]) -> dict[str, object]:
         path = arguments.get(path_key)
         if not isinstance(path, str):
             return {}
-        old, new = arguments.get("old_string"), arguments.get("new_string")
+        old, new = arguments.get(old_key), arguments.get(new_key)
         if not isinstance(old, str) and not isinstance(new, str):
             return {}
         return {"edits": [_edit(path, old, new, empty_old_adds=empty_old_adds)]}
@@ -456,6 +532,37 @@ def _notebook_edit(arguments: Mapping[str, object]) -> dict[str, object]:
     return {"edits": [edit]}
 
 
+def _pi_edit(arguments: Mapping[str, object]) -> dict[str, object]:
+    """`edits`, one per replacement of Pi's `edit`, and `new_text`, their new
+    texts joined. Pi takes `edits` as a list, and repairs two shapes some
+    models send before it runs the call: the list as a JSON string, and one
+    replacement as a bare object. The recorded arguments are the model's, so
+    all three are read. An empty `oldText` is refused, so nothing is added."""
+    path, hunks = arguments.get("path"), arguments.get("edits")
+    if isinstance(hunks, str):
+        try:
+            hunks = json.loads(hunks)
+        except (ValueError, RecursionError):
+            return {}
+    if isinstance(hunks, Mapping):
+        hunks = [hunks]
+    if not isinstance(path, str) or not isinstance(hunks, list):
+        return {}
+    recorded = [hunk for hunk in hunks if isinstance(hunk, Mapping)]
+    if not recorded:
+        return {}
+    found: dict[str, object] = {
+        "edits": [
+            _edit(path, hunk.get("oldText"), hunk.get("newText"), empty_old_adds=False)
+            for hunk in recorded
+        ]
+    }
+    added = [hunk.get("newText") for hunk in recorded]
+    if all(isinstance(text, str) for text in added):
+        found["new_text"] = "\n".join(text for text in added if isinstance(text, str))
+    return found
+
+
 def _default_role(arguments: Mapping[str, object]) -> dict[str, object]:
     """Codex runs a sub-agent with no `agent_type` as its `default` role
     (`DEFAULT_ROLE_NAME`), so that is the agent a bare spawn names."""
@@ -484,6 +591,17 @@ _DERIVED: dict[str, dict[str, Callable[[Mapping[str, object]], dict[str, object]
     "cursor": {
         "ApplyPatch": lambda arguments: _patch_edits({"input": arguments.get("patch")}),
         "StrReplace": _replacement("path"),
+    },
+    "pi": {
+        "edit": _pi_edit,
+    },
+    # OpenCode's `apply_patch` takes Codex's patch grammar under `patchText`.
+    # Its `edit` creates a file from an empty `oldString` when none exists.
+    "opencode": {
+        "edit": _replacement(
+            "filePath", empty_old_adds=True, old_key="oldString", new_key="newString"
+        ),
+        "apply_patch": lambda arguments: _patch_edits({"input": arguments.get("patchText")}),
     },
 }
 
