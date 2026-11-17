@@ -25,11 +25,11 @@ def _write(root: Path, lines: list[dict[str, object]], name: str = "s.jsonl") ->
     return path
 
 
-def _header(sid: str = _SID) -> dict[str, object]:
+def _header() -> dict[str, object]:
     return {
         "type": "session",
         "version": 3,
-        "id": sid,
+        "id": _SID,
         "timestamp": "2026-11-17T05:00:00.000Z",
         "cwd": "/work/demo",
     }
@@ -60,14 +60,14 @@ def _assistant(*calls: tuple[str, str, dict[str, object]], at: int = 1000) -> di
     }
 
 
-def _result(cid: str, name: str, text: str, *, error: bool = False, at: int = 1250):
+def _result(cid: str, name: str, text: str, *, error: bool = False):
     return {
         "role": "toolResult",
         "toolCallId": cid,
         "toolName": name,
         "content": [{"type": "text", "text": text}],
         "isError": error,
-        "timestamp": at,
+        "timestamp": 1250,
     }
 
 
