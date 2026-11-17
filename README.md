@@ -181,8 +181,10 @@ machine.
 
 Pi (`pi`) is read from its session files
 ([`docs/specs/pi.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/pi.md)).
-It emits `ok`, `error`, `rejected`, `pending` and `unknown`. A call is
-`rejected` when the extension that blocked it records the block (ADR-0044).
+It emits `ok`, `error`, `rejected`, `interrupted`, `pending` and `unknown`. A
+call is `rejected` when the extension that blocked it records the block
+(ADR-0044), or when Pi writes its own reason for a block. An MCP call names its
+server as `mcp.json` names it, and a `codemode` script's calls are calls too.
 OpenCode (`opencode`) is read from `opencode.db`, read-only, with one response
 for each step and an MCP call split against the configured server names
 ([`docs/specs/opencode.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/opencode.md)).
