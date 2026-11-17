@@ -191,6 +191,10 @@ _EDIT_SAMPLES: dict[tuple[str, str], dict[str, object]] = {
     ("cursor", "ApplyPatch"): {"patch": "*** Begin Patch\n*** Delete File: a\n*** End Patch\n"},
     ("devin", "edit"): {"file_path": "/a", "old_string": "o", "new_string": "n"},
     ("pi", "edit"): {"path": "/a", "edits": [{"oldText": "o", "newText": "n"}]},
+    ("opencode", "edit"): {"filePath": "/a", "oldString": "o", "newString": "n"},
+    ("opencode", "apply_patch"): {
+        "patchText": "*** Begin Patch\n*** Delete File: a\n*** End Patch\n"
+    },
 }
 
 #: File edit tools whose recorded arguments are not known well enough to fill

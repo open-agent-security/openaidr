@@ -610,6 +610,7 @@ def test_each_kinds_root_reaches_its_reader(
         codex_root=tmp_path / "codex",
         cursor_root=tmp_path / "cursor",
         pi_root=tmp_path / "pi",
+        opencode_root=tmp_path / "opencode",
     )
     assert collector.locations() == {
         "pi": (tmp_path / "pi" / "sessions",),
@@ -623,6 +624,7 @@ def test_each_kinds_root_reaches_its_reader(
             tmp_path / "appdata" / "Cursor" / "User" / "globalStorage",
             tmp_path / "appdata" / "Cursor" / "logs",
         ),
+        "opencode": (tmp_path / "opencode",),
     }
 
 
