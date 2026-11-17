@@ -14,6 +14,7 @@ record is absent from the canonical arguments, never filled from a neighbour.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from collections.abc import Callable, Mapping
@@ -197,15 +198,23 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
     },
     # Pi's built-in tools, as `@mariozechner/pi-coding-agent` 0.73 declares
     # them. `read`, `bash`, `edit` and `write` are on by default; `grep`,
-    # `find` and `ls` are on with `--tools`.
+    # `find` and `ls` are on with `--tools`. From 0.99, `powershell` is the
+    # shell on Windows, `codemode` runs a script whose calls Pi records on its
+    # result (ADR-0036), and the MCP tools name no server in their own name.
     "pi": {
         "bash": "shell",
+        "powershell": "shell",
         "read": "file_read",
         "grep": "file_search",
         "find": "file_search",
         "ls": "file_search",
         "write": "file_write",
         "edit": "file_edit",
+        "codemode": "script",
+        "tool_search": "other",
+        "list_mcp_resources": "other",
+        "list_mcp_resource_templates": "other",
+        "read_mcp_resource": "other",
     },
     # OpenCode 1.19.5's built-in tools (`packages/opencode/src/tool/`). The
     # shell is `bash` on every platform, kept for its plugins. `list` and
@@ -300,9 +309,10 @@ _ARGUMENT_KEYS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "Subagent": (("agent", "subagent_type"),),
         "Task": (("agent", "subagent_type"),),
     },
-    # The keys Pi 0.73's tool schemas declare.
+    # The keys Pi's tool schemas declare, 0.73 to 1.5.
     "pi": {
         "bash": (("command", "command"),),
+        "powershell": (("command", "command"),),
         "read": (("path", "path"),),
         "grep": (("path", "path"),),
         "find": (("path", "path"),),
@@ -526,11 +536,20 @@ def _notebook_edit(arguments: Mapping[str, object]) -> dict[str, object]:
 def _pi_edit(arguments: Mapping[str, object]) -> dict[str, object]:
     """`edits` for Pi's `edit`: one entry per `edits[]` replacement, and the
     legacy top-level `oldText`/`newText` pair Pi still accepts, appended last as
-    Pi's own `prepareEditArguments` appends it. `new_text` joins the new texts."""
+    Pi's own `prepareEditArguments` appends it. `new_text` joins the new texts.
+    Pi also repairs `edits` sent as a JSON string or as one bare object before
+    the call runs, and the recorded arguments are the model's, so both are read."""
     path = arguments.get("path")
     if not isinstance(path, str):
         return {}
     hunks = arguments.get("edits")
+    if isinstance(hunks, str):
+        try:
+            hunks = json.loads(hunks)
+        except (ValueError, RecursionError):
+            hunks = None
+    if isinstance(hunks, Mapping):
+        hunks = [hunks]
     recorded = [h for h in hunks if isinstance(h, Mapping)] if isinstance(hunks, list) else []
     if isinstance(arguments.get("oldText"), str) or isinstance(arguments.get("newText"), str):
         recorded.append({"oldText": arguments.get("oldText"), "newText": arguments.get("newText")})
