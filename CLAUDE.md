@@ -7,8 +7,7 @@ normalises it into one session model with stable span identity. It answers *what
 an agent did*, never what that means: no scoring, no identity resolution, no
 findings, and no upload path.
 
-**It reads six agent kinds today: `claude-code`, `devin`, `codex`, `cursor`, `pi`
-and `opencode`.**
+**It reads six agent kinds today: `claude-code`, `devin`, `codex`, `cursor`, `pi` and `opencode`.**
 Claude Code is read through `adr-sensor`; Devin CLI through an OpenAIDR-owned
 reader of its SQLite store and run logs (`docs/specs/devin-cli.md`); Codex
 through an OpenAIDR-owned reader of its rollouts and log database, on the Claude

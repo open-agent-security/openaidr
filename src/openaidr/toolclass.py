@@ -14,7 +14,6 @@ record is absent from the canonical arguments, never filled from a neighbour.
 
 from __future__ import annotations
 
-import json
 import re
 import shlex
 from collections.abc import Callable, Mapping
@@ -196,24 +195,17 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "ListMcpResources": "other",
         "GenerateImage": "other",
     },
-    # Pi 1.5.2's built-in tools (`dist/core/tools/`) and the two its built-in
-    # extensions add. `codemode` runs JavaScript whose tool calls Pi records on
-    # the script's own result, one by one (ADR-0036, ADR-0043). The resource
-    # tools reach MCP servers but name none in their own name.
+    # Pi's built-in tools, as `@mariozechner/pi-coding-agent` 0.73 declares
+    # them. `read`, `bash`, `edit` and `write` are on by default; `grep`,
+    # `find` and `ls` are on with `--tools`.
     "pi": {
         "bash": "shell",
-        "powershell": "shell",
         "read": "file_read",
         "grep": "file_search",
         "find": "file_search",
         "ls": "file_search",
         "write": "file_write",
         "edit": "file_edit",
-        "codemode": "script",
-        "tool_search": "other",
-        "list_mcp_resources": "other",
-        "list_mcp_resource_templates": "other",
-        "read_mcp_resource": "other",
     },
     # OpenCode 1.19.5's built-in tools (`packages/opencode/src/tool/`). The
     # shell is `bash` on every platform, kept for its plugins. `list` and
@@ -308,10 +300,9 @@ _ARGUMENT_KEYS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "Subagent": (("agent", "subagent_type"),),
         "Task": (("agent", "subagent_type"),),
     },
-    # The keys Pi 1.5.2's tool schemas declare.
+    # The keys Pi 0.73's tool schemas declare.
     "pi": {
         "bash": (("command", "command"),),
-        "powershell": (("command", "command"),),
         "read": (("path", "path"),),
         "grep": (("path", "path"),),
         "find": (("path", "path"),),
@@ -533,31 +524,24 @@ def _notebook_edit(arguments: Mapping[str, object]) -> dict[str, object]:
 
 
 def _pi_edit(arguments: Mapping[str, object]) -> dict[str, object]:
-    """`edits`, one per replacement of Pi's `edit`, and `new_text`, their new
-    texts joined. Pi takes `edits` as a list, and repairs two shapes some
-    models send before it runs the call: the list as a JSON string, and one
-    replacement as a bare object. The recorded arguments are the model's, so
-    all three are read. An empty `oldText` is refused, so nothing is added."""
-    path, hunks = arguments.get("path"), arguments.get("edits")
-    if isinstance(hunks, str):
-        try:
-            hunks = json.loads(hunks)
-        except (ValueError, RecursionError):
-            return {}
-    if isinstance(hunks, Mapping):
-        hunks = [hunks]
-    if not isinstance(path, str) or not isinstance(hunks, list):
+    """`edits` for Pi's `edit`: one entry per `edits[]` replacement, and the
+    legacy top-level `oldText`/`newText` pair Pi still accepts, appended last as
+    Pi's own `prepareEditArguments` appends it. `new_text` joins the new texts."""
+    path = arguments.get("path")
+    if not isinstance(path, str):
         return {}
-    recorded = [hunk for hunk in hunks if isinstance(hunk, Mapping)]
+    hunks = arguments.get("edits")
+    recorded = [h for h in hunks if isinstance(h, Mapping)] if isinstance(hunks, list) else []
+    if isinstance(arguments.get("oldText"), str) or isinstance(arguments.get("newText"), str):
+        recorded.append({"oldText": arguments.get("oldText"), "newText": arguments.get("newText")})
     if not recorded:
         return {}
     found: dict[str, object] = {
         "edits": [
-            _edit(path, hunk.get("oldText"), hunk.get("newText"), empty_old_adds=False)
-            for hunk in recorded
+            _edit(path, h.get("oldText"), h.get("newText"), empty_old_adds=False) for h in recorded
         ]
     }
-    added = [hunk.get("newText") for hunk in recorded]
+    added = [h.get("newText") for h in recorded]
     if all(isinstance(text, str) for text in added):
         found["new_text"] = "\n".join(text for text in added if isinstance(text, str))
     return found

@@ -30,7 +30,7 @@ OpenAIDR reads the database itself, read-only, on the Cursor reader's design.
 - OpenCode 0.x, which kept JSON files under `storage/`. OpenCode 1.x moves
   them into the database.
 - The newer `session_message` table. OpenCode 1.19.5's own agent loop writes
-  and reads `message` and `part` (ADR-0044).
+  and reads `message` and `part` (ADR-0045).
 - Who OpenCode is signed in as. `auth.json` holds provider credentials, not a
   person.
 - Windows (ADR-0013).
@@ -39,8 +39,8 @@ OpenAIDR reads the database itself, read-only, on the Cursor reader's design.
 
 | ADR | Decision |
 |---|---|
-| [0044](../adrs/0044-read-opencode-from-its-message-and-part-tables.md) | Read the `message` and `part` tables, read-only, one session per `session` row |
-| [0045](../adrs/0045-split-an-opencode-mcp-tool-against-its-configured-servers.md) | Split an MCP tool name against the configured server names, and leave it whole when none or several fit |
+| [0045](../adrs/0045-read-opencode-from-its-message-and-part-tables.md) | Read the `message` and `part` tables, read-only, one session per `session` row |
+| [0046](../adrs/0046-split-an-opencode-mcp-tool-against-its-configured-servers.md) | Split an MCP tool name against the configured server names, and leave it whole when none or several fit |
 
 ## Evidence
 
@@ -143,7 +143,7 @@ A user message with no text adds no turn.
 OpenCode names an MCP tool `sanitize(server) + "_" + sanitize(tool)`, where
 `sanitize` writes each character that is not a letter, digit, `_` or `-` as
 `_`. A server and a tool can both contain `_`, so the name alone cannot be
-split (ADR-0045).
+split (ADR-0046).
 
 1. A name in the tool table is a built-in and is never split.
 2. The reader reads the `mcp` object, or `mcp.servers`, from every

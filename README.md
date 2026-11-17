@@ -11,8 +11,8 @@ OpenAIDR reads the session state AI coding agents already write to disk and
 normalises it into one session model with stable span identity.
 
 > **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Six
-> agent kinds read today (`claude-code`, `devin`, `codex`, `cursor`, `pi`,
-> `opencode`). Start with
+> agent kinds read today (`claude-code`, `devin`, `codex`, `cursor`, `pi`, `opencode`).
+> Start with
 > [Install and run](#install-and-run), then
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
@@ -123,7 +123,7 @@ That installs an `openaidr` command:
 
 ```console
 $ openaidr --version
-openaidr 0.10.6
+openaidr 0.11.0
 ```
 
 `openaidr sessions` prints what each agent on this machine actually did —
@@ -160,8 +160,7 @@ and a doc index in
 
 ## Status
 
-**Beta.** Session collection works for `claude-code`, `devin`, `codex`, `cursor`,
-`pi` and `opencode`:
+**Beta.** Session collection works for `claude-code`, `devin`, `codex`, `cursor`, `pi` and `opencode`:
 sessions, turns, tool calls and span identity. Claude Code is read through
 `adr-sensor`, one file at a time. Devin is read from its SQLite store and run
 logs, and Codex from its rollouts and log database; both of those readers are
@@ -180,14 +179,15 @@ desktop app's conversations are read from its `state.vscdb` with the same
 decoder, with usage from its structured log where its agent loop runs on the
 machine.
 
-Pi is read from its JSONL session files, every branch included, with usage from
-each assistant message
+Pi (`pi`) is read from its session files
 ([`docs/specs/pi.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/pi.md)).
-OpenCode is read from `opencode.db`, read-only, with one response for each
-step and an MCP call split against the configured server names
+It emits `ok`, `error`, `rejected`, `pending` and `unknown`. A call is
+`rejected` when the extension that blocked it records the block (ADR-0044).
+OpenCode (`opencode`) is read from `opencode.db`, read-only, with one response
+for each step and an MCP call split against the configured server names
 ([`docs/specs/opencode.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/opencode.md)).
-Both readers are OpenAIDR-owned. Neither was checked against a file a running
-agent wrote: both rest on the agents' published source.
+It rests on OpenCode's published source. It was not checked against a database
+that a running OpenCode wrote.
 
 For long-lived consumers, `IncrementalCollector` takes an agent kind and one
 changed path. Claude Code and Codex cold-read that file once, then project

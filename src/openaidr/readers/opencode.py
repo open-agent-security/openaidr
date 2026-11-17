@@ -4,7 +4,7 @@ OpenCode 1.x keeps every session in one database, `<data dir>/opencode.db`: a
 `session` row for each session, a sub-agent's included, a `message` row for each
 message, and a `part` row for each part of a message. Each `data` column is the
 message's or part's own JSON. This reader opens the database read-only, in one
-transaction for each pass (`docs/specs/opencode.md`, ADR-0044).
+transaction for each pass (`docs/specs/opencode.md`, ADR-0045).
 
 **A message is a turn, keyed by its own id.** OpenCode gives a message and a
 part an id that sorts by time and never changes, and updates a part in place as
@@ -17,7 +17,7 @@ OpenCode's own fixed refusal words make an error a refusal.
 **An MCP tool's server comes from configuration.** OpenCode names an MCP tool
 `<server>_<tool>`, and both may hold `_`, so the name alone cannot be split.
 The reader splits it against the server names OpenCode's configuration files
-hold, and leaves it unsplit when none, or more than one, fits (ADR-0045).
+hold, and leaves it unsplit when none, or more than one, fits (ADR-0046).
 """
 
 from __future__ import annotations

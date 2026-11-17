@@ -1,5 +1,5 @@
 ---
-id: 0044
+id: 0045
 title: Read OpenCode from its message and part tables
 status: accepted
 date: 2026-11-17

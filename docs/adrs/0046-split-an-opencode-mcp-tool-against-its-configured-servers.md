@@ -1,5 +1,5 @@
 ---
-id: 0045
+id: 0046
 title: Split an OpenCode MCP tool against its configured servers
 status: accepted
 date: 2026-11-17

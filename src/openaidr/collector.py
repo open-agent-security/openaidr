@@ -80,9 +80,9 @@ def default_readers(
     `root` is Claude Code's, kept positional for existing callers; each other
     kind's root has its own keyword. Codex's is its home, `CODEX_HOME`.
     Cursor's is its configuration root, where `chats/` lives;
-    `cursor_user_data_root` is its desktop app's user data directory. Pi's is
-    its session directory, and OpenCode's its data directory, where
-    `opencode.db` lives.
+    `cursor_user_data_root` is its desktop app's user data directory.
+    Pi's is its agent directory, `PI_CODING_AGENT_DIR`. OpenCode's is its data
+    directory, where `opencode.db` lives.
     """
     shipped: tuple[Reader, ...] = _shipped_readers(
         root, devin_root, codex_root, cursor_root, cursor_user_data_root, pi_root, opencode_root

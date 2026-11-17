@@ -40,3 +40,13 @@ def _no_real_cursor_home(
     monkeypatch.setenv("VSCODE_APPDATA", str(tmp_path_factory.mktemp("appdata")))
     monkeypatch.delenv("VSCODE_PORTABLE", raising=False)
     monkeypatch.delenv("OPENAIDR_CURSOR_ROOT", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_pi_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Point Pi's agent directory at an empty directory for every test:
+    `default_readers()` reads `PI_CODING_AGENT_DIR`, else `~/.pi/agent`."""
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path_factory.mktemp("pi-agent")))
+    monkeypatch.delenv("OPENAIDR_PI_ROOT", raising=False)
