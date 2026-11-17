@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -430,6 +431,20 @@ def test_the_window_reads_sessions_with_rows_written_since(tmp_path: Path) -> No
     reader = _reader(tmp_path)
     assert reader.collect(Window(since=T0.replace(year=2027)))[0] == []
     assert len(reader.collect(Window(since=T0))[0]) == 1
+
+
+def test_a_parts_later_update_counts_as_activity(tmp_path: Path) -> None:
+    """OpenCode updates a tool part in place as its call runs, without
+    touching the session's own `time_updated` (ADR-0001); a window that
+    starts after the part's creation must still see that update."""
+    db = _db(tmp_path)
+    session(db, updated=0)
+    user(db, "msg_01", 1)
+    assistant(db, "msg_02", 2, "msg_01")
+    part(db, "prt_01", "msg_02", 3, tool("call_1", "bash", "running", command="npm test"))
+    part(db, "prt_01", "msg_02", 500, tool("call_1", "bash", "completed", output="ok"))
+    reader = _reader(tmp_path)
+    assert reader.collect(Window(since=T0 + timedelta(seconds=100)))[0] != []
 
 
 def test_no_data_directory_is_no_sessions_and_no_failure(tmp_path: Path) -> None:
