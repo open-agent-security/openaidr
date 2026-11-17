@@ -460,3 +460,29 @@ def test_a_channel_database_is_read_too(tmp_path: Path) -> None:
     sessions, _ = _read(tmp_path)
     assert [s.session_id for s in sessions] == ["opencode:ses_beta"]
     assert json.dumps(sessions[0].public_descriptor())
+
+
+def test_a_named_database_outside_the_root_is_watched_and_read_incrementally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    named = tmp_path / "external" / "store.db"
+    monkeypatch.setenv("OPENCODE_DB", str(named))
+    db = create(named)
+    session(db, "ses_named", title="named")
+    reader = _reader(tmp_path)
+    assert reader.locations() == (tmp_path / "data", tmp_path / "external")
+    changed, failures = reader.collect_file(named.with_name("store.db-wal"))
+    assert failures == [] and [s.session_id for s in changed] == ["opencode:ses_named"]
+
+
+def test_a_named_database_with_a_nonstandard_name_is_read_incrementally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    named = tmp_path / "data" / "store.sqlite"
+    monkeypatch.setenv("OPENCODE_DB", "store.sqlite")
+    db = create(named)
+    session(db, "ses_named", title="named")
+    reader = _reader(tmp_path)
+    assert reader.locations() == (tmp_path / "data",)
+    changed, failures = reader.collect_file(named)
+    assert failures == [] and [s.session_id for s in changed] == ["opencode:ses_named"]
