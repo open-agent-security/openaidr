@@ -98,7 +98,9 @@ def _xdg(variable: str, fallback: Path) -> Path:
 class _Row:
     session: dict[str, object]
     messages: list[tuple[str, int, dict[str, object]]]
-    parts: dict[str, list[tuple[str, int, dict[str, object]]]]
+    #: id, time_created, time_updated, data. A tool part's `data` is updated
+    #: in place as its call runs, bumping `time_updated` alone (ADR-0001).
+    parts: dict[str, list[tuple[str, int, int, dict[str, object]]]]
 
 
 def _read(
@@ -162,16 +164,16 @@ def _read(
                 )
                 if (data := _json(row["data"], f"message {row['id']}", path, failures)) is not None
             ]
-            parts: dict[str, list[tuple[str, int, dict[str, object]]]] = {}
+            parts: dict[str, list[tuple[str, int, int, dict[str, object]]]] = {}
             for row in connection.execute(
-                "SELECT id, message_id, time_created, data FROM part WHERE session_id = ? "
-                "ORDER BY message_id, id",
+                "SELECT id, message_id, time_created, time_updated, data FROM part "
+                "WHERE session_id = ? ORDER BY message_id, id",
                 (session_id,),
             ):
                 data = _json(row["data"], f"part {row['id']}", path, failures)
                 if data is not None:
                     parts.setdefault(row["message_id"], []).append(
-                        (row["id"], row["time_created"], data)
+                        (row["id"], row["time_created"], row["time_updated"], data)
                     )
             rows.append(_Row(dict(session), messages, parts))
         roots = {session_id: _root(session_id, parents) for session_id in parents}
@@ -225,10 +227,11 @@ def _session(row: _Row, root: str, servers: Mapping[str, str]) -> Session:
         at = _ms(time.get("created")) or _ms(created)
         last = _later(last, at)
         last = _later(last, _ms(time.get("completed")))
-        for _, part_created, _ in parts:
+        for _, part_created, part_updated, _ in parts:
             last = _later(last, _ms(part_created))
+            last = _later(last, _ms(part_updated))
         texts: list[str] = []
-        for _, _, part in parts:
+        for _, _, _, part in parts:
             kind = part.get("type")
             text = _string(part.get("text"))
             if kind == "text" and text is not None and not part.get("ignored"):
@@ -264,14 +267,14 @@ def _session(row: _Row, root: str, servers: Mapping[str, str]) -> Session:
             continue
         if role != "assistant":
             continue
-        tool_parts = [part for _, _, part in parts if part.get("type") == "tool"]
+        tool_parts = [part for _, _, _, part in parts if part.get("type") == "tool"]
         calls = tuple(
             _tool_call(session_id, message_id, index, part, message, servers)
             for index, part in enumerate(tool_parts)
         )
         steps = [
             _response(part_id, part_created, part, message, sidechain)
-            for part_id, part_created, part in parts
+            for part_id, part_created, _, part in parts
             if part.get("type") == "step-finish"
         ]
         responses.extend(steps)
