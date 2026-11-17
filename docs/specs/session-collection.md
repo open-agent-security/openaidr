@@ -31,11 +31,12 @@ and results before OpenAIDR sees them.
 
 ## Agent kind coverage
 
-**Four kinds today: `claude-code`, `devin`, `codex` and `cursor`.**
-`default_readers()` returns one reader per kind, and `AGENT_KIND_BY_SOURCE`
-holds one row per kind. Devin CLI, Codex and Cursor are read by OpenAIDR-owned
-readers, not through the dependency; their designs are [Devin CLI](devin-cli.md),
-[Codex](codex.md) and [Cursor](cursor.md). Every other agent kind is **not read
+**Six kinds today: `claude-code`, `devin`, `codex`, `cursor`, `pi` and
+`opencode`.** `default_readers()` returns one reader per kind, and
+`AGENT_KIND_BY_SOURCE` holds one row per kind. Devin CLI, Codex, Cursor, Pi and
+OpenCode are read by OpenAIDR-owned readers, not through the dependency; their
+designs are [Devin CLI](devin-cli.md), [Codex](codex.md), [Cursor](cursor.md),
+[Pi](pi.md) and [OpenCode](opencode.md). Every other agent kind is **not read
 at all** — not read shallowly, not read and marked. A session of another agent
 on the same machine is absent from this package's output entirely.
 
@@ -44,7 +45,8 @@ those two statements is the most likely thing to be misread about this package.
 `adr-sensor` ships parsers for seven kinds; this package instantiates one of
 them. Reading a kind takes two more things that are ours: a reader implementing
 the collection contract, and a row mapping the agent's own on-disk source name to
-an agent kind. Neither exists for any kind but Claude Code, Devin CLI, Codex and Cursor.
+an agent kind. Neither exists for any kind but Claude Code, Devin CLI, Codex, Cursor, Pi and
+OpenCode.
 
 Nor is an unread kind the same as a *kind-anonymous* one. Kind-anonymous
 (see [Source vocabulary](#source-vocabulary)) describes a session this package

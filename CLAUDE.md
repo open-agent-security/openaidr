@@ -7,14 +7,17 @@ normalises it into one session model with stable span identity. It answers *what
 an agent did*, never what that means: no scoring, no identity resolution, no
 findings, and no upload path.
 
-**It reads four agent kinds today: `claude-code`, `devin`, `codex` and `cursor`.**
+**It reads six agent kinds today: `claude-code`, `devin`, `codex`, `cursor`, `pi`
+and `opencode`.**
 Claude Code is read through `adr-sensor`; Devin CLI through an OpenAIDR-owned
 reader of its SQLite store and run logs (`docs/specs/devin-cli.md`); Codex
 through an OpenAIDR-owned reader of its rollouts and log database, on the Claude
 Code reader's design (`docs/specs/codex.md`); the Cursor CLI through an
 OpenAIDR-owned reader of its chat stores and debug log (`docs/specs/cursor.md`),
 and the Cursor desktop app's agent panel through the same reader, from its
-`state.vscdb` and structured log (ADR-0039). `adr-sensor` parses seven kinds;
+`state.vscdb` and structured log (ADR-0039). Pi is read from its JSONL session
+files (`docs/specs/pi.md`) and OpenCode from its `opencode.db`
+(`docs/specs/opencode.md`), each by an OpenAIDR-owned reader. `adr-sensor` parses seven kinds;
 this package instantiates one of them. Do not describe the others as supported.
 
 Apache-2.0, and deliberately plumbing rather than judgement. Every new agent

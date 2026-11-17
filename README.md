@@ -10,20 +10,25 @@ Session collection for AI coding agents.
 OpenAIDR reads the session state AI coding agents already write to disk and
 normalises it into one session model with stable span identity.
 
-> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Four
-> agent kinds read today (`claude-code`, `devin`, `codex`, `cursor`). Start with
+> **Status:** beta, on [PyPI](https://pypi.org/project/openaidr/). Six
+> agent kinds read today (`claude-code`, `devin`, `codex`, `cursor`, `pi`,
+> `opencode`). Start with
 > [Install and run](#install-and-run), then
 > [What OpenAIDR reads, and what it emits](#what-openaidr-reads-and-what-it-emits)
 > if you want to know what leaves your machine before you run it. (Nothing does.)
 
-**Today it reads four kinds: Claude Code, Devin, Codex and Cursor** (`devin`, which
+**Today it reads six kinds: Claude Code, Devin, Codex, Cursor, Pi and OpenCode** (`devin`, which
 covers Devin CLI, Devin Desktop's local agent and editors driving it over ACP:
 one agent, one session store; `codex`, which covers Codex CLI, `codex exec`, and
 the IDE extension and Codex app through `codex app-server`, from
 [`docs/specs/codex.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/codex.md);
 `cursor`, which covers the Cursor CLI in the terminal, in print mode and over
 ACP, and the desktop app's agent panel, from
-[`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md)).
+[`docs/specs/cursor.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/cursor.md);
+`pi`, from Pi's JSONL session files, in
+[`docs/specs/pi.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/pi.md);
+`opencode`, from OpenCode's `opencode.db`, in
+[`docs/specs/opencode.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/opencode.md)).
 The parsing dependency supports more formats
 than this package instantiates, which is a distinction worth holding onto; what
 each additional kind would cost is measured in
@@ -155,7 +160,8 @@ and a doc index in
 
 ## Status
 
-**Beta.** Session collection works for `claude-code`, `devin`, `codex` and `cursor`:
+**Beta.** Session collection works for `claude-code`, `devin`, `codex`, `cursor`,
+`pi` and `opencode`:
 sessions, turns, tool calls and span identity. Claude Code is read through
 `adr-sensor`, one file at a time. Devin is read from its SQLite store and run
 logs, and Codex from its rollouts and log database; both of those readers are
@@ -173,6 +179,15 @@ Its statuses come from Cursor's typed outcome, `interrupted` included. The
 desktop app's conversations are read from its `state.vscdb` with the same
 decoder, with usage from its structured log where its agent loop runs on the
 machine.
+
+Pi is read from its JSONL session files, every branch included, with usage from
+each assistant message
+([`docs/specs/pi.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/pi.md)).
+OpenCode is read from `opencode.db`, read-only, with one response for each
+step and an MCP call split against the configured server names
+([`docs/specs/opencode.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/opencode.md)).
+Both readers are OpenAIDR-owned. Neither was checked against a file a running
+agent wrote: both rest on the agents' published source.
 
 For long-lived consumers, `IncrementalCollector` takes an agent kind and one
 changed path. Claude Code and Codex cold-read that file once, then project
