@@ -195,6 +195,18 @@ _CLASS_BY_NAME: dict[str, dict[str, str]] = {
         "ListMcpResources": "other",
         "GenerateImage": "other",
     },
+    # Pi's built-in tools, as `@mariozechner/pi-coding-agent` 0.73 declares
+    # them. `read`, `bash`, `edit` and `write` are on by default; `grep`,
+    # `find` and `ls` are on with `--tools`.
+    "pi": {
+        "bash": "shell",
+        "read": "file_read",
+        "grep": "file_search",
+        "find": "file_search",
+        "ls": "file_search",
+        "write": "file_write",
+        "edit": "file_edit",
+    },
 }
 
 #: `(canonical key, recorded key)` pairs per tool, in preference order. Only
@@ -259,6 +271,16 @@ _ARGUMENT_KEYS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
         "Fetch": (("url", "url"),),
         "Subagent": (("agent", "subagent_type"),),
         "Task": (("agent", "subagent_type"),),
+    },
+    # The keys Pi 0.73's tool schemas declare.
+    "pi": {
+        "bash": (("command", "command"),),
+        "read": (("path", "path"),),
+        "grep": (("path", "path"),),
+        "find": (("path", "path"),),
+        "ls": (("path", "path"),),
+        "write": (("path", "path"), ("content", "content")),
+        "edit": (("path", "path"),),
     },
 }
 
@@ -456,6 +478,30 @@ def _notebook_edit(arguments: Mapping[str, object]) -> dict[str, object]:
     return {"edits": [edit]}
 
 
+def _pi_edit(arguments: Mapping[str, object]) -> dict[str, object]:
+    """`edits` for Pi's `edit`: one entry per `edits[]` replacement, and the
+    legacy top-level `oldText`/`newText` pair Pi still accepts, appended last as
+    Pi's own `prepareEditArguments` appends it. `new_text` joins the new texts."""
+    path = arguments.get("path")
+    if not isinstance(path, str):
+        return {}
+    hunks = arguments.get("edits")
+    recorded = [h for h in hunks if isinstance(h, Mapping)] if isinstance(hunks, list) else []
+    if isinstance(arguments.get("oldText"), str) or isinstance(arguments.get("newText"), str):
+        recorded.append({"oldText": arguments.get("oldText"), "newText": arguments.get("newText")})
+    if not recorded:
+        return {}
+    found: dict[str, object] = {
+        "edits": [
+            _edit(path, h.get("oldText"), h.get("newText"), empty_old_adds=False) for h in recorded
+        ]
+    }
+    added = [h.get("newText") for h in recorded]
+    if all(isinstance(text, str) for text in added):
+        found["new_text"] = "\n".join(text for text in added if isinstance(text, str))
+    return found
+
+
 def _default_role(arguments: Mapping[str, object]) -> dict[str, object]:
     """Codex runs a sub-agent with no `agent_type` as its `default` role
     (`DEFAULT_ROLE_NAME`), so that is the agent a bare spawn names."""
@@ -484,6 +530,9 @@ _DERIVED: dict[str, dict[str, Callable[[Mapping[str, object]], dict[str, object]
     "cursor": {
         "ApplyPatch": lambda arguments: _patch_edits({"input": arguments.get("patch")}),
         "StrReplace": _replacement("path"),
+    },
+    "pi": {
+        "edit": _pi_edit,
     },
 }
 

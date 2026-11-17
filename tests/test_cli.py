@@ -4,6 +4,7 @@ Declaring `[project.scripts]` without the module it names installs a launcher
 that fails at runtime, and nothing else in the gate set catches it.
 """
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -110,3 +111,31 @@ def test_an_unrecognised_agent_kind_collects_nothing_without_crashing(
     monkeypatch.setenv("OPENAIDR_CLAUDE_ROOT", str(tmp_path))
     assert main(["sessions", "--since", "3650d", "--agent-kind", "not-a-real-kind"]) == 0
     assert "claude-code:s1" not in capsys.readouterr().out
+
+
+_NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
+_KIND_DOCS = ("README.md", "CLAUDE.md", "AGENTS.md", "docs/specs/session-collection.md")
+
+
+@pytest.mark.parametrize("name", _KIND_DOCS)
+def test_every_count_and_list_of_kinds_read_names_them_all(name: str) -> None:
+    """A count of the kinds read matches the table, and a list of them names
+    every one. Asked of each page that states coverage, not only the status
+    lines, so a kind added later cannot leave an old count behind."""
+    kinds = sorted(set(AGENT_KIND_BY_SOURCE.values()))
+    text = _README.parents[0].joinpath(name).read_text(encoding="utf-8")
+    claim = re.compile(
+        r"\breads\s+([A-Za-z]+)\s+(?:agent\s+)?kinds"
+        r"|\b([A-Za-z]+)\s+(?:>\s*)?(?:agent\s+)?kinds(?:\s+read)?\s+today",
+        re.IGNORECASE,
+    )
+    for match in claim.finditer(text):
+        word = (match.group(1) or match.group(2)).lower()
+        # The parsing dependency's own count is not this package's.
+        before = text[max(0, match.start() - 200) : match.start()]
+        if word in _NUMBERS and not re.search(r"adr-sensor|third-party", before):
+            assert _NUMBERS[word] == len(kinds), f"{name}: {match.group(0)!r}"
+    for line in text.splitlines():
+        named = [kind for kind in kinds if f"`{kind}`" in line]
+        if len(named) >= 3:
+            assert named == kinds, f"{name}: a list of kinds leaves some out: {line!r}"
