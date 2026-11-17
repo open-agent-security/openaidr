@@ -40,6 +40,12 @@ from openaidr.toolclass import canonical_arguments, tool_class
 SOURCE = "pi"
 SESSIONS = "sessions"
 
+#: The `customType` of the entry an extension writes with `pi.appendEntry` when
+#: it blocks a call: `{"toolCallId": "<the call's id>"}`. Pi writes a blocked
+#: call as an ordinary error result, so this entry is the only record that the
+#: call never ran (ADR-0044).
+BLOCKED = "openaidr.tool-call-blocked"
+
 #: The session versions this reader has seen Pi write. Version 3 is current
 #: in 0.73; 1 and 2 are migrated by Pi itself on load, never rewritten on disk.
 _VERSIONS = frozenset({3})
@@ -78,8 +84,11 @@ class _Projection:
     #: A provider call id is unique within one response, not within a session,
     #: and Pi's tree can hold two branches that reuse one (ADR-0004).
     results: dict[tuple[str, str], list[_Result]] = field(default_factory=dict)
-    #: Per assistant or tool result entry, the assistant entry it descends from.
+    #: Per assistant entry and each later entry before the next message, the
+    #: assistant entry it descends from.
     anchors: dict[str, str] = field(default_factory=dict)
+    #: Calls an extension recorded blocking, as (assistant entry, call id).
+    blocked: set[tuple[str, str]] = field(default_factory=set)
     responses: dict[str, ModelResponse] = field(default_factory=dict)
     context: list[ContextItem] = field(default_factory=list)
     compactions: list[Compaction] = field(default_factory=list)
@@ -131,6 +140,17 @@ class _Projection:
             )
         elif kind == "session_info":
             self.title = _string(entry.get("name")) or self.title
+        if kind != "message":
+            # An extension's entry can sit between a call and its result, so it
+            # passes the assistant entry on to the entries after it.
+            parent = _string(entry.get("parentId"))
+            anchor = self.anchors.get(parent) if parent is not None else None
+            if anchor is not None:
+                self.anchors[key] = anchor
+                if kind == "custom" and entry.get("customType") == BLOCKED:
+                    call_id = _string(_mapping(entry.get("data")).get("toolCallId"))
+                    if call_id is not None:
+                        self.blocked.add((anchor, call_id))
 
     def _message(
         self, key: str, parent: str | None, message: Mapping[str, object], at: datetime | None
@@ -230,13 +250,22 @@ class _Projection:
         # Two results for one call cannot be told apart, so neither is given.
         result = results[0] if len(results) == 1 else None
         status: Status
+        denial: str | None = None
         if len(results) > 1:
             status = "unknown"
+        elif (
+            call.call_id is not None
+            and (call.key, call.call_id) in self.blocked
+            and (result is None or result.is_error)
+        ):
+            # A block entry and no successful result: the call never ran. A
+            # result that says it succeeded outweighs the entry (ADR-0044).
+            status, denial = "rejected", "extension-blocked"
         elif result is None:
             status = "pending"
         else:
-            # Pi records an extension's block as an error result with the
-            # extension's reason as its text: nothing on disk tells the two apart.
+            # Without a block entry, Pi's error result for a block cannot be
+            # told from a tool's own failure.
             status = "error" if result.is_error else "ok"
         body = result.text if result is not None else None
         duration = (
@@ -256,6 +285,7 @@ class _Projection:
             truncated=False,
             provider_call_id=call.call_id,
             duration_ms=duration if duration is not None and duration >= 0 else None,
+            denial_kind=denial,
             working_directory=cwd,
             tool_class=tool_class(SOURCE, call.name, None),
             canonical_arguments=canonical_arguments(SOURCE, call.name, None, call.arguments),

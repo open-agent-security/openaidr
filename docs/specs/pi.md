@@ -35,6 +35,7 @@ version 0.73.1 and a real session file that it wrote.
 | ADR | Decision |
 |---|---|
 | [0043](../adrs/0043-read-every-branch-of-a-pi-session-tree.md) | Read every branch of a Pi session tree, not only the active branch |
+| [0044](../adrs/0044-a-pi-extension-records-the-calls-it-blocks.md) | A Pi extension records each call it blocks in an entry of its own, and the reader reads it |
 
 ## Design
 
@@ -61,6 +62,7 @@ does not read the file. Every later line is an entry with an 8-hex `id`, a
 | `compaction` | A `Compaction` with trigger `unknown` and `pre_tokens` from `tokensBefore`. |
 | `custom_message` | A `ContextItem` with source `injected` and the extension's `customType` as its name. |
 | `session_info` | The session title. The last one wins. |
+| `custom`, `customType` `openaidr.tool-call-blocked` | The call named by `data.toolCallId` was blocked. See [Status](#status). |
 | Other types | Not read. |
 
 ### Identity
@@ -73,14 +75,19 @@ does not read the file. Every later line is an entry with an 8-hex `id`, a
 
 | Evidence | Status |
 |---|---|
+| Two or more results with the same call id | `unknown` |
+| A block entry, and no result or an error result | `rejected`, `denial_kind` `extension-blocked` |
 | One result, `isError: false` | `ok` |
 | One result, `isError: true` | `error` |
 | No result | `pending` |
-| Two or more results with the same call id | `unknown` |
 
-Pi writes an extension's block as an error result. The result text is the
-extension's reason. The file does not show which results are blocks, so a
-blocked call reads as `error`, never as `rejected`. Pi writes the exit code of
+The rows apply in this order. Pi writes an extension's block as an error
+result, and the result text is the extension's reason. Nothing in that result
+shows that it is a block. So an extension that blocks a call records it with
+`pi.appendEntry("openaidr.tool-call-blocked", {"toolCallId": "<id>"})`. The
+reader joins the entry to its call through the `parentId` chain, as it joins a
+result. A result that says the call succeeded outweighs a block entry. Without
+the entry, a blocked call reads as `error`. Pi writes the exit code of
 `bash` only inside the result text, so `exit_code` is `None`.
 
 `duration_ms` is the result's `timestamp` minus the assistant message's

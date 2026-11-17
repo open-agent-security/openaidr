@@ -176,8 +176,8 @@ machine.
 
 Pi (`pi`) is read from its session files
 ([`docs/specs/pi.md`](https://github.com/open-agent-security/openaidr/blob/main/docs/specs/pi.md)).
-It emits `ok`, `error`, `pending` and `unknown`. Pi writes a call that an
-extension blocked as an error result, so a blocked call reads as `error`.
+It emits `ok`, `error`, `rejected`, `pending` and `unknown`. A call is
+`rejected` when the extension that blocked it records the block (ADR-0044).
 
 For long-lived consumers, `IncrementalCollector` takes an agent kind and one
 changed path. Claude Code and Codex cold-read that file once, then project
