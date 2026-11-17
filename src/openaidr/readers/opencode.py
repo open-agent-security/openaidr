@@ -356,12 +356,17 @@ def _tool_call(
     arguments = dict(_mapping(state.get("input")))
     metadata = _mapping(state.get("metadata"))
     status, denial = _status(state, metadata)
-    body = _string(state.get("output")) if status == "ok" else _string(state.get("error"))
+    completed = state.get("status") == "completed"
+    body = _string(state.get("output")) if completed else _string(state.get("error"))
     timing = _mapping(state.get("time"))
     start, end = _count(timing.get("start")), _count(timing.get("end"))
     shell = server is None and tool == "bash"
     path = _mapping(message.get("path"))
     exit_code = _count(metadata.get("exit")) if shell and status in ("ok", "error") else None
+    if completed and exit_code is not None and exit_code != 0:
+        # OpenCode completes a command that exited non-zero. Its own exit
+        # status says it failed, as Codex's does (`readers.codex`).
+        status = "error"
     return ToolCall(
         span=span_id(session_id, message_id, index),
         tool_name=tool,

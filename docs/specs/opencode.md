@@ -106,7 +106,8 @@ A user message with no text adds no turn.
 | `state.status` | Status | Notes |
 |---|---|---|
 | `pending`, `running` | `pending` | |
-| `completed` | `ok` | A non-zero shell exit is `ok` with its `exit_code`: OpenCode completes the call |
+| `completed` | `ok` | |
+| `completed`, a `bash` call whose `metadata.exit` is not 0 | `error` | OpenCode completes the call. Its own exit status says it failed, as Codex's does |
 | `error`, error starts `The user rejected permission to use this specific tool call` | `rejected` | `denial_kind` `user-rejected`. The same with feedback |
 | `error`, error starts `The user has specified a rule which prevents you from using this specific tool call` | `rejected` | `denial_kind` `permission-rule` |
 | `error`, error `Tool execution aborted`, or `metadata.interrupted` | `interrupted` | |

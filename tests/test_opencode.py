@@ -111,7 +111,9 @@ def test_calls_take_their_outcome_from_the_part(tmp_path: Path) -> None:
     _basic(tmp_path)
     bash, read = _calls(_one(tmp_path))
     assert (bash.span, bash.provider_call_id) == (f"{ID}:msg_02:0", "call_1")
-    assert (bash.status, bash.exit_code, bash.duration_ms) == ("ok", 1, 250)
+    # Completed, but its exit status says it failed.
+    assert (bash.status, bash.exit_code, bash.duration_ms) == ("error", 1, 250)
+    assert bash.error_text == bash.result == "1 failing"
     assert bash.working_directory == "/home/dev/shop/web"
     assert (bash.tool_class, bash.canonical_arguments) == ("shell", {"command": "npm test"})
     assert (read.span, read.tool_class, read.canonical_arguments) == (
