@@ -45,6 +45,7 @@ def test_the_incremental_readers_are_the_default_readers(tmp_path: Path) -> None
         "codex",
         "cursor",
         "pi",
+        "opencode",
     ]
 
 
