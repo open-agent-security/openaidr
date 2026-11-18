@@ -53,7 +53,12 @@ _KIND_SPECS = {
 
 
 def test_docs_index_links_each_kind_spec_once() -> None:
-    """The doc index lists each owned kind's spec, once."""
+    """The doc index lists each owned kind's spec, once.
+
+    The map's keys are the registered kinds, except Claude Code. A new kind
+    with no row here fails this test, even when the index is unchanged.
+    """
+    assert set(_KIND_SPECS) == set(AGENT_KIND_BY_SOURCE.values()) - {"claude-code"}
     index = _README.parents[0].joinpath("docs/README.md").read_text(encoding="utf-8")
     for kind, spec in _KIND_SPECS.items():
         assert index.count(f"({spec})") == 1, kind
