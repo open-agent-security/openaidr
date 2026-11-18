@@ -38,6 +38,9 @@
   outcomes from completion items, denials from Codex's rejection envelope, usage
   per response with cached input separated, and MCP connections placed by the
   request that created the thread. On the Claude Code reader's design.
+- [Cursor](specs/cursor.md) — a fourth agent kind, `cursor`. The CLI is read
+  from its chat stores and its debug log. The desktop app's agent panel is read
+  from its `state.vscdb` and its structured log, with the same decoder.
 - [Pi](specs/pi.md) — a fifth agent kind, `pi`, read from its append-only JSONL
   session files: every branch included, a `codemode` script's calls as their
   own turn, usage per assistant message, and MCP servers named as configured.
@@ -45,11 +48,6 @@
   `opencode.db`: a message per turn, statuses from each tool part, one response
   per step, sub-agents through `parent_id`, and MCP tools split against the
   configured server names.
-- [Cursor](specs/cursor.md) — a fourth agent kind, `cursor`. The CLI is read
-  from its chat stores and its debug log. The desktop app's agent panel is read
-  from its `state.vscdb` and its structured log, with the same decoder.
-- [Pi](specs/pi.md) — a fifth agent kind, `pi`. It is read from the JSONL
-  session files that Pi writes under its agent directory.
 
 ## Decisions
 
