@@ -60,14 +60,67 @@ def test_delivery_preserves_later_calls_usage_and_incremental_identity(tmp_path:
     assert CodexReader(tmp_path).collect_file(path) == (after, [])
 
 
+def _client_tool_outputs() -> list[dict[str, object]]:
+    # Native desktop shapes from the client's own tools: a companion page, its
+    # snapshot, and a person's edit to a writing block. Each has an item id and
+    # a string output, and no call_id. Values are synthetic.
+    return [
+        {
+            "type": "function_call_output",
+            "id": "fco_page",
+            "namespace": "agent",
+            "name": "codex_apps_open_page",
+            "output": '{"page_id":null}',
+        },
+        {
+            "type": "function_call_output",
+            "id": "fco_snapshot",
+            "namespace": "agent",
+            "name": "codex_apps_selected_page_part_1_of_1",
+            "output": 'Companion Page snapshot part 1 of 1:\n{"page_id":null}',
+        },
+        {
+            "type": "function_call_output",
+            "id": "fco_edits",
+            "namespace": "agent",
+            "name": "codex_apps_writing_block_edits",
+            "output": "The user manually edited these writing blocks.",
+        },
+    ]
+
+
+def test_client_tool_outputs_are_context_and_keep_the_session(tmp_path: Path) -> None:
+    rollout = Rollout("work", originator="codex_work_desktop")
+    rollout.turn("first")
+    for output in _client_tool_outputs()[:2]:
+        rollout.response(output)
+    rollout.complete()
+    rollout.turn("second")
+    rollout.user("Draft a refund note")
+    rollout.response(_client_tool_outputs()[2])
+    rollout.exec("shell", "cat notes.md", output="notes")
+    rollout.usage("r1")
+    rollout.complete()
+    path = rollout.write(tmp_path)
+
+    sessions, failures = CodexReader(tmp_path).collect_file(path)
+    assert failures == []
+    session = sessions[0]
+    calls = [c for t in session.turns for c in t.tool_calls]
+    assert [c.provider_call_id for c in calls] == ["shell"]
+    assert calls[0].status == "ok"
+    injected = [c.text for c in session.context_items if c.source == "injected"]
+    assert injected == [str(o["output"]) for o in _client_tool_outputs()]
+    assert session.initial_prompt == "Draft a refund note"
+
+
 @pytest.mark.parametrize(
     "change",
     [
-        {"namespace": "other"},
-        {"name": "other"},
         {"type": "custom_tool_call_output"},
         {"id": None},
         {"output": None},
+        {"output": {"page_id": None}},
     ],
 )
 def test_unrecognized_outputs_still_withhold_the_session(
