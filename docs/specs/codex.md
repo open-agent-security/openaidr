@@ -210,12 +210,17 @@ is the call succeeding.
 the client supplied as turn input, beside the `function_call_output` response
 item that is read.
 
-The desktop client supplies `codex_app.send_message_to_thread` follow-ups as
-`function_call_output` records with an item `id`, a string `output`, and no
-`call_id`. The reader keeps their output as local-only injected context.
-These records create no call and join no outcome. Outputs with a `call_id`
-still follow the normal outcome join. Other outputs without a `call_id`
-remain malformed, except for `tool_search_output` context records.
+The desktop client supplies the outputs of its own tools as turn input.
+Examples are `codex_app.send_message_to_thread` follow-ups, and the
+`agent.codex_apps_*` companion page, page snapshot and writing-block edit records.
+Each is a `function_call_output` record with an item `id`, a string `output`,
+and no `call_id`. The reader keeps the output as local-only injected context.
+The rule uses the record shape, not the tool name, because the client adds new tools.
+These records create no call and join no outcome. A record without a `call_id`
+cannot claim the call of another record.
+Outputs with a `call_id` still follow the normal outcome join.
+Other outputs without a `call_id` remain malformed, except for `tool_search_output` context records.
+A `custom_tool_call_output`, a missing item `id`, or an `output` that is not a string is malformed.
 
 ## Session fields
 

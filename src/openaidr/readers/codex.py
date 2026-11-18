@@ -633,13 +633,13 @@ class _Projection:
         if call_id is None:
             if (
                 kind == "function_call_output"
-                and payload.get("namespace") == "codex_app"
-                and payload.get("name") == "send_message_to_thread"
                 and _string(payload.get("id")) is not None
                 and isinstance(payload.get("output"), str)
             ):
-                # Desktop follow-ups are turn input, not the result of a
-                # call in this thread. Keep the context without inventing one.
+                # The desktop client supplies its own tools' outputs, such as
+                # thread follow-ups and page snapshots, as turn input. They
+                # answer no call in this thread and claim no call id, so keep
+                # them as context without inventing a call.
                 self._context("injected", str(payload["output"]), at)
                 return
             if kind == "tool_search_output":
