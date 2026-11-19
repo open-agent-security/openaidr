@@ -72,23 +72,13 @@ def session(
     *,
     parent: str | None = None,
     title: str = "Fix the checkout bug",
-    at: float = 0,
     updated: float = 600,
-    model: dict[str, object] | None = None,
 ) -> None:
     db.execute(
         "INSERT INTO session (id, project_id, parent_id, slug, directory, title, version, "
         "model, time_created, time_updated) VALUES (?, 'prj_1', ?, 'calm-otter', ?, ?, "
         "'1.19.5', ?, ?, ?)",
-        (
-            session_id,
-            parent,
-            DIRECTORY,
-            title,
-            json.dumps(model) if model is not None else None,
-            ms(at),
-            ms(updated),
-        ),
+        (session_id, parent, DIRECTORY, title, None, ms(0), ms(updated)),
     )
     db.commit()
 
@@ -163,8 +153,6 @@ def tool(
     status: str,
     /,
     *,
-    at: float = 1,
-    seconds: float = 0.25,
     output: str = "",
     error: str = "",
     metadata: dict[str, object] | None = None,
@@ -176,14 +164,14 @@ def tool(
             "output": output,
             "title": tool_name,
             "metadata": metadata or {},
-            "time": {"start": ms(at), "end": ms(at + seconds)},
+            "time": {"start": ms(1), "end": ms(1.25)},
         }
     elif status == "error":
-        state |= {"error": error, "time": {"start": ms(at), "end": ms(at + seconds)}}
+        state |= {"error": error, "time": {"start": ms(1), "end": ms(1.25)}}
         if metadata is not None:
             state["metadata"] = metadata
     elif status == "running":
-        state |= {"time": {"start": ms(at)}}
+        state |= {"time": {"start": ms(1)}}
     else:
         state["raw"] = ""
     return {"type": "tool", "callID": call_id, "tool": tool_name, "state": state}
