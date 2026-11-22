@@ -66,7 +66,7 @@ from openaidr.readers.claude_code_mcp import (
     read_mcp_logs,
 )
 from openaidr.toolclass import canonical_arguments, tool_class
-from openaidr.toolnames import split_tool_name
+from openaidr.toolnames import listed_tool_name, split_tool_name
 
 #: Where Claude Code keeps session transcripts, one directory per project root.
 DEFAULT_ROOT = Path.home() / ".claude" / "projects"
@@ -1431,10 +1431,16 @@ def _server_and_tool(tool: ToolUsage) -> tuple[str | None, str]:
     inside the tool name. Recovering it is this package's contract rather than an
     optional enrichment, because it is the key the whole downstream join uses.
     """
-    server, name = split_tool_name("claude-code", tool.tool_name)
+    server, name = _tool_names(tool.tool_name)
     if tool.server_name:
         return tool.server_name, name
     return server, name
+
+
+def _tool_names(raw: str) -> tuple[str | None, str]:
+    """`(server, tool)` for a tool the transcript names `raw`: the rule for a
+    call, and for a tool a tool listing names."""
+    return split_tool_name("claude-code", raw)
 
 
 def _log_server_key(server: str) -> str:
@@ -2131,6 +2137,8 @@ def _context_items(
 def _tool_parts(tools: object, listed: set[tuple[str, str]]) -> tuple[ContextPart, ...]:
     """One part for each tool a listing names with a description, in the
     record's order, that the session has not listed with that description.
+    A part is named by `_tool_names`, the rule that names a call, so a
+    consumer joins a description to a call by name.
 
     A tool with no name or no description has no part: there is nothing of its
     own to carry. A tool listed again with other words is a new part, because
@@ -2145,10 +2153,11 @@ def _tool_parts(tools: object, listed: set[tuple[str, str]]) -> tuple[ContextPar
         name, description = tool.get("name"), tool.get("description")
         if not (isinstance(name, str) and name and isinstance(description, str) and description):
             continue
-        if (name, description) in listed:
+        listed_name = listed_tool_name(*_tool_names(name))
+        if (listed_name, description) in listed:
             continue
-        listed.add((name, description))
-        parts.append(ContextPart(name=name, text=description))
+        listed.add((listed_name, description))
+        parts.append(ContextPart(name=listed_name, text=description))
     return tuple(parts)
 
 

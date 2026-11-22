@@ -719,3 +719,40 @@ def test_a_tool_listing_moves_no_other_context_span(tmp_path: Path) -> None:
         ("hook", f"{sid}:context:1"),
         ("tool_listing", f"{sid}:context.tools:1"),
     ]
+
+
+def test_every_listed_tool_is_named_as_the_reader_names_a_call_to_it(tmp_path: Path) -> None:
+    """A consumer joins a tool's description to a call by name, so a part's
+    name is the name a call to that tool gets: built-in tools, MCP tools, a
+    server name with punctuation, a plugin's server, and a name that only
+    looks like an MCP tool."""
+    names = [
+        "Read",
+        "mcp__github__search",
+        "mcp__my-server__search",
+        "mcp__plugin_tools_docs__fetch",
+        "mcp__nothing",
+    ]
+    calls = [
+        assistant_tool_use("s1", f"c{index}", _T1, f"call-{index}", name)
+        for index, name in enumerate(names)
+    ]
+    write_session(
+        tmp_path,
+        "proj",
+        [
+            *_base(),
+            attachment("s1", "a1", _T0, _snapshot(*(_tool(n, f"Does {n}.") for n in names))),
+            *calls,
+        ],
+    )
+    (session,) = _read(tmp_path)
+    called = {
+        call.provider_call_id: (
+            f"mcp__{call.mcp_server}__{call.tool_name}" if call.mcp_server else call.tool_name
+        )
+        for turn in session.turns
+        for call in turn.tool_calls
+    }
+    (parts,) = _listings(session)
+    assert [name for name, _ in parts] == [called[f"call-{i}"] for i in range(len(names))]

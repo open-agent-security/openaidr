@@ -312,8 +312,9 @@ the start in `tools`. A `deferred_tools_record` lists the tools that a tool
 search just loaded in `entries`. The tool search's own result is a
 `tool_reference` with a name and no description, so these records are the only
 place a tool's description is written. Each record that lists a tool with a
-description is one item. Each tool is one part, with the tool's name as the
-record spells it and its description as the part's text. A session lists each
+description is one item. Each tool is one part, with its description as the part's text. The part's
+name comes from the rule that names a call to the tool, so a consumer joins a
+description to a call by name. A session lists each
 name and description once, so a repeat gives no part and new words for a tool
 give a new part. A tool with no description has no part. A listing's span key
 is `context.tools`, counted apart from the other items, so no other context

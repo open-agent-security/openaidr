@@ -66,10 +66,11 @@ is the record's line, and one `tool_search_output` already gives an
   keep their meaning.
 - A consumer that finds context items by the `:context:` span prefix does not
   find listings. Listings use `:context.tools:`.
-- A Claude Code part is named as the record names the tool, for example
-  `mcp__<server>__<tool>`. A Codex part is named as the reader names a call to
-  the tool: `mcp__<server>__<tool>` in an MCP namespace, `<namespace>.<tool>` in
-  another namespace.
+- A part is named by the same function that names a call to the tool, and
+  `listed_tool_name` joins the result: `mcp__<server>__<tool>` for an MCP tool,
+  else the call's tool name. A consumer joins a description to a call by
+  name. In Codex the names are given when the session is built, because a
+  server name with punctuation is restored from the connection log.
 - `deferred_tools_delta` holds names only, and is not read. A tool's argument
   descriptions are not carried.
 

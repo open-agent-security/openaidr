@@ -52,7 +52,7 @@ from openaidr.model import (
 from openaidr.readers.base import ReaderFailure, Window
 from openaidr.readers.codex_log import CodexLogs, Placement
 from openaidr.toolclass import canonical_arguments, tool_class
-from openaidr.toolnames import split_tool_name
+from openaidr.toolnames import listed_tool_name, split_tool_name
 
 SOURCE = "codex"
 SESSIONS = "sessions"
@@ -269,6 +269,18 @@ class _Record:
 
 
 @dataclass
+class _Listing:
+    """The tools one tool search found with a description, as
+    `(namespace, name, description)`. They are named when the session is
+    built, by the rule that names a call (`_tool_names`), because that rule
+    needs the MCP connections the log places on the session."""
+
+    line: int
+    at: datetime | None
+    tools: list[tuple[str | None, str, str]]
+
+
+@dataclass
 class _Output:
     body: str | None
     status: str | None
@@ -298,7 +310,7 @@ class _Projection:
     #: Per Codex turn, the records waiting for the response that produced them.
     awaiting: dict[str, list[int]] = field(default_factory=dict)
     responses: dict[str, ModelResponse] = field(default_factory=dict)
-    context: list[ContextItem] = field(default_factory=list)
+    context: list[ContextItem | _Listing] = field(default_factory=list)
     compactions: list[Compaction] = field(default_factory=list)
     refusals: list[ProviderRefusal] = field(default_factory=list)
     initial_prompt: str | None = None
@@ -694,20 +706,9 @@ class _Projection:
         self._tool_listing(tools, at)
 
     def _tool_listing(self, tools: list[object], at: datetime | None) -> None:
-        """One part for each tool the search found with a description, that the
-        session has not listed with that description.
-
-        An entry is a `function` or `custom` tool, or a `namespace` holding
-        them. A tool is named as the reader names a call to it: an MCP tool
-        `mcp__<server>__<tool>`, a tool of another namespace `<namespace>.<tool>`.
-        """
-        listed = {
-            (part.name, part.text)
-            for item in self.context
-            if item.source == "tool_listing"
-            for part in item.parts
-        }
-        parts: list[ContextPart] = []
+        """Each tool the search found with a description: a `function` or
+        `custom` entry, or one inside a `namespace` entry."""
+        found: list[tuple[str | None, str, str]] = []
         for entry in tools:
             entry = _mapping(entry)
             namespace: str | None = None
@@ -721,32 +722,10 @@ class _Projection:
                 tool = _mapping(tool)
                 name = _string(tool.get("name"))
                 description = _string(tool.get("description"))
-                if not name or not description:
-                    continue
-                if namespace is None:
-                    listed_name = name
-                elif namespace.startswith("mcp__") and len(namespace) > len("mcp__"):
-                    server = namespace.removeprefix("mcp__").removesuffix("__")
-                    listed_name = f"mcp__{server}__{name}"
-                else:
-                    listed_name = f"{namespace}.{name}"
-                if (listed_name, description) in listed:
-                    continue
-                listed.add((listed_name, description))
-                parts.append(ContextPart(name=listed_name, text=description))
-        if parts:
-            self.context.append(
-                ContextItem(
-                    # The same record can give an `mcp_instructions` item at
-                    # `context:<line>`; a listing has a key of its own (ADR-0047).
-                    span=span_id(self.session_id, "context.tools", self.line),
-                    source="tool_listing",
-                    name=None,
-                    text="\n\n".join(part.text for part in parts),
-                    parts=tuple(parts),
-                    occurred_at=at,
-                )
-            )
+                if name and description:
+                    found.append((namespace, name, description))
+        if found:
+            self.context.append(_Listing(self.line, at, found))
 
     def _usage(self, payload: Mapping[str, object], at: datetime | None) -> None:
         response_id = _string(payload.get("response_id"))
@@ -860,7 +839,7 @@ class _Projection:
             originator=_string(self.meta.get("originator")),
             git_branch=_string(git.get("branch")),
             initial_prompt=self.initial_prompt,
-            context_items=tuple(self.context),
+            context_items=self._context_items(transports),
             compactions=tuple(self.compactions),
             mcp_connections=placement.connections,
             mcp_log_state=placement.state,
@@ -871,6 +850,41 @@ class _Projection:
             compactions_recorded=True,
             subagents_recorded=True,
         )
+
+    def _context_items(self, transports: Mapping[str, str | None]) -> tuple[ContextItem, ...]:
+        """The context items, each tool listing named and given its parts.
+
+        A part is named by `_tool_names`, the rule that names a call, so a
+        consumer joins a description to a call by name. A session lists each
+        name and description once. A listing takes the `context.tools` key,
+        because the same record can give an `mcp_instructions` item at
+        `context:<line>` (ADR-0047).
+        """
+        listed: set[tuple[str, str]] = set()
+        items: list[ContextItem] = []
+        for entry in self.context:
+            if isinstance(entry, ContextItem):
+                items.append(entry)
+                continue
+            parts: list[ContextPart] = []
+            for namespace, name, description in entry.tools:
+                listed_name = listed_tool_name(*_tool_names(namespace, name, transports))
+                if (listed_name, description) in listed:
+                    continue
+                listed.add((listed_name, description))
+                parts.append(ContextPart(name=listed_name, text=description))
+            if parts:
+                items.append(
+                    ContextItem(
+                        span=span_id(self.session_id, "context.tools", entry.line),
+                        source="tool_listing",
+                        name=None,
+                        text="\n\n".join(part.text for part in parts),
+                        parts=tuple(parts),
+                        occurred_at=entry.at,
+                    )
+                )
+        return tuple(items)
 
     def _tool_call(
         self, session_id: str, record: _Record, transports: Mapping[str, str | None]
@@ -1018,7 +1032,14 @@ def _names(
         tool = _item_tool(item)
         if tool:
             return None, tool
-    namespace = call.namespace
+    return _tool_names(call.namespace, call.name, transports)
+
+
+def _tool_names(
+    namespace: str | None, name: str, transports: Mapping[str, str | None]
+) -> tuple[str | None, str]:
+    """`(server, tool)` for a tool Codex names by `namespace` and `name`: the
+    rule for a call no item names, and for a tool a tool search lists."""
     if namespace is not None:
         if namespace.startswith("mcp__") and len(namespace) > len("mcp__"):
             # Codex sanitises a server's name into its namespace, collapsing any
@@ -1026,17 +1047,17 @@ def _names(
             # from `my_server`. A connection the log database names is ground
             # truth; prefer it when exactly one configured server matches.
             sanitized = namespace.removeprefix("mcp__").removesuffix("__")
-            configured = [name for name in transports if _sanitize_server(name) == sanitized]
+            configured = [server for server in transports if _sanitize_server(server) == sanitized]
             if len(configured) == 1:
-                return configured[0], call.name
-            return sanitized, call.name
-        builtin = _NAMESPACED_BUILTINS.get((namespace, call.name))
+                return configured[0], name
+            return sanitized, name
+        builtin = _NAMESPACED_BUILTINS.get((namespace, name))
         if builtin is not None:
             return None, builtin
         if namespace in _COLLAB_NAMESPACES:
-            return None, call.name
-        return None, f"{namespace}.{call.name}"
-    return split_tool_name(SOURCE, call.name)
+            return None, name
+        return None, f"{namespace}.{name}"
+    return split_tool_name(SOURCE, name)
 
 
 def _outcome(

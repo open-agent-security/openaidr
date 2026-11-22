@@ -1059,6 +1059,60 @@ def test_a_tool_search_lists_a_tool_once_and_again_when_its_words_change(
     assert next(i.span for i in after[0].context_items if i.source == "tool_listing") == first_span
 
 
+def test_every_listed_tool_is_named_as_the_reader_names_a_call_to_it(tmp_path: Path) -> None:
+    """A consumer joins a tool's description to a call by name, so a part's
+    name is the name a call to that tool gets: across MCP namespaces (one
+    whose server name has punctuation that only the log restores), other
+    namespaces, Codex's own namespaced tools and tools in no namespace."""
+    write_logs(
+        tmp_path,
+        [
+            ("rmcp::service", started_line("my-server"), None, "solo"),
+            ("codex_core::shell_snapshot", "turn", "t", "solo"),
+        ],
+    )
+    listed = [
+        ("mcp__my_server__", "search"),
+        ("mcp__github__", "create_issue"),
+        ("codex_app", "open_page"),
+        ("multi_agent_v1", "spawn_agent"),
+        ("clock", "sleep"),
+        (None, "lookup"),
+        (None, "mcp__flat__fetch"),
+    ]
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(
+        _search(
+            "ts",
+            *(
+                _namespace(namespace, f"{namespace} tools.", _function(name, f"Does {name}."))
+                if namespace is not None
+                else _function(name, f"Does {name}.")
+                for namespace, name in listed
+            ),
+        )
+    )
+    for index, (namespace, name) in enumerate(listed):
+        # Codex calls an MCP tool under the namespace without its trailing `__`.
+        called = namespace.removesuffix("__") if namespace is not None else None
+        rollout.call(f"c{index}", name, {}, namespace=called)
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    calls = _calls(session)
+    called_names = [
+        f"mcp__{call.mcp_server}__{call.tool_name}" if call.mcp_server else call.tool_name
+        for call in (calls[f"c{index}"] for index in range(len(listed)))
+    ]
+    (parts,) = _tool_listings(session)
+    assert [name for name, _ in parts] == called_names
+    assert called_names[0] == "mcp__my-server__search"
+
+
 def test_a_searched_tool_without_a_name_or_a_description_is_not_a_part(tmp_path: Path) -> None:
     rollout = Rollout("t")
     rollout.turn("t1")
