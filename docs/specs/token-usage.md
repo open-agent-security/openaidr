@@ -17,9 +17,9 @@ Three smaller changes ship with it, because without them a consumer cannot
 total or attribute that usage:
 
 - **Workflow agents are sub-agents.** Claude Code writes a workflow's agents
-  one directory deeper than other sub-agents. This package reads each as a
-  session holding the parent's identity, and that both loses their usage and
-  withholds the parent's MCP enrichment ([Sub-agents and workflow
+  one directory deeper than other sub-agents. This package used to read each
+  as a session holding the parent's identity, which lost their usage and
+  withheld the parent's MCP enrichment ([Sub-agents and workflow
   agents](#sub-agents-and-workflow-agents)).
 - **A compaction carries its time,** so consumption can be placed before or
   after the point where the context was reset.
