@@ -272,7 +272,7 @@ class _Record:
 class _Listing:
     """The tools one tool search found with a description, as
     `(namespace, name, description)`. They are named when the session is
-    built, by the rule that names a call (`_tool_names`), because that rule
+    built, by the rule that names a call (`_ToolIdentities`), because that rule
     needs the MCP connections the log places on the session."""
 
     line: int
@@ -805,12 +805,12 @@ class _Projection:
         session_id = self.session_id
         sidechain = self.sidechain
         transports = {c.server: c.transport for c in placement.connections}
-        servers = self._mcp_servers(transports)
+        tools = self._tool_identities(transports)
         turns: list[Turn] = []
         for record in self.records:
             calls: tuple[ToolCall, ...] = ()
             if record.call is not None:
-                calls = (self._tool_call(session_id, record, transports, servers),)
+                calls = (self._tool_call(session_id, record, transports, tools),)
             turns.append(
                 Turn(
                     position=len(turns),
@@ -840,7 +840,7 @@ class _Projection:
             originator=_string(self.meta.get("originator")),
             git_branch=_string(git.get("branch")),
             initial_prompt=self.initial_prompt,
-            context_items=self._context_items(servers),
+            context_items=self._context_items(tools),
             compactions=tuple(self.compactions),
             mcp_connections=placement.connections,
             mcp_log_state=placement.state,
@@ -852,19 +852,27 @@ class _Projection:
             subagents_recorded=True,
         )
 
-    def _mcp_servers(self, transports: Mapping[str, str | None]) -> _McpServers:
-        """The session's MCP servers by written name, from every completed
-        `McpToolCall` item a call joins and from the connection log."""
-        named: dict[str, set[str]] = {}
+    def _tool_identities(self, transports: Mapping[str, str | None]) -> _ToolIdentities:
+        """The session's tool identities, from every completed `McpToolCall`
+        item a call joins and from the connection log."""
+        by_tool: dict[tuple[str | None, str], set[tuple[str, str]]] = {}
+        by_namespace: dict[str, set[str]] = {}
         for record in self.records:
             if record.call is None:
                 continue
             item = self._joined(record)[0]
             server, tool = _string(item.get("server")), _string(item.get("tool"))
-            written = _written_server(record.call.namespace, record.call.name)
-            if item.get("type") == "McpToolCall" and server and tool and written:
-                named.setdefault(written, set()).add(server)
-        return _McpServers({w: frozenset(s) for w, s in named.items()}, transports)
+            if item.get("type") != "McpToolCall" or not server or not tool:
+                continue
+            key = _model_key(record.call.namespace, record.call.name)
+            by_tool.setdefault(key, set()).add((server, tool))
+            if key[0] is not None:
+                by_namespace.setdefault(key[0], set()).add(server)
+        return _ToolIdentities(
+            {key: frozenset(ids) for key, ids in by_tool.items()},
+            {key: frozenset(found) for key, found in by_namespace.items()},
+            transports,
+        )
 
     def _joined(self, record: _Record) -> tuple[dict[str, object], list[_Output], bool]:
         """The completion item and outputs a call's record joins, and whether
@@ -881,10 +889,10 @@ class _Projection:
             item = {}
         return item, outputs, joined
 
-    def _context_items(self, servers: _McpServers) -> tuple[ContextItem, ...]:
+    def _context_items(self, tools: _ToolIdentities) -> tuple[ContextItem, ...]:
         """The context items, each tool listing named and given its parts.
 
-        A part is named by `_tool_names`, the rule that names a call, so a
+        A part is named by `_ToolIdentities`, which names a call, so a
         consumer joins a description to a call by name. A session lists each
         name and description once. A listing takes the `context.tools` key,
         because the same record can give an `mcp_instructions` item at
@@ -898,7 +906,7 @@ class _Projection:
                 continue
             parts: list[ContextPart] = []
             for namespace, name, description in entry.tools:
-                listed_name = listed_tool_name(*_tool_names(namespace, name, servers))
+                listed_name = listed_tool_name(*tools.resolve(namespace, name))
                 if (listed_name, description) in listed:
                     continue
                 listed.add((listed_name, description))
@@ -921,13 +929,13 @@ class _Projection:
         session_id: str,
         record: _Record,
         transports: Mapping[str, str | None],
-        servers: _McpServers,
+        tools: _ToolIdentities,
     ) -> ToolCall:
         call = record.call
         assert call is not None
         item, outputs, joined = self._joined(record)
         output = outputs[0] if len(outputs) == 1 else None
-        server, tool = _names(call, item, servers)
+        server, tool = _names(call, item, tools)
         status, denial, exit_code = _outcome(
             call, item, output, call.turn in self.ended if call.turn else True
         )
@@ -1042,76 +1050,77 @@ def _sanitize_server(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", name)
 
 
-def _names(call: _Call, item: Mapping[str, object], servers: _McpServers) -> tuple[str | None, str]:
+def _names(
+    call: _Call, item: Mapping[str, object], tools: _ToolIdentities
+) -> tuple[str | None, str]:
     """`(server, tool)`, by the first rule that applies (`docs/specs/codex.md#tool-names`):
-    the item's own names, as the server is configured or as Codex's closed
-    vocabulary says; then the namespace Codex called it under; then a flat
-    legacy name."""
-    if item.get("type") == "McpToolCall":
-        server, tool = _string(item.get("server")), _string(item.get("tool"))
-        if server and tool:
-            return server, tool
+    the built-in or collaboration tool the item names; then the session's tool
+    identities, which hold every `McpToolCall` item's names."""
     if call.namespace is not None and item.get("_kind") in _NAMED_BY_ITEM:
         # A namespace Codex lets configuration choose, or one wrapping a tool
         # the item names exactly: the item says which built-in it was.
         tool = _item_tool(item)
         if tool:
             return None, tool
-    return _tool_names(call.namespace, call.name, servers)
+    return tools.resolve(call.namespace, call.name)
+
+
+def _model_key(namespace: str | None, name: str) -> tuple[str | None, str]:
+    """A tool's model-facing identity: its namespace, without the trailing
+    `__` that a tool search writes and a call may not, and its name. A flat
+    `mcp__<server>__<tool>` is the same tool as `<tool>` in `mcp__<server>`."""
+    if namespace is not None:
+        return namespace.removesuffix("__"), name
+    server, tool = split_tool_name(SOURCE, name)
+    return (f"mcp__{server}", tool) if server is not None else (None, name)
 
 
 @dataclass(frozen=True)
-class _McpServers:
-    """One session's MCP servers, by the name Codex wrote into a tool's name.
+class _ToolIdentities:
+    """One session's tools, from the name the model sees to `(server, tool)`.
 
-    Codex sanitises a server's name, collapsing any punctuation to `_`, so the
-    written name alone cannot tell `my-server` from `my_server`. Built once per
-    session from every source the reader has, and used for calls and listings
-    alike. The first that applies:
+    Codex gives the model a sanitised, and where needed hashed, namespace and
+    tool name, and records the configured server and the raw tool name in a
+    completed `McpToolCall` item (`codex-mcp/src/tools.rs`). Built once per
+    session from every completed item and the connection log, and used for
+    calls and listings alike, for the server and the tool. The first that
+    applies:
 
-    1. The one server the completed `McpToolCall` items name, for the calls
-       written under that name. Codex's own record of a call wins.
-    2. The one configured server the connection log names whose sanitised name
-       is the written name.
-    3. The written name.
+    1. The one `(server, tool)` the completed items name for this namespace
+       and name. Two or more is ambiguous, and none of them is used.
+    2. In a namespace where the completed items name one server: that server,
+       and the name.
+    3. In an `mcp__<server>` namespace: the one configured server the log
+       names whose sanitised name is `<server>`, else `<server>`; and the name.
+    4. Codex's own namespaced tools, then collaboration tools, then
+       `<namespace>.<name>`; with no namespace, the name.
     """
 
-    #: Written name -> the servers completed items name for calls under it.
-    named: Mapping[str, frozenset[str]]
+    by_tool: Mapping[tuple[str | None, str], frozenset[tuple[str, str]]]
+    by_namespace: Mapping[str, frozenset[str]]
     transports: Mapping[str, str | None]
 
-    def server(self, written: str) -> str:
-        named = self.named.get(written, frozenset())
+    def resolve(self, namespace: str | None, name: str) -> tuple[str | None, str]:
+        key, tool = _model_key(namespace, name)
+        named = self.by_tool.get((key, tool), frozenset())
         if len(named) == 1:
             return next(iter(named))
-        configured = [name for name in self.transports if _sanitize_server(name) == written]
-        return configured[0] if len(configured) == 1 else written
-
-
-def _written_server(namespace: str | None, name: str) -> str | None:
-    """The MCP server name a tool's namespace, or else its flat name, holds."""
-    if namespace is None:
-        return split_tool_name(SOURCE, name)[0]
-    if namespace.startswith("mcp__") and len(namespace) > len("mcp__"):
-        return namespace.removeprefix("mcp__").removesuffix("__")
-    return None
-
-
-def _tool_names(namespace: str | None, name: str, servers: _McpServers) -> tuple[str | None, str]:
-    """`(server, tool)` for a tool Codex names by `namespace` and `name`: the
-    rule for a call no item names, and for a tool a tool search lists."""
-    written = _written_server(namespace, name)
-    if namespace is not None:
-        if written is not None:
-            return servers.server(written), name
+        if key is None:
+            return None, tool
+        servers = self.by_namespace.get(key, frozenset())
+        if len(servers) == 1:
+            return next(iter(servers)), tool
+        if key.startswith("mcp__") and len(key) > len("mcp__"):
+            written = key.removeprefix("mcp__")
+            configured = [s for s in self.transports if _sanitize_server(s) == written]
+            return (configured[0] if len(configured) == 1 else written), tool
+        assert namespace is not None
         builtin = _NAMESPACED_BUILTINS.get((namespace, name))
         if builtin is not None:
             return None, builtin
         if namespace in _COLLAB_NAMESPACES:
             return None, name
         return None, f"{namespace}.{name}"
-    tool = split_tool_name(SOURCE, name)[1]
-    return (servers.server(written) if written is not None else None), tool
 
 
 def _outcome(

@@ -1144,8 +1144,8 @@ def _completed_mcp(rollout: Rollout, call_id: str, server: str, tool: str) -> No
         ("my-server", [], "my-server"),
         # Nothing names it: the written name, for a call and a listing alike.
         (None, [], "my_server"),
-        # Two completed items name different servers: no item decides, so the
-        # log does. Each call keeps the server its own item names.
+        # Two completed items name different servers for one tool: no item
+        # decides, so the log does, for the calls and the listing alike.
         ("my-server", ["my-server", "my.server"], "my-server"),
     ],
 )
@@ -1191,10 +1191,115 @@ def test_a_listed_mcp_tool_is_named_from_the_same_evidence_as_its_calls(
         f"mcp__{expected_server}__never_called",
     ]
     calls = _calls(session)
-    assert [calls[f"c{i}"].mcp_server for i in range(len(completed))] == completed
-    if len(set(completed)) == 1:
-        call = calls["c0"]
-        assert parts[0][0] == f"mcp__{call.mcp_server}__{call.tool_name}"
+    assert [
+        f"mcp__{calls[f'c{i}'].mcp_server}__{calls[f'c{i}'].tool_name}"
+        for i in range(len(completed))
+    ] == [parts[0][0]] * len(completed)
+
+
+def test_a_listed_tool_is_named_by_its_raw_name_wherever_a_call_records_it(
+    tmp_path: Path,
+) -> None:
+    """Codex shows the model a sanitised name, hashed where it is too long or
+    collides, and its completed item records the configured server and the raw
+    tool name (`codex-mcp/src/tools.rs`). A listed tool takes the name a call
+    to it takes. A listed tool that is never called has no raw name on record:
+    it keeps the name the model saw, under its namespace's server."""
+    long_raw = "fetch." + "a" * 140
+    long_callable = "fetch_" + "a" * 94 + "_0123456789ab"
+    # (model-facing namespace, model-facing name, server, raw name, called)
+    tools = [
+        # Sanitised: `.` is not allowed in a model-facing name.
+        ("mcp__my_server__", "search_items", "my-server", "search.items", True),
+        ("mcp__my_server__", "list_items", "my-server", "list.items", False),
+        # Hashed: too long for the 128-byte limit.
+        ("mcp__my_server__", long_callable, "my-server", long_raw, True),
+        ("mcp__my_server__", "b" * 100 + "_ba9876543210", "my-server", "b" * 150, False),
+        # Collided: two raw names sanitise to one, so each gets a hash.
+        ("mcp__my_server__", "get_item_111111111111", "my-server", "get.item", True),
+        ("mcp__my_server__", "get_item_222222222222", "my-server", "get-item", False),
+        # Two servers sanitise to one namespace, so each namespace gets a hash.
+        ("mcp__my_server_333333333333__", "search", "my.server", "search", True),
+        ("mcp__my_server_333333333333__", "browse", "my.server", "browse", False),
+    ]
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(
+        _search(
+            "ts",
+            *(
+                _namespace(namespace, "Tools.", _function(name, f"Tool {index}."))
+                for index, (namespace, name, _, _, _) in enumerate(tools)
+            ),
+        )
+    )
+    for index, (namespace, name, server, raw, called) in enumerate(tools):
+        if not called:
+            continue
+        rollout.call(f"c{index}", name, {}, namespace=namespace.removesuffix("__"))
+        rollout.item(
+            {
+                "type": "McpToolCall",
+                "id": f"c{index}",
+                "server": server,
+                "tool": raw,
+                "arguments": {},
+                "status": "completed",
+                "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+            }
+        )
+        rollout.output(f"c{index}", [{"type": "input_text", "text": "ok"}])
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    (parts,) = _tool_listings(session)
+    names = [name for name, _ in parts]
+    assert names == [
+        f"mcp__{server}__{raw if called else name}" for _, name, server, raw, called in tools
+    ]
+    calls = _calls(session)
+    for index, (_, _, _, _, called) in enumerate(tools):
+        if called:
+            call = calls[f"c{index}"]
+            assert names[index] == f"mcp__{call.mcp_server}__{call.tool_name}"
+
+
+def test_two_raw_names_for_one_listed_name_leave_the_name_the_model_saw(tmp_path: Path) -> None:
+    """If the server's tools change, one model-facing name can stand for two
+    raw names in one session. No item decides, so calls and the listing alike
+    keep the name the model saw."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(_search("ts", _namespace("mcp__s__", "S.", _function("get_item", "Gets."))))
+    for index, raw in enumerate(["get.item", "get-item"]):
+        rollout.call(f"c{index}", "get_item", {}, namespace="mcp__s")
+        rollout.item(
+            {
+                "type": "McpToolCall",
+                "id": f"c{index}",
+                "server": "s",
+                "tool": raw,
+                "arguments": {},
+                "status": "completed",
+                "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+            }
+        )
+        rollout.output(f"c{index}", [{"type": "input_text", "text": "ok"}])
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    assert _tool_listings(session) == [[("mcp__s__get_item", "Gets.")]]
+    calls = _calls(session)
+    assert [(calls[c].mcp_server, calls[c].tool_name) for c in ("c0", "c1")] == [
+        ("s", "get_item"),
+        ("s", "get_item"),
+    ]
 
 
 def test_a_searched_tool_without_a_name_or_a_description_is_not_a_part(tmp_path: Path) -> None:

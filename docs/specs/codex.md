@@ -278,7 +278,7 @@ The first rule that applies (ADR-0033):
 
 | # | Record | `mcp_server`, `tool_name` |
 |---|---|---|
-| 1 | An `McpToolCall` item | Its `server` and `tool`, as the server is configured |
+| 1 | An `McpToolCall` item | Its `server` and `tool`, as the server is configured, through the session's tool identities below |
 | 2 | A `CollabAgentToolCall` or `Extension` item | `None` and the item's tool. A collaboration call's namespace is configurable, so the item decides |
 | 3 | A call with `namespace` `mcp__<server>` | The server, and `name` (Seen: MCP tools are deferred behind `tool_search` and called this way). Codex sanitises punctuation in a server's name to `_`, so the server is resolved as below |
 | 3 | A call in Codex's own namespaces: `clock.sleep`, `web.run`, `image_gen.imagegen` | `None` and `sleep`, `web_search`, `image_generation` |
@@ -287,18 +287,28 @@ The first rule that applies (ADR-0033):
 | 4 | A flat `mcp__<server>__<tool>` | Split by Claude Code's rule; the server is resolved as below |
 | 4 | Any other name | The name, with no server |
 
-**The server a tool name holds** is resolved once for each session, and calls
-and tool listings use the same result. The first rule that applies:
+**Tool identities.** Codex shows the model a sanitised namespace and tool
+name. It adds a hash where a name is too long or two names collide. The
+completed `McpToolCall` item records the configured server and the raw tool
+name (Source `codex-mcp/src/tools.rs`). The reader builds one map for each
+session, from every completed item that a call joins and from the log
+database. Calls and tool listings both resolve through it, for the server and
+the tool. The key is the namespace without a trailing `__`, and the name. A
+flat `mcp__<server>__<tool>` has the same key as `<tool>` in `mcp__<server>`.
+The first rule that applies:
 
-1. The one server that the completed `McpToolCall` items name, for the calls
-   written under that server name. Codex's own record of a call wins over the
-   log.
-2. The one configured server that the log database names, whose sanitised
-   name is the written name.
-3. The written name.
+1. The one `(server, tool)` that the completed items name for the key.
+   Codex's own record of a call wins over the log.
+2. In a namespace where the completed items name one server: that server, and
+   the model-facing name.
+3. In an `mcp__<server>` namespace: the one configured server that the log
+   names, whose sanitised name is `<server>`, else `<server>`; and the name.
+4. Rows 3 and 4 of the table above.
 
-Where two items name different servers for one written name, no item decides.
-Each of those calls keeps the server its own item names (rule 1 of the table).
+Two or more `(server, tool)` pairs for one key are ambiguous. Then no item
+decides, and the calls and the listing both fall to rule 2 or later. A listed
+tool that is never called has no raw name on record, so it keeps the
+model-facing name.
 
 A V2 collaboration call in a configured namespace, refused before it ran, has
 no item, so it keeps `<namespace>.<name>`. Matching its bare name in any
