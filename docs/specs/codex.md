@@ -237,7 +237,7 @@ A `custom_tool_call_output`, a missing item `id`, or an `output` that is not a s
 | `generated_title` | `None`. `state_5.sqlite` holds one, but this reader does not open the state database |
 | `initial_prompt` | The first `UserMessage` item; in legacy mode the first `user_message` event. Never a `user` message holding `<environment_context>` or another injected block |
 | `turns` | Above. `permission_mode` on each turn is `<approval_policy>; <sandbox_policy.type>` from the `turn_context` in force, e.g. `never; workspace-write` |
-| `context_items` | `base_instructions` (source `system`); `developer` messages (`system`); injected `user` messages (`injected`); each `tool_search_output` namespace's description, which is that MCP server's own instructions (`mcp_instructions`, one part per server) |
+| `context_items` | `base_instructions` (source `system`); `developer` messages (`system`); injected `user` messages (`injected`); each `tool_search_output` namespace's description, which is that MCP server's own instructions (`mcp_instructions`, one part per server); each tool in a `tool_search_output` with a description (`tool_listing`, one part per tool). A part is named by the rule that names a call to the tool ([Tool names](#tool-names)), joined by `listed_tool_name`: `mcp__<server>__<tool>` with the server as a call to it has it, else the call's tool name. A tool listing's span key is `context.tools`, so it does not share the `mcp_instructions` item's span. A session lists each name and description once (ADR-0047) |
 | `compactions` | One per `compacted` record. `trigger` `unknown`; `pre_tokens` from its `latest_token_usage_record` input (C6). `compactions_recorded` is true |
 | `provider_refusals` | `task_complete.error` whose `codex_error_info` is `cyber_policy`, `bio_policy`, `misalignment_policy_violation` or `invalid_prompt`, or whose message says the response stopped for `content_filter`. `category` is that code |
 | `subagents_recorded` | True |
@@ -278,14 +278,39 @@ The first rule that applies (ADR-0033):
 
 | # | Record | `mcp_server`, `tool_name` |
 |---|---|---|
-| 1 | An `McpToolCall` item | Its `server` and `tool`, as the server is configured |
+| 1 | The call's own completed `McpToolCall` item | Its `server` and `tool`, as the server is configured. This holds even where the tool identities below are ambiguous for the call's name |
 | 2 | A `CollabAgentToolCall` or `Extension` item | `None` and the item's tool. A collaboration call's namespace is configurable, so the item decides |
-| 3 | A call with `namespace` `mcp__<server>` | The server, and `name` (Seen: MCP tools are deferred behind `tool_search` and called this way). Codex sanitises punctuation in a server's name to `_`, so a connection the log database names breaks the tie |
+| 3 | A call with `namespace` `mcp__<server>` | The server, and `name` (Seen: MCP tools are deferred behind `tool_search` and called this way). Codex sanitises punctuation in a server's name to `_`, so the server is resolved as below |
 | 3 | A call in Codex's own namespaces: `clock.sleep`, `web.run`, `image_gen.imagegen` | `None` and `sleep`, `web_search`, `image_generation` |
 | 3 | A call in `multi_agent_v1` or `collaboration` | `None` and `name` |
 | 3 | A call in any other namespace | `None` and `<namespace>.<name>` |
-| 4 | A flat `mcp__<server>__<tool>` | Split by Claude Code's rule |
+| 4 | A flat `mcp__<server>__<tool>` | Split by Claude Code's rule; the server is resolved as below |
 | 4 | Any other name | The name, with no server |
+
+**Tool identities.** Codex shows the model a sanitised namespace and tool
+name. It adds a hash where a name is too long or two names collide. The
+completed `McpToolCall` item records the configured server and the raw tool
+name (Source `codex-mcp/src/tools.rs`). The reader builds one map for each
+session, from every completed item that a call joins and from the log
+database. Tool listings, and calls with no completed item of their own,
+resolve through it, for the server and the tool. A call with its own item takes
+its names from that item (row 1). The key is the namespace without a trailing `__`, and the name. A
+flat `mcp__<server>__<tool>` has the same key as `<tool>` in `mcp__<server>`.
+The first rule that applies:
+
+1. The one `(server, tool)` that the completed items name for the key.
+   Codex's own record of a call wins over the log.
+2. In a namespace where the completed items name one server: that server, and
+   the model-facing name.
+3. In an `mcp__<server>` namespace: the one configured server that the log
+   names, whose sanitised name is `<server>`, else `<server>`; and the name.
+4. Rows 3 and 4 of the table above.
+
+Two or more `(server, tool)` pairs for one key are ambiguous, for example after
+a reconnect renames a raw tool. Then no item decides the listing, and it falls
+to rule 2 or later, so it keeps the model-facing name. Each completed call
+still keeps its own item's names. A listed tool that is never called has no raw
+name on record, so it keeps the model-facing name.
 
 A V2 collaboration call in a configured namespace, refused before it ran, has
 no item, so it keeps `<namespace>.<name>`. Matching its bare name in any
@@ -500,7 +525,7 @@ it. **Absent** means there is no source.
 | Git branch | Recorded | Absent | Recorded |
 | Initial prompt | Recorded | Recorded | Recorded |
 | Title | Recorded | Partial | Partial: person-set names only |
-| Context items | Recorded | Unconfirmed | Recorded; MCP instructions per server |
+| Context items | Recorded | Unconfirmed | Recorded; MCP instructions per server; tool descriptions per tool |
 | Compactions | Recorded | Unconfirmed | Recorded; trigger absent (C6) |
 | Provider refusals | Recorded | Absent | Recorded (error codes) |
 | Client errors (quota, throttle, overflow) | Recorded (as turns) | Absent | Recorded (role `error`) |
@@ -556,6 +581,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0040](../adrs/0040-preserve-native-client-metadata-without-changing-runtime-identity.md) | Append local-only `Session.originator` metadata; kind, entrypoint, spans and public descriptors stay unchanged | Create an agent kind for each client name; replace the entrypoint with the originator; interpret known clients inside collection; add arbitrary originators to the public descriptor |
 | [0041](../adrs/0041-decode-compressed-codex-rollouts-with-the-standard-library-or-zstandard.md) | Read compressed rollouts: `compression.zstd` where it imports, else `zstandard`, installed only below Python 3.14 | Report and skip them; the `zstd` command; a pure-Python decoder; `zstandard` on every version |
 | [0042](../adrs/0042-canonical-edit-text-comes-from-the-calls-own-arguments.md) | A file edit's `old_text` and `new_text` come from the call's own arguments; a text they do not hold is absent | Leaving consumers to parse each format; filling `old_text` from the result or from the file on disk |
+| [0047](../adrs/0047-a-tool-listing-is-one-context-item-with-a-span-key-of-its-own.md) | Each tool a `tool_search_output` describes is a part of one `tool_listing` item, span key `context.tools`, each name and description once | The `context` key; one item per tool; keeping repeats |
 
 ## Non-goals
 

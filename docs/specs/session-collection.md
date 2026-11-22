@@ -304,6 +304,22 @@ A session additionally carries its **model responses** (*proposed*) — one per 
 
 A session additionally carries its **MCP connections** — one record per server per session: transport, endpoint, the name and version the server advertised on the handshake, whether it came up, and a failure category if it did not. Connection-scoped, not call-scoped: these are properties of the connection, and repeating them on every call would say otherwise. The server's own words about a failure are **local-only**; the category is not. Beside them, `mcp_log_state` records whether the log was readable at all.
 
+A session additionally carries its **context items**: material that reached the
+model as neither a user turn nor a tool result. Each has a source, from the
+record's type, and its text is **local-only**. **Tool listings** are the
+`tool_listing` source. A Claude Code `prompt_snapshot` lists the tools loaded at
+the start in `tools`. A `deferred_tools_record` lists the tools that a tool
+search just loaded in `entries`. The tool search's own result is a
+`tool_reference` with a name and no description, so these records are the only
+place a tool's description is written. Each record that lists a tool with a
+description is one item. Each tool is one part, with its description as the part's text. The part's
+name comes from the rule that names a call to the tool, so a consumer joins a
+description to a call by name. A session lists each
+name and description once, so a repeat gives no part and new words for a tool
+give a new part. A tool with no description has no part. A listing's span key
+is `context.tools`, counted apart from the other items, so no other context
+span moves (ADR-0047). `deferred_tools_delta` holds names only and is not read.
+
 **local-only** information serves correlation and local rendering. It never enters
 a finding — a detection receives session identity, kind, start and turn count, and
 nothing more.

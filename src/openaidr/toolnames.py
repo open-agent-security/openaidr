@@ -37,6 +37,16 @@ def split_tool_name(agent_kind: str | None, raw: str) -> tuple[str | None, str]:
     return None, raw
 
 
+def listed_tool_name(server: str | None, tool: str) -> str:
+    """The name a tool listing gives a tool that a call names `(server, tool)`.
+
+    A reader names each part of a `tool_listing` context item by the rule that
+    names a call to that tool, then joins it here, so a consumer joins a
+    description to a call by name (ADR-0047).
+    """
+    return f"{_CLAUDE_PREFIX}{server}{_CLAUDE_SEP}{tool}" if server is not None else tool
+
+
 def _split_claude_code(raw: str) -> tuple[str | None, str]:
     """Claude Code prefixes MCP tools and separates with a doubled underscore."""
     if not raw.startswith(_CLAUDE_PREFIX):

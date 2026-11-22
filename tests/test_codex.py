@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -936,6 +937,400 @@ def test_a_compaction_says_how_much_it_replaced(tmp_path: Path) -> None:
 
     assert (compaction.trigger, compaction.pre_tokens) == ("unknown", 2100)
     assert compaction.occurred_at is not None
+
+
+def _search(call_id: str, *tools: dict[str, object]) -> dict[str, object]:
+    """A `tool_search_output`, its entries shaped as Codex 0.163.0 writes a
+    `LoadableToolSpec` (`tools/src/responses_api.rs`)."""
+    return {
+        "type": "tool_search_output",
+        "call_id": call_id,
+        "status": "completed",
+        "execution": "client",
+        "tools": list(tools),
+    }
+
+
+def _namespace(name: str, description: str, *tools: dict[str, object]) -> dict[str, object]:
+    return {"type": "namespace", "name": name, "description": description, "tools": list(tools)}
+
+
+def _function(name: object, description: object) -> dict[str, object]:
+    return {
+        "type": "function",
+        "name": name,
+        "description": description,
+        "strict": False,
+        "parameters": {"type": "object", "properties": {}},
+    }
+
+
+def _tool_listings(session: Session) -> list[list[tuple[str, str]]]:
+    return [
+        [(p.name, p.text) for p in item.parts]
+        for item in session.context_items
+        if item.source == "tool_listing"
+    ]
+
+
+def test_a_tool_search_keeps_each_tools_description_beside_its_servers(tmp_path: Path) -> None:
+    """The namespace's description is the server's own instructions. Each tool
+    in it has a description of its own, and a consumer judging a call needs
+    that one."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("file it")
+    rollout.response(
+        _search(
+            "ts",
+            _namespace(
+                "mcp__linear__",
+                "Linear tools.",
+                _function("create_issue", "Files an issue."),
+                {
+                    "type": "custom",
+                    "name": "query",
+                    "description": "Runs a query.",
+                    "format": {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"},
+                },
+            ),
+            _namespace("codex_app", "App tools.", _function("open_page", "Opens a page.")),
+            _function("lookup", "Looks a word up."),
+        )
+    )
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    servers, tools = (
+        item
+        for item in session.context_items
+        if item.source in ("mcp_instructions", "tool_listing")
+    )
+    assert (servers.source, [(p.name, p.text) for p in servers.parts]) == (
+        "mcp_instructions",
+        [("linear", "Linear tools.")],
+    )
+    assert (tools.source, tools.name) == ("tool_listing", None)
+    assert [(p.name, p.text) for p in tools.parts] == [
+        ("mcp__linear__create_issue", "Files an issue."),
+        ("mcp__linear__query", "Runs a query."),
+        ("codex_app.open_page", "Opens a page."),
+        ("lookup", "Looks a word up."),
+    ]
+    assert tools.text == "Files an issue.\n\nRuns a query.\n\nOpens a page.\n\nLooks a word up."
+    # One record gives both items. Each has its own span.
+    line = servers.span.rsplit(":", 1)[1]
+    assert servers.span == f"codex:t:context:{line}"
+    assert tools.span == f"codex:t:context.tools:{line}"
+
+
+def test_a_tool_search_lists_a_tool_once_and_again_when_its_words_change(
+    tmp_path: Path,
+) -> None:
+    """A later search that finds a tool the session already listed repeats
+    it. Only what is new is listed: a tool not seen, or new words for one."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    first = _namespace("mcp__x__", "X.", _function("a", "Does a."), _function("a", "Does a."))
+    rollout.response(_search("ts1", first))
+    path = rollout.write(tmp_path)
+    reader = CodexReader(tmp_path)
+    before, _ = reader.collect_file(path)
+
+    rollout.response(_search("ts2", _namespace("mcp__x__", "X.", _function("a", "Does a."))))
+    rollout.response(
+        _search(
+            "ts3",
+            _namespace("mcp__x__", "X.", _function("a", "Does a, then b."), _function("c", "C.")),
+        )
+    )
+    path.write_text(rollout.text(), encoding="utf-8")
+    after, _ = reader.collect_file(path)
+
+    assert _tool_listings(before[0]) == [[("mcp__x__a", "Does a.")]]
+    assert _tool_listings(after[0]) == [
+        [("mcp__x__a", "Does a.")],
+        [("mcp__x__a", "Does a, then b."), ("mcp__x__c", "C.")],
+    ]
+    # The listing read first keeps its span on the re-read.
+    first_span = next(i.span for i in before[0].context_items if i.source == "tool_listing")
+    assert next(i.span for i in after[0].context_items if i.source == "tool_listing") == first_span
+
+
+def test_every_listed_tool_is_named_as_the_reader_names_a_call_to_it(tmp_path: Path) -> None:
+    """A consumer joins a tool's description to a call by name, so a part's
+    name is the name a call to that tool gets: across MCP namespaces (one
+    whose server name has punctuation that only the log restores), other
+    namespaces, Codex's own namespaced tools and tools in no namespace."""
+    write_logs(
+        tmp_path,
+        [
+            ("rmcp::service", started_line("my-server"), None, "solo"),
+            ("codex_core::shell_snapshot", "turn", "t", "solo"),
+        ],
+    )
+    listed = [
+        ("mcp__my_server__", "search"),
+        ("mcp__github__", "create_issue"),
+        ("codex_app", "open_page"),
+        ("multi_agent_v1", "spawn_agent"),
+        ("clock", "sleep"),
+        (None, "lookup"),
+        (None, "mcp__flat__fetch"),
+    ]
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(
+        _search(
+            "ts",
+            *(
+                _namespace(namespace, f"{namespace} tools.", _function(name, f"Does {name}."))
+                if namespace is not None
+                else _function(name, f"Does {name}.")
+                for namespace, name in listed
+            ),
+        )
+    )
+    for index, (namespace, name) in enumerate(listed):
+        # Codex calls an MCP tool under the namespace without its trailing `__`.
+        called = namespace.removesuffix("__") if namespace is not None else None
+        rollout.call(f"c{index}", name, {}, namespace=called)
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    calls = _calls(session)
+    called_names = [
+        f"mcp__{call.mcp_server}__{call.tool_name}" if call.mcp_server else call.tool_name
+        for call in (calls[f"c{index}"] for index in range(len(listed)))
+    ]
+    (parts,) = _tool_listings(session)
+    assert [name for name, _ in parts] == called_names
+    assert called_names[0] == "mcp__my-server__search"
+
+
+def _completed_mcp(rollout: Rollout, call_id: str, server: str, tool: str) -> None:
+    """A call Codex made under the sanitised namespace, and its completed item,
+    which names the server as it is configured."""
+    rollout.call(call_id, tool, {}, namespace=f"mcp__{re.sub(r'[^A-Za-z0-9_]', '_', server)}")
+    rollout.item(
+        {
+            "type": "McpToolCall",
+            "id": call_id,
+            "server": server,
+            "tool": tool,
+            "arguments": {},
+            "status": "completed",
+            "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+        }
+    )
+    rollout.output(call_id, [{"type": "input_text", "text": "ok"}])
+
+
+@pytest.mark.parametrize(
+    ("logged", "completed", "expected_server"),
+    [
+        # A completed item names the server, and no log is placed (`codex exec`).
+        (None, ["my-server"], "my-server"),
+        # The item and the log disagree: Codex's own record of the call wins,
+        # for the call and for the listing alike.
+        ("my.server", ["my-server"], "my-server"),
+        # Only the log names it, and no listed tool is called.
+        ("my-server", [], "my-server"),
+        # Nothing names it: the written name, for a call and a listing alike.
+        (None, [], "my_server"),
+        # Two completed items name different servers for one tool: no item
+        # decides the listing, so the log does. Each call keeps its own item's.
+        ("my-server", ["my-server", "my.server"], "my-server"),
+    ],
+)
+def test_a_listed_mcp_tool_is_named_from_the_same_evidence_as_its_calls(
+    logged: str | None, completed: list[str], expected_server: str, tmp_path: Path
+) -> None:
+    """A call's server comes from its completed item, then the connection log,
+    then the namespace. A listed tool is named from the same evidence, built
+    once for the session, so a consumer joins a description to a call by name,
+    also for a tool the session never called."""
+    if logged is not None:
+        write_logs(
+            tmp_path,
+            [
+                ("rmcp::service", started_line(logged), None, "solo"),
+                ("codex_core::shell_snapshot", "turn", "t", "solo"),
+            ],
+        )
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(
+        _search(
+            "ts",
+            _namespace(
+                "mcp__my_server__",
+                "Tools.",
+                _function("search", "Searches."),
+                _function("never_called", "Is never called."),
+            ),
+        )
+    )
+    for index, server in enumerate(completed):
+        _completed_mcp(rollout, f"c{index}", server, "search")
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    (parts,) = _tool_listings(session)
+    assert [name for name, _ in parts] == [
+        f"mcp__{expected_server}__search",
+        f"mcp__{expected_server}__never_called",
+    ]
+    calls = _calls(session)
+    assert [calls[f"c{i}"].mcp_server for i in range(len(completed))] == completed
+    if len(set(completed)) == 1:
+        call = calls["c0"]
+        assert parts[0][0] == f"mcp__{call.mcp_server}__{call.tool_name}"
+
+
+def test_a_listed_tool_is_named_by_its_raw_name_wherever_a_call_records_it(
+    tmp_path: Path,
+) -> None:
+    """Codex shows the model a sanitised name, hashed where it is too long or
+    collides, and its completed item records the configured server and the raw
+    tool name (`codex-mcp/src/tools.rs`). A listed tool takes the name a call
+    to it takes. A listed tool that is never called has no raw name on record:
+    it keeps the name the model saw, under its namespace's server."""
+    long_raw = "fetch." + "a" * 140
+    long_callable = "fetch_" + "a" * 94 + "_0123456789ab"
+    # (model-facing namespace, model-facing name, server, raw name, called)
+    tools = [
+        # Sanitised: `.` is not allowed in a model-facing name.
+        ("mcp__my_server__", "search_items", "my-server", "search.items", True),
+        ("mcp__my_server__", "list_items", "my-server", "list.items", False),
+        # Hashed: too long for the 128-byte limit.
+        ("mcp__my_server__", long_callable, "my-server", long_raw, True),
+        ("mcp__my_server__", "b" * 100 + "_ba9876543210", "my-server", "b" * 150, False),
+        # Collided: two raw names sanitise to one, so each gets a hash.
+        ("mcp__my_server__", "get_item_111111111111", "my-server", "get.item", True),
+        ("mcp__my_server__", "get_item_222222222222", "my-server", "get-item", False),
+        # Two servers sanitise to one namespace, so each namespace gets a hash.
+        ("mcp__my_server_333333333333__", "search", "my.server", "search", True),
+        ("mcp__my_server_333333333333__", "browse", "my.server", "browse", False),
+    ]
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(
+        _search(
+            "ts",
+            *(
+                _namespace(namespace, "Tools.", _function(name, f"Tool {index}."))
+                for index, (namespace, name, _, _, _) in enumerate(tools)
+            ),
+        )
+    )
+    for index, (namespace, name, server, raw, called) in enumerate(tools):
+        if not called:
+            continue
+        rollout.call(f"c{index}", name, {}, namespace=namespace.removesuffix("__"))
+        rollout.item(
+            {
+                "type": "McpToolCall",
+                "id": f"c{index}",
+                "server": server,
+                "tool": raw,
+                "arguments": {},
+                "status": "completed",
+                "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+            }
+        )
+        rollout.output(f"c{index}", [{"type": "input_text", "text": "ok"}])
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    (parts,) = _tool_listings(session)
+    names = [name for name, _ in parts]
+    assert names == [
+        f"mcp__{server}__{raw if called else name}" for _, name, server, raw, called in tools
+    ]
+    calls = _calls(session)
+    for index, (_, _, _, _, called) in enumerate(tools):
+        if called:
+            call = calls[f"c{index}"]
+            assert names[index] == f"mcp__{call.mcp_server}__{call.tool_name}"
+
+
+def test_two_raw_names_for_one_listed_name_leave_the_name_the_model_saw(tmp_path: Path) -> None:
+    """A reconnect can rename a raw tool, so one model-facing name stands for
+    two raw names in one session. Each completed call keeps the raw name its
+    own item records. The listing cannot join to either, so it keeps the name
+    the model saw."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(_search("ts", _namespace("mcp__s__", "S.", _function("get_item", "Gets."))))
+    for index, raw in enumerate(["get.item", "get-item"]):
+        rollout.call(f"c{index}", "get_item", {}, namespace="mcp__s")
+        rollout.item(
+            {
+                "type": "McpToolCall",
+                "id": f"c{index}",
+                "server": "s",
+                "tool": raw,
+                "arguments": {},
+                "status": "completed",
+                "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+            }
+        )
+        rollout.output(f"c{index}", [{"type": "input_text", "text": "ok"}])
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    assert _tool_listings(session) == [[("mcp__s__get_item", "Gets.")]]
+    calls = _calls(session)
+    assert [(calls[c].mcp_server, calls[c].tool_name) for c in ("c0", "c1")] == [
+        ("s", "get.item"),
+        ("s", "get-item"),
+    ]
+
+
+def test_a_searched_tool_without_a_name_or_a_description_is_not_a_part(tmp_path: Path) -> None:
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(
+        _search(
+            "ts1",
+            _namespace(
+                "mcp__x__",
+                "X.",
+                _function("empty", ""),
+                _function("not_text", 7),
+                _function(None, "No name."),
+                {"type": "function", "name": "no_description"},
+                "not a tool",  # type: ignore[arg-type]
+                _function("a", "Does a."),
+            ),
+            {"type": "namespace", "name": "mcp__y__", "description": "Y.", "tools": "x"},
+            {"type": "namespace", "name": "mcp__z__", "description": "Z."},
+        )
+    )
+    rollout.response(_search("ts2", _namespace("mcp__x__", "X.", _function("empty", ""))))
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    assert _tool_listings(session) == [[("mcp__x__a", "Does a.")]]
 
 
 # --- files ---------------------------------------------------------------------------

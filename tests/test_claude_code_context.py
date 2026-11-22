@@ -484,6 +484,15 @@ def test_a_parts_material_reaches_neither_rendered_surface(tmp_path: Path) -> No
                     "addedBlocks": ["## github\nUse the internal token store."],
                 },
             ),
+            attachment(
+                "s1",
+                "a3",
+                _T0,
+                {
+                    "type": "prompt_snapshot",
+                    "tools": [{"name": "mcp__github__push", "description": "Push to the vault."}],
+                },
+            ),
         ],
     )
     for surface in (["--format", "json"], ["--detail"]):
@@ -499,6 +508,7 @@ def test_a_parts_material_reaches_neither_rendered_surface(tmp_path: Path) -> No
         assert "Read" in result.stdout
         assert "Ship the private service" not in result.stdout
         assert "internal token store" not in result.stdout
+        assert "Push to the vault" not in result.stdout
 
 
 def test_an_item_carries_when_its_record_was_written(tmp_path: Path) -> None:
@@ -514,3 +524,235 @@ def test_an_item_carries_when_its_record_was_written(tmp_path: Path) -> None:
     )
     assert item.occurred_at is not None
     assert item.occurred_at.isoformat() == "2026-08-29T12:00:00+00:00"
+
+
+# --- tool listings ----------------------------------------------------------
+
+
+def _tool(name: object, description: object, **extra: object) -> dict:
+    return {"name": name, "description": description, **extra}
+
+
+def _snapshot(*tools: dict) -> dict:
+    """A `prompt_snapshot`: the tools loaded at the start, each with its schema."""
+    return {
+        "type": "prompt_snapshot",
+        "systemPrompt": ["You are an agent."],
+        "tools": list(tools),
+    }
+
+
+def _loaded(*entries: dict) -> dict:
+    """A `deferred_tools_record`: the tools a tool search has just loaded."""
+    return {"type": "deferred_tools_record", "entries": list(entries)}
+
+
+def _listings(session) -> list[list[tuple[str, str]]]:
+    return [
+        [(p.name, p.text) for p in item.parts]
+        for item in session.context_items
+        if item.source == "tool_listing"
+    ]
+
+
+def test_each_tool_a_prompt_snapshot_lists_is_a_part(tmp_path: Path) -> None:
+    """A consumer judging an MCP call needs what the tool says it does. The
+    snapshot names each tool and its description; neither is in a turn."""
+    item = _one_attachment(
+        tmp_path,
+        _snapshot(
+            _tool("Read", "Reads a file.", schema={"type": "object"}),
+            _tool(
+                "mcp__github__search",
+                "Searches issues.\nReturns at most 10.",
+                schema={"type": "object"},
+                server="github",
+            ),
+        ),
+    )
+    assert (item.source, item.name) == ("tool_listing", None)
+    assert [(p.name, p.text) for p in item.parts] == [
+        ("Read", "Reads a file."),
+        ("mcp__github__search", "Searches issues.\nReturns at most 10."),
+    ]
+    assert item.text == "Reads a file.\n\nSearches issues.\nReturns at most 10."
+    assert item.occurred_at is not None
+
+
+def test_a_tool_search_names_a_tool_and_the_record_after_it_describes_it(
+    tmp_path: Path,
+) -> None:
+    """A tool search's result is a `tool_reference` holding a name and no
+    description. The `deferred_tools_record` written right after it holds the
+    description."""
+    reference = tool_result("s1", "u4", _T1, "search-1")
+    reference["message"]["content"][0]["content"] = [
+        {"type": "tool_reference", "tool_name": "mcp__linear__create_issue"}
+    ]
+    write_session(
+        tmp_path,
+        "proj",
+        [
+            *_base(),
+            assistant_tool_use(
+                "s1", "u3", _T1, "search-1", "ToolSearch", {"query": "select:create_issue"}
+            ),
+            reference,
+            attachment(
+                "s1",
+                "a1",
+                _T1,
+                _loaded(
+                    _tool(
+                        "mcp__linear__create_issue",
+                        "Files an issue in a team's backlog.",
+                        input_schema={"type": "object"},
+                        defer_loading=True,
+                    )
+                ),
+            ),
+        ],
+    )
+    (session,) = _read(tmp_path)
+    search = next(c for t in session.turns for c in t.tool_calls if c.tool_name == "ToolSearch")
+    assert "backlog" not in (search.result or "")
+    assert _listings(session) == [
+        [("mcp__linear__create_issue", "Files an issue in a team's backlog.")]
+    ]
+
+
+def test_a_tool_listed_again_is_not_listed_twice(tmp_path: Path) -> None:
+    """A second snapshot, or a search for a tool already loaded, repeats what
+    the session already listed. Only what is new is listed."""
+    write_session(
+        tmp_path,
+        "proj",
+        [
+            *_base(),
+            attachment(
+                "s1",
+                "a1",
+                _T0,
+                _snapshot(_tool("Read", "Reads a file."), _tool("Read", "Reads a file.")),
+            ),
+            attachment(
+                "s1",
+                "a2",
+                _T1,
+                _loaded(_tool("Read", "Reads a file."), _tool("mcp__x__y", "Does y.")),
+            ),
+            attachment("s1", "a3", _T1, _snapshot(_tool("mcp__x__y", "Does y."))),
+        ],
+    )
+    (session,) = _read(tmp_path)
+    assert _listings(session) == [[("Read", "Reads a file.")], [("mcp__x__y", "Does y.")]]
+
+
+def test_a_tool_whose_description_changed_is_listed_again(tmp_path: Path) -> None:
+    """A server can reconnect with new words for the same tool. From then on
+    the model reads the new words, so they are listed."""
+    write_session(
+        tmp_path,
+        "proj",
+        [
+            *_base(),
+            attachment("s1", "a1", _T0, _snapshot(_tool("mcp__x__y", "Does y."))),
+            attachment("s1", "a2", _T1, _snapshot(_tool("mcp__x__y", "Does y, then z."))),
+        ],
+    )
+    (session,) = _read(tmp_path)
+    assert _listings(session) == [[("mcp__x__y", "Does y.")], [("mcp__x__y", "Does y, then z.")]]
+
+
+def test_a_tool_without_a_name_or_a_description_is_not_a_part(tmp_path: Path) -> None:
+    """A part carries a tool's own description. With none to carry, the tool
+    has no part, and a record with no part is no item."""
+    write_session(
+        tmp_path,
+        "proj",
+        [
+            *_base(),
+            attachment(
+                "s1",
+                "a1",
+                _T0,
+                _snapshot(
+                    {"name": "NoDescription"},
+                    _tool("Empty", ""),
+                    _tool("NotText", ["Reads."]),
+                    _tool("", "No name."),
+                    {"description": "No name at all."},
+                    "not a tool",  # type: ignore[arg-type]
+                    _tool("Read", "Reads a file."),
+                ),
+            ),
+            attachment("s1", "a2", _T1, _loaded()),
+            attachment("s1", "a3", _T1, _loaded(_tool("Empty", ""))),
+            attachment("s1", "a4", _T1, {"type": "prompt_snapshot", "systemPrompt": ["x"]}),
+            attachment("s1", "a5", _T1, {"type": "deferred_tools_record", "entries": "x"}),
+        ],
+    )
+    (session,) = _read(tmp_path)
+    assert _listings(session) == [[("Read", "Reads a file.")]]
+
+
+def test_a_tool_listing_moves_no_other_context_span(tmp_path: Path) -> None:
+    """A context item's span is its position among the session's items. A
+    listing counts under its own key, so reading listings moved no span a
+    consumer cited before."""
+    write_session(
+        tmp_path,
+        "proj",
+        [
+            *_base(),
+            attachment("s1", "a1", _T0, {"type": "hook_success", "stdout": "one"}),
+            attachment("s1", "a2", _T0, _snapshot(_tool("Read", "Reads a file."))),
+            attachment("s1", "a3", _T0, {"type": "hook_success", "stdout": "two"}),
+            attachment("s1", "a4", _T1, _loaded(_tool("mcp__x__y", "Does y."))),
+        ],
+    )
+    (session,) = _read(tmp_path)
+    sid = session.session_id
+    assert [(item.source, item.span) for item in session.context_items] == [
+        ("hook", f"{sid}:context:0"),
+        ("tool_listing", f"{sid}:context.tools:0"),
+        ("hook", f"{sid}:context:1"),
+        ("tool_listing", f"{sid}:context.tools:1"),
+    ]
+
+
+def test_every_listed_tool_is_named_as_the_reader_names_a_call_to_it(tmp_path: Path) -> None:
+    """A consumer joins a tool's description to a call by name, so a part's
+    name is the name a call to that tool gets: built-in tools, MCP tools, a
+    server name with punctuation, a plugin's server, and a name that only
+    looks like an MCP tool."""
+    names = [
+        "Read",
+        "mcp__github__search",
+        "mcp__my-server__search",
+        "mcp__plugin_tools_docs__fetch",
+        "mcp__nothing",
+    ]
+    calls = [
+        assistant_tool_use("s1", f"c{index}", _T1, f"call-{index}", name)
+        for index, name in enumerate(names)
+    ]
+    write_session(
+        tmp_path,
+        "proj",
+        [
+            *_base(),
+            attachment("s1", "a1", _T0, _snapshot(*(_tool(n, f"Does {n}.") for n in names))),
+            *calls,
+        ],
+    )
+    (session,) = _read(tmp_path)
+    called = {
+        call.provider_call_id: (
+            f"mcp__{call.mcp_server}__{call.tool_name}" if call.mcp_server else call.tool_name
+        )
+        for turn in session.turns
+        for call in turn.tool_calls
+    }
+    (parts,) = _listings(session)
+    assert [name for name, _ in parts] == [called[f"call-{i}"] for i in range(len(names))]
