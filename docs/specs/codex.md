@@ -278,7 +278,7 @@ The first rule that applies (ADR-0033):
 
 | # | Record | `mcp_server`, `tool_name` |
 |---|---|---|
-| 1 | An `McpToolCall` item | Its `server` and `tool`, as the server is configured, through the session's tool identities below |
+| 1 | The call's own completed `McpToolCall` item | Its `server` and `tool`, as the server is configured. This holds even where the tool identities below are ambiguous for the call's name |
 | 2 | A `CollabAgentToolCall` or `Extension` item | `None` and the item's tool. A collaboration call's namespace is configurable, so the item decides |
 | 3 | A call with `namespace` `mcp__<server>` | The server, and `name` (Seen: MCP tools are deferred behind `tool_search` and called this way). Codex sanitises punctuation in a server's name to `_`, so the server is resolved as below |
 | 3 | A call in Codex's own namespaces: `clock.sleep`, `web.run`, `image_gen.imagegen` | `None` and `sleep`, `web_search`, `image_generation` |
@@ -292,8 +292,9 @@ name. It adds a hash where a name is too long or two names collide. The
 completed `McpToolCall` item records the configured server and the raw tool
 name (Source `codex-mcp/src/tools.rs`). The reader builds one map for each
 session, from every completed item that a call joins and from the log
-database. Calls and tool listings both resolve through it, for the server and
-the tool. The key is the namespace without a trailing `__`, and the name. A
+database. Tool listings, and calls with no completed item of their own,
+resolve through it, for the server and the tool. A call with its own item takes
+its names from that item (row 1). The key is the namespace without a trailing `__`, and the name. A
 flat `mcp__<server>__<tool>` has the same key as `<tool>` in `mcp__<server>`.
 The first rule that applies:
 
@@ -305,10 +306,11 @@ The first rule that applies:
    names, whose sanitised name is `<server>`, else `<server>`; and the name.
 4. Rows 3 and 4 of the table above.
 
-Two or more `(server, tool)` pairs for one key are ambiguous. Then no item
-decides, and the calls and the listing both fall to rule 2 or later. A listed
-tool that is never called has no raw name on record, so it keeps the
-model-facing name.
+Two or more `(server, tool)` pairs for one key are ambiguous, for example after
+a reconnect renames a raw tool. Then no item decides the listing, and it falls
+to rule 2 or later, so it keeps the model-facing name. Each completed call
+still keeps its own item's names. A listed tool that is never called has no raw
+name on record, so it keeps the model-facing name.
 
 A V2 collaboration call in a configured namespace, refused before it ran, has
 no item, so it keeps `<namespace>.<name>`. Matching its bare name in any

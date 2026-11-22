@@ -1145,7 +1145,7 @@ def _completed_mcp(rollout: Rollout, call_id: str, server: str, tool: str) -> No
         # Nothing names it: the written name, for a call and a listing alike.
         (None, [], "my_server"),
         # Two completed items name different servers for one tool: no item
-        # decides, so the log does, for the calls and the listing alike.
+        # decides the listing, so the log does. Each call keeps its own item's.
         ("my-server", ["my-server", "my.server"], "my-server"),
     ],
 )
@@ -1191,10 +1191,10 @@ def test_a_listed_mcp_tool_is_named_from_the_same_evidence_as_its_calls(
         f"mcp__{expected_server}__never_called",
     ]
     calls = _calls(session)
-    assert [
-        f"mcp__{calls[f'c{i}'].mcp_server}__{calls[f'c{i}'].tool_name}"
-        for i in range(len(completed))
-    ] == [parts[0][0]] * len(completed)
+    assert [calls[f"c{i}"].mcp_server for i in range(len(completed))] == completed
+    if len(set(completed)) == 1:
+        call = calls["c0"]
+        assert parts[0][0] == f"mcp__{call.mcp_server}__{call.tool_name}"
 
 
 def test_a_listed_tool_is_named_by_its_raw_name_wherever_a_call_records_it(
@@ -1268,9 +1268,10 @@ def test_a_listed_tool_is_named_by_its_raw_name_wherever_a_call_records_it(
 
 
 def test_two_raw_names_for_one_listed_name_leave_the_name_the_model_saw(tmp_path: Path) -> None:
-    """If the server's tools change, one model-facing name can stand for two
-    raw names in one session. No item decides, so calls and the listing alike
-    keep the name the model saw."""
+    """A reconnect can rename a raw tool, so one model-facing name stands for
+    two raw names in one session. Each completed call keeps the raw name its
+    own item records. The listing cannot join to either, so it keeps the name
+    the model saw."""
     rollout = Rollout("t")
     rollout.turn("t1")
     rollout.user("go")
@@ -1297,8 +1298,8 @@ def test_two_raw_names_for_one_listed_name_leave_the_name_the_model_saw(tmp_path
     assert _tool_listings(session) == [[("mcp__s__get_item", "Gets.")]]
     calls = _calls(session)
     assert [(calls[c].mcp_server, calls[c].tool_name) for c in ("c0", "c1")] == [
-        ("s", "get_item"),
-        ("s", "get_item"),
+        ("s", "get.item"),
+        ("s", "get-item"),
     ]
 
 

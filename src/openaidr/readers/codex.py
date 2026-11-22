@@ -1054,8 +1054,15 @@ def _names(
     call: _Call, item: Mapping[str, object], tools: _ToolIdentities
 ) -> tuple[str | None, str]:
     """`(server, tool)`, by the first rule that applies (`docs/specs/codex.md#tool-names`):
+    the call's own completed `McpToolCall` item, as the server is configured;
     the built-in or collaboration tool the item names; then the session's tool
-    identities, which hold every `McpToolCall` item's names."""
+    identities, as a listing is named."""
+    if item.get("type") == "McpToolCall":
+        # The call's own record. It holds even where the session's map is
+        # ambiguous, as when a reconnect renames the raw tool.
+        server, tool = _string(item.get("server")), _string(item.get("tool"))
+        if server and tool:
+            return server, tool
     if call.namespace is not None and item.get("_kind") in _NAMED_BY_ITEM:
         # A namespace Codex lets configuration choose, or one wrapping a tool
         # the item names exactly: the item says which built-in it was.
@@ -1083,8 +1090,9 @@ class _ToolIdentities:
     tool name, and records the configured server and the raw tool name in a
     completed `McpToolCall` item (`codex-mcp/src/tools.rs`). Built once per
     session from every completed item and the connection log, and used for
-    calls and listings alike, for the server and the tool. The first that
-    applies:
+    listings and for calls with no completed item of their own, for the
+    server and the tool. A call with its own item takes its names from it
+    (`_names`). The first that applies:
 
     1. The one `(server, tool)` the completed items name for this namespace
        and name. Two or more is ambiguous, and none of them is used.
