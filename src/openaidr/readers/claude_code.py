@@ -34,6 +34,7 @@ import os
 import re
 import stat
 from collections import Counter, OrderedDict, defaultdict, deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -801,22 +802,7 @@ class ClaudeCodeReader:
             git_branch=transcript.branches.get(raw_id),
             initial_prompt=transcript.initial_prompts.get(raw_id),
             title=transcript.titles.get(raw_id),
-            context_items=tuple(
-                ContextItem(
-                    # The same shape a call's span has, so a finding cites one
-                    # the same way rather than a consumer learning a second
-                    # addressing scheme. `context` is the turn-key position.
-                    span=span_id(session_id, "context", index),
-                    source=source,
-                    name=name,
-                    text=text,
-                    parts=parts,
-                    occurred_at=occurred_at,
-                )
-                for index, (source, name, text, parts, occurred_at) in enumerate(
-                    transcript.context.get(raw_id, ())
-                )
-            ),
+            context_items=_context_items(session_id, transcript.context.get(raw_id, ())),
             compactions=tuple(
                 Compaction(
                     trigger=trigger, pre_tokens=pre, dropped_tokens=dropped, occurred_at=occurred_at
@@ -2104,6 +2090,67 @@ _CONTEXT_SOURCES: dict[str, tuple[str, tuple[str, ...]]] = {
 #: What names the item, by type.
 _CONTEXT_NAMES = ("hookName", "filename", "path", "displayPath", "name")
 
+#: Attachment types that list the tools the model can call, each tool with its
+#: own `name` and `description`, mapped to the key that holds the list:
+#: `prompt_snapshot` the tools loaded at the start, `deferred_tools_record` the
+#: tools a tool search has just loaded. A tool search's own result is a
+#: `tool_reference` that names the tool and holds no description.
+_TOOL_LISTINGS = {"prompt_snapshot": "tools", "deferred_tools_record": "entries"}
+
+
+def _context_items(
+    session_id: str,
+    recovered: Iterable[tuple[str, str | None, str, tuple[ContextPart, ...], datetime | None]],
+) -> tuple[ContextItem, ...]:
+    """The session's context items, each addressed the way a call is.
+
+    The same shape a call's span has, so a finding cites one the same way
+    rather than a consumer learning a second addressing scheme. `context` is
+    the turn-key position. A tool listing counts under its own key,
+    `context.tools`, so reading listings moved no other item's span (ADR-0047).
+    """
+    counts: dict[str, int] = {}
+    items: list[ContextItem] = []
+    for source, name, text, parts, occurred_at in recovered:
+        key = "context.tools" if source == "tool_listing" else "context"
+        index = counts.get(key, 0)
+        counts[key] = index + 1
+        items.append(
+            ContextItem(
+                span=span_id(session_id, key, index),
+                source=source,
+                name=name,
+                text=text,
+                parts=parts,
+                occurred_at=occurred_at,
+            )
+        )
+    return tuple(items)
+
+
+def _tool_parts(tools: object, listed: set[tuple[str, str]]) -> tuple[ContextPart, ...]:
+    """One part for each tool a listing names with a description, in the
+    record's order, that the session has not listed with that description.
+
+    A tool with no name or no description has no part: there is nothing of its
+    own to carry. A tool listed again with other words is a new part, because
+    the model reads the new words from then on.
+    """
+    if not isinstance(tools, list):
+        return ()
+    parts: list[ContextPart] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name, description = tool.get("name"), tool.get("description")
+        if not (isinstance(name, str) and name and isinstance(description, str) and description):
+            continue
+        if (name, description) in listed:
+            continue
+        listed.add((name, description))
+        parts.append(ContextPart(name=name, text=description))
+    return tuple(parts)
+
 
 def _context_parts(attachment: dict[str, object], body: str) -> tuple[ContextPart, ...]:
     """The named parts of an attachment that describes several things at once,
@@ -2227,6 +2274,26 @@ def _recover_session_scoped(
     if kind == "attachment":
         attachment = record.get("attachment")
         if not isinstance(attachment, dict):
+            return
+        listing = _TOOL_LISTINGS.get(str(attachment.get("type")))
+        if listing is not None:
+            listed = {
+                (part.name, part.text)
+                for source, _, _, parts, _ in context.get(session_id, ())
+                if source == "tool_listing"
+                for part in parts
+            }
+            tool_parts = _tool_parts(attachment.get(listing), listed)
+            if tool_parts:
+                context.setdefault(session_id, []).append(
+                    (
+                        "tool_listing",
+                        None,
+                        "\n\n".join(part.text for part in tool_parts),
+                        tool_parts,
+                        _timestamp(record.get("timestamp")),
+                    )
+                )
             return
         entry = _CONTEXT_SOURCES.get(str(attachment.get("type")))
         if entry is None:

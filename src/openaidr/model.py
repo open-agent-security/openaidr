@@ -148,7 +148,8 @@ class ToolCall:
 @dataclass(frozen=True)
 class ContextPart:
     """One named part of a context item that describes several things at once:
-    one skill of a skill listing, one MCP server's instruction block.
+    one skill of a skill listing, one MCP server's instruction block, one tool
+    of a tool listing and its description.
 
     The record names each part itself; a part is never found by reading the
     text for names. Where the record does not pair every part with its name
@@ -180,8 +181,8 @@ class ContextItem:
 
     span: str
     #: What produced it, from the record's own type and never from its content:
-    #: `hook`, `skill_listing`, `agent_listing`, `mcp_instructions`, `file`,
-    #: `memory`, `system`, `injected`.
+    #: `hook`, `skill_listing`, `agent_listing`, `mcp_instructions`,
+    #: `tool_listing`, `file`, `memory`, `system`, `injected`.
     source: str
     #: The hook, skill or file it came from, where the record names one.
     name: str | None
@@ -189,9 +190,9 @@ class ContextItem:
     text: str
     #: The named parts of an item that describes several things at once, in
     #: the record's order: a skill listing's skills, an MCP instructions
-    #: record's servers. Empty where the record names none, or where its parts
-    #: cannot be paired with their names for certain. The item stays one item,
-    #: so no span moves (ADR-0016).
+    #: record's servers, a tool listing's tools. Empty where the record names
+    #: none, or where its parts cannot be paired with their names for certain.
+    #: The item stays one item, so no span moves (ADR-0016).
     parts: tuple[ContextPart, ...] = ()
     #: When the record was written: a lower bound on when the item started
     #: reaching the model, for a consumer counting from here on. A later
