@@ -938,6 +938,157 @@ def test_a_compaction_says_how_much_it_replaced(tmp_path: Path) -> None:
     assert compaction.occurred_at is not None
 
 
+def _search(call_id: str, *tools: dict[str, object]) -> dict[str, object]:
+    """A `tool_search_output`, its entries shaped as Codex 0.163.0 writes a
+    `LoadableToolSpec` (`tools/src/responses_api.rs`)."""
+    return {
+        "type": "tool_search_output",
+        "call_id": call_id,
+        "status": "completed",
+        "execution": "client",
+        "tools": list(tools),
+    }
+
+
+def _namespace(name: str, description: str, *tools: dict[str, object]) -> dict[str, object]:
+    return {"type": "namespace", "name": name, "description": description, "tools": list(tools)}
+
+
+def _function(name: object, description: object) -> dict[str, object]:
+    return {
+        "type": "function",
+        "name": name,
+        "description": description,
+        "strict": False,
+        "parameters": {"type": "object", "properties": {}},
+    }
+
+
+def _tool_listings(session: Session) -> list[list[tuple[str, str]]]:
+    return [
+        [(p.name, p.text) for p in item.parts]
+        for item in session.context_items
+        if item.source == "tool_listing"
+    ]
+
+
+def test_a_tool_search_keeps_each_tools_description_beside_its_servers(tmp_path: Path) -> None:
+    """The namespace's description is the server's own instructions. Each tool
+    in it has a description of its own, and a consumer judging a call needs
+    that one."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("file it")
+    rollout.response(
+        _search(
+            "ts",
+            _namespace(
+                "mcp__linear__",
+                "Linear tools.",
+                _function("create_issue", "Files an issue."),
+                {
+                    "type": "custom",
+                    "name": "query",
+                    "description": "Runs a query.",
+                    "format": {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"},
+                },
+            ),
+            _namespace("codex_app", "App tools.", _function("open_page", "Opens a page.")),
+            _function("lookup", "Looks a word up."),
+        )
+    )
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    servers, tools = (
+        item
+        for item in session.context_items
+        if item.source in ("mcp_instructions", "tool_listing")
+    )
+    assert (servers.source, [(p.name, p.text) for p in servers.parts]) == (
+        "mcp_instructions",
+        [("linear", "Linear tools.")],
+    )
+    assert (tools.source, tools.name) == ("tool_listing", None)
+    assert [(p.name, p.text) for p in tools.parts] == [
+        ("mcp__linear__create_issue", "Files an issue."),
+        ("mcp__linear__query", "Runs a query."),
+        ("codex_app.open_page", "Opens a page."),
+        ("lookup", "Looks a word up."),
+    ]
+    assert tools.text == "Files an issue.\n\nRuns a query.\n\nOpens a page.\n\nLooks a word up."
+    # One record gives both items. Each has its own span.
+    line = servers.span.rsplit(":", 1)[1]
+    assert servers.span == f"codex:t:context:{line}"
+    assert tools.span == f"codex:t:context.tools:{line}"
+
+
+def test_a_tool_search_lists_a_tool_once_and_again_when_its_words_change(
+    tmp_path: Path,
+) -> None:
+    """A later search that finds a tool the session already listed repeats
+    it. Only what is new is listed: a tool not seen, or new words for one."""
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    first = _namespace("mcp__x__", "X.", _function("a", "Does a."), _function("a", "Does a."))
+    rollout.response(_search("ts1", first))
+    path = rollout.write(tmp_path)
+    reader = CodexReader(tmp_path)
+    before, _ = reader.collect_file(path)
+
+    rollout.response(_search("ts2", _namespace("mcp__x__", "X.", _function("a", "Does a."))))
+    rollout.response(
+        _search(
+            "ts3",
+            _namespace("mcp__x__", "X.", _function("a", "Does a, then b."), _function("c", "C.")),
+        )
+    )
+    path.write_text(rollout.text(), encoding="utf-8")
+    after, _ = reader.collect_file(path)
+
+    assert _tool_listings(before[0]) == [[("mcp__x__a", "Does a.")]]
+    assert _tool_listings(after[0]) == [
+        [("mcp__x__a", "Does a.")],
+        [("mcp__x__a", "Does a, then b."), ("mcp__x__c", "C.")],
+    ]
+    # The listing read first keeps its span on the re-read.
+    first_span = next(i.span for i in before[0].context_items if i.source == "tool_listing")
+    assert next(i.span for i in after[0].context_items if i.source == "tool_listing") == first_span
+
+
+def test_a_searched_tool_without_a_name_or_a_description_is_not_a_part(tmp_path: Path) -> None:
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(
+        _search(
+            "ts1",
+            _namespace(
+                "mcp__x__",
+                "X.",
+                _function("empty", ""),
+                _function("not_text", 7),
+                _function(None, "No name."),
+                {"type": "function", "name": "no_description"},
+                "not a tool",  # type: ignore[arg-type]
+                _function("a", "Does a."),
+            ),
+            {"type": "namespace", "name": "mcp__y__", "description": "Y.", "tools": "x"},
+            {"type": "namespace", "name": "mcp__z__", "description": "Z."},
+        )
+    )
+    rollout.response(_search("ts2", _namespace("mcp__x__", "X.", _function("empty", ""))))
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    assert _tool_listings(session) == [[("mcp__x__a", "Does a.")]]
+
+
 # --- files ---------------------------------------------------------------------------
 
 

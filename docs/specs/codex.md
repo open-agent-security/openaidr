@@ -237,7 +237,7 @@ A `custom_tool_call_output`, a missing item `id`, or an `output` that is not a s
 | `generated_title` | `None`. `state_5.sqlite` holds one, but this reader does not open the state database |
 | `initial_prompt` | The first `UserMessage` item; in legacy mode the first `user_message` event. Never a `user` message holding `<environment_context>` or another injected block |
 | `turns` | Above. `permission_mode` on each turn is `<approval_policy>; <sandbox_policy.type>` from the `turn_context` in force, e.g. `never; workspace-write` |
-| `context_items` | `base_instructions` (source `system`); `developer` messages (`system`); injected `user` messages (`injected`); each `tool_search_output` namespace's description, which is that MCP server's own instructions (`mcp_instructions`, one part per server) |
+| `context_items` | `base_instructions` (source `system`); `developer` messages (`system`); injected `user` messages (`injected`); each `tool_search_output` namespace's description, which is that MCP server's own instructions (`mcp_instructions`, one part per server); each tool in a `tool_search_output` with a description (`tool_listing`, one part per tool, named `mcp__<server>__<tool>` in an MCP namespace, `<namespace>.<tool>` in another, the bare name outside one). A tool listing's span key is `context.tools`, so it does not share the `mcp_instructions` item's span. A session lists each name and description once (ADR-0047) |
 | `compactions` | One per `compacted` record. `trigger` `unknown`; `pre_tokens` from its `latest_token_usage_record` input (C6). `compactions_recorded` is true |
 | `provider_refusals` | `task_complete.error` whose `codex_error_info` is `cyber_policy`, `bio_policy`, `misalignment_policy_violation` or `invalid_prompt`, or whose message says the response stopped for `content_filter`. `category` is that code |
 | `subagents_recorded` | True |
@@ -500,7 +500,7 @@ it. **Absent** means there is no source.
 | Git branch | Recorded | Absent | Recorded |
 | Initial prompt | Recorded | Recorded | Recorded |
 | Title | Recorded | Partial | Partial: person-set names only |
-| Context items | Recorded | Unconfirmed | Recorded; MCP instructions per server |
+| Context items | Recorded | Unconfirmed | Recorded; MCP instructions per server; tool descriptions per tool |
 | Compactions | Recorded | Unconfirmed | Recorded; trigger absent (C6) |
 | Provider refusals | Recorded | Absent | Recorded (error codes) |
 | Client errors (quota, throttle, overflow) | Recorded (as turns) | Absent | Recorded (role `error`) |
@@ -556,6 +556,7 @@ Then re-measure the earlier corpus with the new reader.
 | [0040](../adrs/0040-preserve-native-client-metadata-without-changing-runtime-identity.md) | Append local-only `Session.originator` metadata; kind, entrypoint, spans and public descriptors stay unchanged | Create an agent kind for each client name; replace the entrypoint with the originator; interpret known clients inside collection; add arbitrary originators to the public descriptor |
 | [0041](../adrs/0041-decode-compressed-codex-rollouts-with-the-standard-library-or-zstandard.md) | Read compressed rollouts: `compression.zstd` where it imports, else `zstandard`, installed only below Python 3.14 | Report and skip them; the `zstd` command; a pure-Python decoder; `zstandard` on every version |
 | [0042](../adrs/0042-canonical-edit-text-comes-from-the-calls-own-arguments.md) | A file edit's `old_text` and `new_text` come from the call's own arguments; a text they do not hold is absent | Leaving consumers to parse each format; filling `old_text` from the result or from the file on disk |
+| [0047](../adrs/0047-a-tool-listing-is-one-context-item-with-a-span-key-of-its-own.md) | Each tool a `tool_search_output` describes is a part of one `tool_listing` item, span key `context.tools`, each name and description once | The `context` key; one item per tool; keeping repeats |
 
 ## Non-goals
 

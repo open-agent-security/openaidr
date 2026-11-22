@@ -658,7 +658,8 @@ class _Projection:
         )
 
     def _search_context(self, payload: Mapping[str, object], at: datetime | None) -> None:
-        """A tool search names each MCP server it found and that server's own instructions."""
+        """A tool search names each MCP server it found and that server's own
+        instructions, and each tool it found and that tool's own description."""
         tools = payload.get("tools")
         if not isinstance(tools, list):
             return
@@ -686,6 +687,62 @@ class _Projection:
                     source="mcp_instructions",
                     name=None,
                     text=text,
+                    parts=tuple(parts),
+                    occurred_at=at,
+                )
+            )
+        self._tool_listing(tools, at)
+
+    def _tool_listing(self, tools: list[object], at: datetime | None) -> None:
+        """One part for each tool the search found with a description, that the
+        session has not listed with that description.
+
+        An entry is a `function` or `custom` tool, or a `namespace` holding
+        them. A tool is named as the reader names a call to it: an MCP tool
+        `mcp__<server>__<tool>`, a tool of another namespace `<namespace>.<tool>`.
+        """
+        listed = {
+            (part.name, part.text)
+            for item in self.context
+            if item.source == "tool_listing"
+            for part in item.parts
+        }
+        parts: list[ContextPart] = []
+        for entry in tools:
+            entry = _mapping(entry)
+            namespace: str | None = None
+            members: object = [entry]
+            if entry.get("type") == "namespace":
+                namespace = _string(entry.get("name"))
+                if namespace is None:
+                    continue
+                members = entry.get("tools")
+            for tool in members if isinstance(members, list) else []:
+                tool = _mapping(tool)
+                name = _string(tool.get("name"))
+                description = _string(tool.get("description"))
+                if not name or not description:
+                    continue
+                if namespace is None:
+                    listed_name = name
+                elif namespace.startswith("mcp__") and len(namespace) > len("mcp__"):
+                    server = namespace.removeprefix("mcp__").removesuffix("__")
+                    listed_name = f"mcp__{server}__{name}"
+                else:
+                    listed_name = f"{namespace}.{name}"
+                if (listed_name, description) in listed:
+                    continue
+                listed.add((listed_name, description))
+                parts.append(ContextPart(name=listed_name, text=description))
+        if parts:
+            self.context.append(
+                ContextItem(
+                    # The same record can give an `mcp_instructions` item at
+                    # `context:<line>`; a listing has a key of its own (ADR-0047).
+                    span=span_id(self.session_id, "context.tools", self.line),
+                    source="tool_listing",
+                    name=None,
+                    text="\n\n".join(part.text for part in parts),
                     parts=tuple(parts),
                     occurred_at=at,
                 )
