@@ -2,7 +2,7 @@
 
 *Design spec. Status: proposed (2026-10-04; revised 2026-10-06 after
 re-measuring, which found that sub-agent transcripts mostly lack a response's
-final record, and that workflow agents are read as their parent).*
+final record, and that workflow agents were read as their parent).*
 
 **What this adds.** The session model gains a record of every request a session
 made to its model provider, carrying the token counts the transcript recorded
