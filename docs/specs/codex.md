@@ -280,12 +280,25 @@ The first rule that applies (ADR-0033):
 |---|---|---|
 | 1 | An `McpToolCall` item | Its `server` and `tool`, as the server is configured |
 | 2 | A `CollabAgentToolCall` or `Extension` item | `None` and the item's tool. A collaboration call's namespace is configurable, so the item decides |
-| 3 | A call with `namespace` `mcp__<server>` | The server, and `name` (Seen: MCP tools are deferred behind `tool_search` and called this way). Codex sanitises punctuation in a server's name to `_`, so a connection the log database names breaks the tie |
+| 3 | A call with `namespace` `mcp__<server>` | The server, and `name` (Seen: MCP tools are deferred behind `tool_search` and called this way). Codex sanitises punctuation in a server's name to `_`, so the server is resolved as below |
 | 3 | A call in Codex's own namespaces: `clock.sleep`, `web.run`, `image_gen.imagegen` | `None` and `sleep`, `web_search`, `image_generation` |
 | 3 | A call in `multi_agent_v1` or `collaboration` | `None` and `name` |
 | 3 | A call in any other namespace | `None` and `<namespace>.<name>` |
-| 4 | A flat `mcp__<server>__<tool>` | Split by Claude Code's rule |
+| 4 | A flat `mcp__<server>__<tool>` | Split by Claude Code's rule; the server is resolved as below |
 | 4 | Any other name | The name, with no server |
+
+**The server a tool name holds** is resolved once for each session, and calls
+and tool listings use the same result. The first rule that applies:
+
+1. The one server that the completed `McpToolCall` items name, for the calls
+   written under that server name. Codex's own record of a call wins over the
+   log.
+2. The one configured server that the log database names, whose sanitised
+   name is the written name.
+3. The written name.
+
+Where two items name different servers for one written name, no item decides.
+Each of those calls keeps the server its own item names (rule 1 of the table).
 
 A V2 collaboration call in a configured namespace, refused before it ran, has
 no item, so it keeps `<namespace>.<name>`. Matching its bare name in any

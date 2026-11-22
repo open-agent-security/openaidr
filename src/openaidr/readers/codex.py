@@ -805,11 +805,12 @@ class _Projection:
         session_id = self.session_id
         sidechain = self.sidechain
         transports = {c.server: c.transport for c in placement.connections}
+        servers = self._mcp_servers(transports)
         turns: list[Turn] = []
         for record in self.records:
             calls: tuple[ToolCall, ...] = ()
             if record.call is not None:
-                calls = (self._tool_call(session_id, record, transports),)
+                calls = (self._tool_call(session_id, record, transports, servers),)
             turns.append(
                 Turn(
                     position=len(turns),
@@ -839,7 +840,7 @@ class _Projection:
             originator=_string(self.meta.get("originator")),
             git_branch=_string(git.get("branch")),
             initial_prompt=self.initial_prompt,
-            context_items=self._context_items(transports),
+            context_items=self._context_items(servers),
             compactions=tuple(self.compactions),
             mcp_connections=placement.connections,
             mcp_log_state=placement.state,
@@ -851,7 +852,36 @@ class _Projection:
             subagents_recorded=True,
         )
 
-    def _context_items(self, transports: Mapping[str, str | None]) -> tuple[ContextItem, ...]:
+    def _mcp_servers(self, transports: Mapping[str, str | None]) -> _McpServers:
+        """The session's MCP servers by written name, from every completed
+        `McpToolCall` item a call joins and from the connection log."""
+        named: dict[str, set[str]] = {}
+        for record in self.records:
+            if record.call is None:
+                continue
+            item = self._joined(record)[0]
+            server, tool = _string(item.get("server")), _string(item.get("tool"))
+            written = _written_server(record.call.namespace, record.call.name)
+            if item.get("type") == "McpToolCall" and server and tool and written:
+                named.setdefault(written, set()).add(server)
+        return _McpServers({w: frozenset(s) for w, s in named.items()}, transports)
+
+    def _joined(self, record: _Record) -> tuple[dict[str, object], list[_Output], bool]:
+        """The completion item and outputs a call's record joins, and whether
+        the record holds its call id alone."""
+        call = record.call
+        assert call is not None
+        position = self.calls.get(call.call_id) if call.call_id is not None else None
+        joined = (
+            call.call_id is not None and position is not None and self.records[position] is record
+        )
+        item = self.items.get(call.call_id, {}) if joined and call.call_id else {}
+        outputs = self.outputs.get(call.call_id, []) if joined and call.call_id else []
+        if len(outputs) > 1:
+            item = {}
+        return item, outputs, joined
+
+    def _context_items(self, servers: _McpServers) -> tuple[ContextItem, ...]:
         """The context items, each tool listing named and given its parts.
 
         A part is named by `_tool_names`, the rule that names a call, so a
@@ -868,7 +898,7 @@ class _Projection:
                 continue
             parts: list[ContextPart] = []
             for namespace, name, description in entry.tools:
-                listed_name = listed_tool_name(*_tool_names(namespace, name, transports))
+                listed_name = listed_tool_name(*_tool_names(namespace, name, servers))
                 if (listed_name, description) in listed:
                     continue
                 listed.add((listed_name, description))
@@ -887,20 +917,17 @@ class _Projection:
         return tuple(items)
 
     def _tool_call(
-        self, session_id: str, record: _Record, transports: Mapping[str, str | None]
+        self,
+        session_id: str,
+        record: _Record,
+        transports: Mapping[str, str | None],
+        servers: _McpServers,
     ) -> ToolCall:
         call = record.call
         assert call is not None
-        position = self.calls.get(call.call_id) if call.call_id is not None else None
-        joined = (
-            call.call_id is not None and position is not None and self.records[position] is record
-        )
-        item = self.items.get(call.call_id, {}) if joined and call.call_id else {}
-        outputs = self.outputs.get(call.call_id, []) if joined and call.call_id else []
+        item, outputs, joined = self._joined(record)
         output = outputs[0] if len(outputs) == 1 else None
-        if len(outputs) > 1:
-            item = {}
-        server, tool = _names(call, item, transports)
+        server, tool = _names(call, item, servers)
         status, denial, exit_code = _outcome(
             call, item, output, call.turn in self.ended if call.turn else True
         )
@@ -1015,9 +1042,7 @@ def _sanitize_server(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", name)
 
 
-def _names(
-    call: _Call, item: Mapping[str, object], transports: Mapping[str, str | None]
-) -> tuple[str | None, str]:
+def _names(call: _Call, item: Mapping[str, object], servers: _McpServers) -> tuple[str | None, str]:
     """`(server, tool)`, by the first rule that applies (`docs/specs/codex.md#tool-names`):
     the item's own names, as the server is configured or as Codex's closed
     vocabulary says; then the namespace Codex called it under; then a flat
@@ -1032,32 +1057,61 @@ def _names(
         tool = _item_tool(item)
         if tool:
             return None, tool
-    return _tool_names(call.namespace, call.name, transports)
+    return _tool_names(call.namespace, call.name, servers)
 
 
-def _tool_names(
-    namespace: str | None, name: str, transports: Mapping[str, str | None]
-) -> tuple[str | None, str]:
+@dataclass(frozen=True)
+class _McpServers:
+    """One session's MCP servers, by the name Codex wrote into a tool's name.
+
+    Codex sanitises a server's name, collapsing any punctuation to `_`, so the
+    written name alone cannot tell `my-server` from `my_server`. Built once per
+    session from every source the reader has, and used for calls and listings
+    alike. The first that applies:
+
+    1. The one server the completed `McpToolCall` items name, for the calls
+       written under that name. Codex's own record of a call wins.
+    2. The one configured server the connection log names whose sanitised name
+       is the written name.
+    3. The written name.
+    """
+
+    #: Written name -> the servers completed items name for calls under it.
+    named: Mapping[str, frozenset[str]]
+    transports: Mapping[str, str | None]
+
+    def server(self, written: str) -> str:
+        named = self.named.get(written, frozenset())
+        if len(named) == 1:
+            return next(iter(named))
+        configured = [name for name in self.transports if _sanitize_server(name) == written]
+        return configured[0] if len(configured) == 1 else written
+
+
+def _written_server(namespace: str | None, name: str) -> str | None:
+    """The MCP server name a tool's namespace, or else its flat name, holds."""
+    if namespace is None:
+        return split_tool_name(SOURCE, name)[0]
+    if namespace.startswith("mcp__") and len(namespace) > len("mcp__"):
+        return namespace.removeprefix("mcp__").removesuffix("__")
+    return None
+
+
+def _tool_names(namespace: str | None, name: str, servers: _McpServers) -> tuple[str | None, str]:
     """`(server, tool)` for a tool Codex names by `namespace` and `name`: the
     rule for a call no item names, and for a tool a tool search lists."""
+    written = _written_server(namespace, name)
     if namespace is not None:
-        if namespace.startswith("mcp__") and len(namespace) > len("mcp__"):
-            # Codex sanitises a server's name into its namespace, collapsing any
-            # punctuation to `_`, so the namespace alone cannot tell `my-server`
-            # from `my_server`. A connection the log database names is ground
-            # truth; prefer it when exactly one configured server matches.
-            sanitized = namespace.removeprefix("mcp__").removesuffix("__")
-            configured = [server for server in transports if _sanitize_server(server) == sanitized]
-            if len(configured) == 1:
-                return configured[0], name
-            return sanitized, name
+        if written is not None:
+            return servers.server(written), name
         builtin = _NAMESPACED_BUILTINS.get((namespace, name))
         if builtin is not None:
             return None, builtin
         if namespace in _COLLAB_NAMESPACES:
             return None, name
         return None, f"{namespace}.{name}"
-    return split_tool_name(SOURCE, name)
+    tool = split_tool_name(SOURCE, name)[1]
+    return (servers.server(written) if written is not None else None), tool
 
 
 def _outcome(

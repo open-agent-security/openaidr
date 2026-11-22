@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -1111,6 +1112,89 @@ def test_every_listed_tool_is_named_as_the_reader_names_a_call_to_it(tmp_path: P
     (parts,) = _tool_listings(session)
     assert [name for name, _ in parts] == called_names
     assert called_names[0] == "mcp__my-server__search"
+
+
+def _completed_mcp(rollout: Rollout, call_id: str, server: str, tool: str) -> None:
+    """A call Codex made under the sanitised namespace, and its completed item,
+    which names the server as it is configured."""
+    rollout.call(call_id, tool, {}, namespace=f"mcp__{re.sub(r'[^A-Za-z0-9_]', '_', server)}")
+    rollout.item(
+        {
+            "type": "McpToolCall",
+            "id": call_id,
+            "server": server,
+            "tool": tool,
+            "arguments": {},
+            "status": "completed",
+            "result": {"content": [{"type": "text", "text": "ok"}], "isError": False},
+        }
+    )
+    rollout.output(call_id, [{"type": "input_text", "text": "ok"}])
+
+
+@pytest.mark.parametrize(
+    ("logged", "completed", "expected_server"),
+    [
+        # A completed item names the server, and no log is placed (`codex exec`).
+        (None, ["my-server"], "my-server"),
+        # The item and the log disagree: Codex's own record of the call wins,
+        # for the call and for the listing alike.
+        ("my.server", ["my-server"], "my-server"),
+        # Only the log names it, and no listed tool is called.
+        ("my-server", [], "my-server"),
+        # Nothing names it: the written name, for a call and a listing alike.
+        (None, [], "my_server"),
+        # Two completed items name different servers: no item decides, so the
+        # log does. Each call keeps the server its own item names.
+        ("my-server", ["my-server", "my.server"], "my-server"),
+    ],
+)
+def test_a_listed_mcp_tool_is_named_from_the_same_evidence_as_its_calls(
+    logged: str | None, completed: list[str], expected_server: str, tmp_path: Path
+) -> None:
+    """A call's server comes from its completed item, then the connection log,
+    then the namespace. A listed tool is named from the same evidence, built
+    once for the session, so a consumer joins a description to a call by name,
+    also for a tool the session never called."""
+    if logged is not None:
+        write_logs(
+            tmp_path,
+            [
+                ("rmcp::service", started_line(logged), None, "solo"),
+                ("codex_core::shell_snapshot", "turn", "t", "solo"),
+            ],
+        )
+    rollout = Rollout("t")
+    rollout.turn("t1")
+    rollout.user("go")
+    rollout.response(
+        _search(
+            "ts",
+            _namespace(
+                "mcp__my_server__",
+                "Tools.",
+                _function("search", "Searches."),
+                _function("never_called", "Is never called."),
+            ),
+        )
+    )
+    for index, server in enumerate(completed):
+        _completed_mcp(rollout, f"c{index}", server, "search")
+    rollout.complete()
+    rollout.write(tmp_path)
+
+    session = _only(tmp_path)
+
+    (parts,) = _tool_listings(session)
+    assert [name for name, _ in parts] == [
+        f"mcp__{expected_server}__search",
+        f"mcp__{expected_server}__never_called",
+    ]
+    calls = _calls(session)
+    assert [calls[f"c{i}"].mcp_server for i in range(len(completed))] == completed
+    if len(set(completed)) == 1:
+        call = calls["c0"]
+        assert parts[0][0] == f"mcp__{call.mcp_server}__{call.tool_name}"
 
 
 def test_a_searched_tool_without_a_name_or_a_description_is_not_a_part(tmp_path: Path) -> None:

@@ -69,8 +69,9 @@ is the record's line, and one `tool_search_output` already gives an
 - A part is named by the same function that names a call to the tool, and
   `listed_tool_name` joins the result: `mcp__<server>__<tool>` for an MCP tool,
   else the call's tool name. A consumer joins a description to a call by
-  name. In Codex the names are given when the session is built, because a
-  server name with punctuation is restored from the connection log.
+  name. In Codex the names are given when the session is built. A server name
+  with punctuation is restored from the completed MCP items and the connection
+  log, and those are complete only then.
 - `deferred_tools_delta` holds names only, and is not read. A tool's argument
   descriptions are not carried.
 
