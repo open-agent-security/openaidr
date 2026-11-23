@@ -128,7 +128,7 @@ def write_workflow_agent_session(
     return path
 
 
-def attachment(session_id: str, uuid: str, timestamp: str, body: dict, **extra: Any) -> dict:
+def attachment(session_id: str, uuid: str, timestamp: str, body: dict) -> dict:
     """An attachment record: material injected outside the turn structure."""
     return {
         "type": "attachment",
@@ -138,7 +138,6 @@ def attachment(session_id: str, uuid: str, timestamp: str, body: dict, **extra: 
         "isSidechain": False,
         "cwd": "/work/project",
         "attachment": body,
-        **extra,
     }
 
 
@@ -181,7 +180,6 @@ def assistant_response(
     content: list | None = None,
     model: str = "claude-opus-5",
     request_id: str | None = "req_1",
-    **extra: Any,
 ) -> dict:
     """One record of a provider response: Claude Code writes one per content
     block, each repeating `message.id` and carrying a `usage` object. Only the
@@ -201,7 +199,6 @@ def assistant_response(
             "stop_reason": stop_reason,
             "usage": usage,
         },
-        **extra,
     }
     if request_id is not None:
         record["requestId"] = request_id
