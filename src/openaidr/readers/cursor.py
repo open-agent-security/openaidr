@@ -446,8 +446,9 @@ def _composer(
     root = _string(info.get("rootParentConversationId"))
     parent = _string(info.get("parentComposerId"))
     call = _string(info.get("toolCallId"))
+    # The session id is `composer_id`, passed into `_decode`. The shared
+    # projection does not read `agentId` from this meta.
     meta: dict[str, object] = {
-        "agentId": composer_id,
         "name": _string(document.get("name")),
         "createdAt": _int(document.get("createdAt")),
         "lastUsedModel": _string(_mapping(document.get("modelConfig")).get("modelName")),
