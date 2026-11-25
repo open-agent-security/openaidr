@@ -457,15 +457,17 @@ def test_default_configuration_is_not_this_machines(tmp_path: Path) -> None:
     """The global config and `~/.opencode` are empty directories.
 
     A file in either place names MCP servers, or fails the read. The test
-    fixture points both away from this machine's own home."""
+    fixture points both at empty directories, not this machine's own
+    `~/.config/opencode` and `~/.opencode`. The empty directory may still
+    sit under the login home, as a pytest base temporary directory can."""
     reader = OpenCodeReader(root=tmp_path / "data")
     login_home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
     config = Path(os.environ["XDG_CONFIG_HOME"]) / "opencode"
 
     assert reader._config == config
-    assert login_home not in config.resolve().parents
+    assert config.resolve() != (login_home / ".config" / "opencode").resolve()
     assert list(config.glob("*")) == []
-    assert Path.home().resolve() != login_home
+    assert (Path.home() / ".opencode").resolve() != (login_home / ".opencode").resolve()
     assert not (Path.home() / ".opencode").exists()
     assert Path.home() / ".opencode" / "opencode.json" in reader._config_files(None)
 
