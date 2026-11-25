@@ -57,13 +57,19 @@ def _no_real_pi_home(
 
 
 @pytest.fixture(autouse=True)
-def _no_real_opencode_home(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep OpenCode's overrides from naming files on this machine.
+def _no_real_opencode_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Keep OpenCode's overrides and default locations off this machine.
 
     The data directory follows `XDG_DATA_HOME`, which the Devin fixture
     already points at an empty directory. `OPENCODE_DB` names another
-    database, and `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` name
-    configuration that splits MCP calls."""
+    database, `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` name
+    configuration that splits MCP calls, and the default config root
+    (`XDG_CONFIG_HOME/opencode`) and `~/.opencode` read this machine's
+    real configuration otherwise."""
     monkeypatch.delenv("OPENCODE_DB", raising=False)
     monkeypatch.delenv("OPENCODE_CONFIG", raising=False)
     monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg-config")))
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("opencode-home")))
