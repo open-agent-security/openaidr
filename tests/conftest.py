@@ -46,7 +46,24 @@ def _no_real_cursor_home(
 def _no_real_pi_home(
     monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    """Point Pi's agent directory at an empty directory for every test:
-    `default_readers()` reads `PI_CODING_AGENT_DIR`, else `~/.pi/agent`."""
+    """Point Pi's agent directory at an empty directory for every test.
+
+    `default_readers()` reads `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
+    `PI_CODING_AGENT_SESSION_DIR` replaces that directory's `sessions`, so a
+    value from this machine would still be read."""
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path_factory.mktemp("pi-agent")))
+    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
     monkeypatch.delenv("OPENAIDR_PI_ROOT", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_opencode_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep OpenCode's overrides from naming files on this machine.
+
+    The data directory follows `XDG_DATA_HOME`, which the Devin fixture
+    already points at an empty directory. `OPENCODE_DB` names another
+    database, and `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` name
+    configuration that splits MCP calls."""
+    monkeypatch.delenv("OPENCODE_DB", raising=False)
+    monkeypatch.delenv("OPENCODE_CONFIG", raising=False)
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
