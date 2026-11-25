@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import pwd
 import sqlite3
 from datetime import timedelta
 from pathlib import Path
@@ -449,6 +451,23 @@ def test_a_parts_later_update_counts_as_activity(tmp_path: Path) -> None:
 
 def test_no_data_directory_is_no_sessions_and_no_failure(tmp_path: Path) -> None:
     assert _read(tmp_path) == ([], [])
+
+
+def test_default_configuration_is_not_this_machines(tmp_path: Path) -> None:
+    """The global config and `~/.opencode` are empty directories.
+
+    A file in either place names MCP servers, or fails the read. The test
+    fixture points both away from this machine's own home."""
+    reader = OpenCodeReader(root=tmp_path / "data")
+    login_home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+    config = Path(os.environ["XDG_CONFIG_HOME"]) / "opencode"
+
+    assert reader._config == config
+    assert login_home not in config.resolve().parents
+    assert list(config.glob("*")) == []
+    assert Path.home().resolve() != login_home
+    assert not (Path.home() / ".opencode").exists()
+    assert Path.home() / ".opencode" / "opencode.json" in reader._config_files(None)
 
 
 def test_the_default_collection_reads_opencode(
