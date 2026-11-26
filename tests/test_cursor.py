@@ -1011,6 +1011,18 @@ def test_cursors_account_is_its_cli_configs_auth_info(home: Path) -> None:
     )
 
 
+def test_the_cursor_spec_names_the_cli_root_and_every_sign_in_file() -> None:
+    """The glance table names the CLI override. The sign-in section names
+    every file `sign_in_records` returns, including the desktop database."""
+    text = Path(__file__).parents[1].joinpath("docs/specs/cursor.md").read_text(encoding="utf-8")
+    glance = text.split("## At a glance", 1)[1].split("## ", 1)[0]
+    signed_in_section = text.split("## Who is signed in", 1)[1].split("## ", 1)[0]
+
+    assert "OPENAIDR_CURSOR_ROOT" in glance
+    for name in ("cli-config.json", "state.vscdb", "state.vscdb-wal"):
+        assert name in signed_in_section
+
+
 @pytest.mark.parametrize(
     "document",
     [{"version": 1}, {"authInfo": {"email": "x@example.com"}}, {"authInfo": "nope"}, []],
