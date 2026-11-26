@@ -2,7 +2,7 @@
 
 *Design spec. Status: proposed (2026-10-04; revised 2026-10-06 after
 re-measuring, which found that sub-agent transcripts mostly lack a response's
-final record, and that workflow agents are read as their parent).*
+final record, and that workflow agents were read as their parent).*
 
 **What this adds.** The session model gains a record of every request a session
 made to its model provider, carrying the token counts the transcript recorded
@@ -17,9 +17,9 @@ Three smaller changes ship with it, because without them a consumer cannot
 total or attribute that usage:
 
 - **Workflow agents are sub-agents.** Claude Code writes a workflow's agents
-  one directory deeper than other sub-agents. This package reads each as a
-  session holding the parent's identity, and that both loses their usage and
-  withholds the parent's MCP enrichment ([Sub-agents and workflow
+  one directory deeper than other sub-agents. This package used to read each
+  as a session holding the parent's identity, which lost their usage and
+  withheld the parent's MCP enrichment ([Sub-agents and workflow
   agents](#sub-agents-and-workflow-agents)).
 - **A compaction carries its time,** so consumption can be placed before or
   after the point where the context was reset.
@@ -225,11 +225,13 @@ A workflow writes its agents one level deeper:
 <project>/<sessionId>/subagents/workflows/<run>/journal.jsonl
 ```
 
-| Measured | Consequence today |
+The reader follows the rule below. The table records the directory check the rule replaced.
+
+| Measured | Before the rule |
 |---|---|
-| 21 workflow-agent transcripts under one session, in 4 runs. Their records carry the parent's `sessionId` (every record that has one), and `isSidechain: true` | Each is read as a main session with the parent's identity. One cold pass returns 22 sessions with the same identity: the parent and 21 agents. The collector keeps the first and reports the others as collisions, and paths sort a directory's contents before the file beside it (`<sid>/…` before `<sid>.jsonl`). So the session reported as the parent is one of its workflow agents (88 turns, opening with the workflow harness), and the parent's own 290 turns and every other agent's usage are lost |
-| The parent's id is now claimed by 22 files | On a cold pass, the parent's MCP enrichment is withheld as `session_id_collision`. `collect_file` on the parent's own file is unaffected, because there an unopened file claims only its stem |
-| `collect_file` on a workflow agent's transcript | Returns a session under the **parent's** identity, with turns not marked sidechain. A consumer keyed by session identity overwrites the parent with the agent |
+| 21 workflow-agent transcripts under one session, in 4 runs. Their records carry the parent's `sessionId` (every record that has one), and `isSidechain: true` | Each was read as a main session with the parent's identity. One cold pass returned 22 sessions with the same identity: the parent and 21 agents. The collector kept the first and reported the others as collisions, and paths sort a directory's contents before the file beside it (`<sid>/…` before `<sid>.jsonl`). So the session reported as the parent was one of its workflow agents (88 turns, opening with the workflow harness), and the parent's own 290 turns and every other agent's usage were lost |
+| The parent's id is now claimed by 22 files | On a cold pass, the parent's MCP enrichment was withheld as `session_id_collision`. `collect_file` on the parent's own file was unaffected, because there an unopened file claims only its stem |
+| `collect_file` on a workflow agent's transcript | Returned a session under the **parent's** identity, with turns not marked sidechain. A consumer keyed by session identity overwrote the parent with the agent |
 | Agent ids are unique: no two `agent-*.jsonl` under one session share a stem, across plain and workflow sub-agents | ADR-0001's identity works unchanged for workflow agents |
 | Each run's `journal.jsonl` holds `launched`, `started` and `result` records with no `sessionId` and no `message` | Not a transcript |
 
