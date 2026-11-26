@@ -42,10 +42,26 @@ def test_readme_status_names_every_kind_this_package_reads() -> None:
         assert f"`{kind}`" in section
 
 
-def test_docs_index_links_the_cursor_spec() -> None:
-    """The doc index lists each owned kind's spec. `cursor` has one."""
+# Kinds whose reader has its own spec. Claude Code is the session-collection spec.
+_KIND_SPECS = {
+    "devin": "specs/devin-cli.md",
+    "codex": "specs/codex.md",
+    "cursor": "specs/cursor.md",
+    "pi": "specs/pi.md",
+    "opencode": "specs/opencode.md",
+}
+
+
+def test_docs_index_links_each_kind_spec_once() -> None:
+    """The doc index lists each owned kind's spec, once.
+
+    The map's keys are the registered kinds, except Claude Code. A new kind
+    with no row here fails this test, even when the index is unchanged.
+    """
+    assert set(_KIND_SPECS) == set(AGENT_KIND_BY_SOURCE.values()) - {"claude-code"}
     index = _README.parents[0].joinpath("docs/README.md").read_text(encoding="utf-8")
-    assert "(specs/cursor.md)" in index
+    for kind, spec in _KIND_SPECS.items():
+        assert index.count(f"({spec})") == 1, kind
 
 
 def test_installed_console_script_runs() -> None:
