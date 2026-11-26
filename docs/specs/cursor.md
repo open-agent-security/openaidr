@@ -15,7 +15,7 @@ for each session. Decisions: ADR-0037, ADR-0038 and ADR-0039.*
 | Covers | The Cursor CLI (`agent`, `cursor-agent`) in the terminal, in print mode (`-p`) and over ACP. Its sub-agents. The local-inference build (`agent-local`) writes the same files. **The desktop app's agent panel** (3.x), its sub-agents included (see [The desktop app](#the-desktop-app)) |
 | Not covered | **Cloud agents**, which run on Cursor's servers. Desktop conversations from before the agent store (no root), Tab and inline edits |
 | Reads | `<config root>/chats/<md5(cwd)>/<id>/store.db` (read-only) and its `meta.json` for messages, calls, outcomes and times. The debug log `<tmp>/cursor-agent-logs-<uid>/session-*.log` for per-response tokens, the entrypoint, client errors and MCP connection failures. `<data root>/projects/<slug>/agent-transcripts/` for client errors. `<config root>/cli-config.json` for the account. For the desktop app: `<user data>/User/globalStorage/state.vscdb` (read-only) and its structured log `<user data>/logs/*/window*/exthost/*/Cursor Structured Logs.log` |
-| Config root | `$CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`. `default_readers(cursor_root=…)` overrides it |
+| Config root | `$CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`. `OPENAIDR_CURSOR_ROOT` overrides it for the CLI; `default_readers(cursor_root=…)` for callers |
 | Data root | `$CURSOR_DATA_DIR`, else `~/.cursor`. Holds `projects/` |
 | Backed by `adr-sensor` | No. Its Cursor parser reads the desktop's bubbles, keys turns by position, keeps no result bodies and opens the store read-write (ADR-0037) |
 | Platforms | Linux and macOS. Windows deferred (ADR-0013) |
@@ -234,8 +234,10 @@ no log names the session, and `no_log_root` when the log directory is absent.
 ## Who is signed in
 
 `<config root>/cli-config.json` `authInfo {email, displayName, userId, authId,
-teamId, teamName}` (Source). `account_id` is `userId`, else `authId`. No plan.
-`sign_in_records("cursor")` is that file. Nothing is asked of Cursor's server.
+teamId, teamName}` (Source). `account_id` is `userId`, else `authId`. The CLI
+file records no plan. `sign_in_records("cursor")` names `cli-config.json`,
+`state.vscdb` and `state.vscdb-wal`. The desktop app section states when a
+plan is recorded. Nothing is asked of Cursor's server.
 
 ## Growing sessions
 
