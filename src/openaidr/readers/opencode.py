@@ -137,9 +137,8 @@ def _read(
         if changed_since is None:
             chosen = list(parents)
         else:
-            # One qmark per comparison. sqlite3 treats `?1` as a named
-            # parameter, and a sequence binding raises ProgrammingError
-            # on Python 3.14.
+            # One `?` per comparison. Early CPython 3.12 warns that `?1`
+            # is named (gh-117995). That warning was removed before 3.14.
             chosen = sorted(
                 {
                     value
