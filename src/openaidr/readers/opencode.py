@@ -137,14 +137,16 @@ def _read(
         if changed_since is None:
             chosen = list(parents)
         else:
+            # One `?` per comparison. Early CPython 3.12 warns that `?1`
+            # is named (gh-117995). That warning was removed before 3.14.
             chosen = sorted(
                 {
                     value
                     for (value,) in connection.execute(
-                        "SELECT id FROM session WHERE time_updated >= ?1 UNION "
-                        "SELECT session_id FROM message WHERE time_updated >= ?1 UNION "
-                        "SELECT session_id FROM part WHERE time_updated >= ?1",
-                        (changed_since,),
+                        "SELECT id FROM session WHERE time_updated >= ? UNION "
+                        "SELECT session_id FROM message WHERE time_updated >= ? UNION "
+                        "SELECT session_id FROM part WHERE time_updated >= ?",
+                        (changed_since, changed_since, changed_since),
                     )
                 }
             )
