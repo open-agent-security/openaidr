@@ -137,14 +137,17 @@ def _read(
         if changed_since is None:
             chosen = list(parents)
         else:
+            # One qmark per comparison. sqlite3 treats `?1` as a named
+            # parameter, and a sequence binding raises ProgrammingError
+            # on Python 3.14.
             chosen = sorted(
                 {
                     value
                     for (value,) in connection.execute(
-                        "SELECT id FROM session WHERE time_updated >= ?1 UNION "
-                        "SELECT session_id FROM message WHERE time_updated >= ?1 UNION "
-                        "SELECT session_id FROM part WHERE time_updated >= ?1",
-                        (changed_since,),
+                        "SELECT id FROM session WHERE time_updated >= ? UNION "
+                        "SELECT session_id FROM message WHERE time_updated >= ? UNION "
+                        "SELECT session_id FROM part WHERE time_updated >= ?",
+                        (changed_since, changed_since, changed_since),
                     )
                 }
             )
