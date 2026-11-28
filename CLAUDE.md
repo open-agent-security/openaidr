@@ -16,7 +16,7 @@ OpenAIDR-owned reader of its chat stores and debug log (`docs/specs/cursor.md`),
 and the Cursor desktop app's agent panel through the same reader, from its
 `state.vscdb` and structured log (ADR-0039). Pi is read from its JSONL session
 files (`docs/specs/pi.md`) and OpenCode from its `opencode.db`
-(`docs/specs/opencode.md`), each by an OpenAIDR-owned reader. `adr-sensor` parses seven kinds;
+(`docs/specs/opencode.md`), each by an OpenAIDR-owned reader. `adr-sensor` parses six kinds;
 this package instantiates one of them. Do not describe the others as supported.
 
 Apache-2.0, and deliberately plumbing rather than judgement. Every new agent
@@ -46,7 +46,7 @@ letting kind-specific quirks — or the dependency that parses them — leak pas
 that boundary.
 
 **Session parsing is not ours.** [`adr-sensor`](https://github.com/uber/ADR)
-(Apache-2.0, Uber's ADR project) reads the seven agent formats it supports, and
+(Apache-2.0, Uber's ADR project) reads the six agent formats it supports, and
 is confined behind an adapter: upstream types convert at the boundary and never
 appear elsewhere in the codebase. Any one agent kind can instead be backed by an
 OpenAIDR-owned reader on the same contract — per kind, not all-or-nothing — which
@@ -56,7 +56,7 @@ is what bounds dependency risk to a single module.
 exchange; a tool call is one invocation and its outcome. Normalisation happens
 once, at collection, using per-kind rules: the agent's on-disk self-name maps to
 an agent kind, a tool name splits into `(server, tool)`, and a result shape maps
-to one of five statuses. Downstream sees one uniform model.
+to one of six statuses. Downstream sees one uniform model.
 
 **Span identity is the load-bearing contract.** It names one tool call, and it
 must survive re-reads of a growing session — a consumer draws a call when parsed
